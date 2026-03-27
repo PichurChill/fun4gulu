@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import 'nes.css/css/nes.min.css'
+import './assets/styles/theme.css'
 
 import App from './App.vue'
 import router from './router'
