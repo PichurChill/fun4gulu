@@ -336,5 +336,39 @@ onUnmounted(() => {
 
 .system-container {
   width: 100%;
+  margin-top: 80px; /* Offset fixed header */
+}
+
+/* Mobile Adaptive Layers */
+@media (max-width: 1024px) {
+  .header-inner { padding: 0 30px; }
+  .system-status-group { gap: 15px; }
+}
+
+@media (max-width: 768px) {
+  .mario-header { height: 64px; }
+  .system-container { margin-top: 64px; }
+  .header-inner { padding: 0 20px; }
+  
+  .logo-box-container { width: 34px; height: 34px; }
+  .logo-box { font-size: 20px; }
+  .logo-main { font-size: 20px; }
+  .logo-sub { display: none; }
+  
+  .system-status-group { font-size: 9px; gap: 10px; }
+  .status-item.core-temp { display: none; }
+  .status-item.battery { gap: 4px; }
+  .battery-icon { width: 18px; height: 10px; border-width: 1px; }
+  
+  .lang-selector-custom { padding-left: 15px; gap: 8px; }
+  .lang-label { display: none; }
+  .custom-dropdown { min-width: 80px; }
+  .dropdown-trigger { padding: 4px 8px; font-size: 10px; }
+}
+
+@media (max-width: 480px) {
+  .system-status-group { display: none; }
+  .header-inner { justify-content: space-between; }
+  .lang-selector-custom { border-left: none; padding-left: 0; }
 }
 </style>

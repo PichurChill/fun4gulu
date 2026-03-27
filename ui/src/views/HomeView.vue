@@ -155,11 +155,11 @@ const currentFrameStyle = computed(() => ({
 </script>
 
 <style scoped>
-.system-root { width: 100%; background: #FFF; }
-.hero-stage { min-height: 100vh; display: flex; flex-direction: column; position: relative; padding: 0 80px; overflow: hidden; border-bottom: 4px solid #000; background: transparent; }
-.hero-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 60px; }
-.hero-visual { position: relative; height: 100%; display: flex; align-items: center; justify-content: center; }
-.runner-scene { width: 500px; height: 260px; position: relative; border-bottom: 6px solid #000; overflow: hidden; background: transparent; }
+.system-root { width: 100%; height: auto; background: #FFF; overflow-x: hidden; position: relative; }
+.hero-stage { width: 100%; min-height: 100vh; display: flex; flex-direction: column; position: relative; padding: 0 80px; overflow-x: hidden; border-bottom: 4px solid #000; background: transparent; transition: all 0.3s; box-sizing: border-box; }
+.hero-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 60px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 0; }
+.hero-visual { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.runner-scene { width: 500px; height: 260px; position: relative; border-bottom: 6px solid #000; background: transparent; flex-shrink: 0; transform-origin: center; }
 
 /*
  * 碰撞时间窗口精算（Collision Window Calculation）：
@@ -204,13 +204,55 @@ const currentFrameStyle = computed(() => ({
 @keyframes cloud-f { from { left: 110%; } to { left: -20%; } }
 .runner-score { position: absolute; top: 20px; right: 20px; font-weight: 900; font-size: 14px; letter-spacing: 2px; }
 
-.hero-title { font-size: 84px; line-height: 0.9; margin: 24px 0; letter-spacing: -4px; }
+.hero-title { font-size: 84px; line-height: 0.9; margin: 24px 0; letter-spacing: -4px; transition: font-size 0.3s; }
 .red-text { color: var(--mario-red); }
 .mario-badge { display: inline-block; background: var(--mario-red); color: #fff; padding: 4px 12px; font-weight: 900; font-size: 12px; border: 3px solid #000; }
 .mario-btn-main { position: relative; background: #000; color: #FFF; border: none; padding: 20px 48px; font-size: 16px; font-weight: 900; cursor: pointer; }
 .btn-shadow { position: absolute; inset: 0; background: var(--mario-red); transform: translate(8px, 8px); z-index: -1; }
-.hero-footer { height: 60px; border-top: 4px solid #000; display: flex; justify-content: space-between; align-items: center; font-size: 10px; font-weight: 800; background: transparent; margin: 0 -80px; padding: 0 80px; }
-.games-stage { padding: 100px 80px; background: #F5F5F3; min-height: 100vh; }
+.hero-footer { height: 60px; border-top: 4px solid #000; display: flex; justify-content: space-between; align-items: center; font-size: 10px; font-weight: 800; background: transparent; margin: 0 -80px; padding: 0 80px; transition: all 0.3s; }
+
+.games-stage { padding: 100px 80px; background: #F5F5F3; min-height: 100vh; transition: padding 0.3s; }
 .game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 40px; }
-.game-card { background: #FFF; border: 4px solid #000; padding: 40px; text-decoration: none; color: inherit; box-shadow: 12px 12px 0 #000; }
+.game-card { background: #FFF; border: 4px solid #000; padding: 40px; text-decoration: none; color: inherit; box-shadow: 12px 12px 0 #000; transition: all 0.3s; }
+
+/* === MOBILE ADAPTIVE LAYERS (HomeView) === */
+@media (max-width: 1200px) {
+  .hero-stage { padding: 0 40px; }
+  .hero-title { font-size: 72px; }
+  .game-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 1024px) {
+  .hero-stage { height: auto; min-height: 100vh; padding: 0 20px 60px; display: block; overflow-x: hidden; }
+  .hero-grid { display: flex; flex-direction: column; padding-top: 120px; gap: 40px; width: 100%; margin: 0; }
+  .hero-content { width: 100%; text-align: center; padding: 0; box-sizing: border-box; position: relative; z-index: 10; }
+  .hero-visual { width: 100%; height: 240px; order: 2; margin-top: 20px; }
+  .hero-title { font-size: 14vw; line-height: 1; margin: 20px 0; }
+  .hero-desc { max-width: 100%; padding: 0 10px; font-size: 15px; margin-bottom: 30px; }
+  
+  .hero-footer { margin: 40px -20px 0; padding: 0 20px; width: calc(100% + 40px); box-sizing: border-box; }
+}
+
+@media (max-width: 768px) {
+  .hero-title { font-size: 15vw; }
+  .hero-visual { height: 200px; }
+  .runner-scene { transform: scale(0.65); transform-origin: center; } 
+  
+  .games-stage { padding: 40px 20px; }
+  .game-grid { grid-template-columns: 1fr; gap: 20px; }
+}
+
+@media (max-width: 480px) {
+  .hero-stage { padding: 0 15px 40px; }
+  .hero-title { font-size: 12vw; white-space: nowrap; letter-spacing: -2px; }
+  .hero-desc { font-size: 13px; line-height: 1.5; opacity: 0.8; }
+  .runner-scene { transform: scale(0.5); } 
+  .hero-visual { height: 160px; margin-top: 10px; }
+  .hero-cta { width: 100%; padding: 0 10px; box-sizing: border-box; }
+  .mario-btn-main { width: 100%; padding: 18px 10px; font-size: 14px; }
+  .btn-shadow { transform: translate(5px, 5px); }
+  
+  .hero-footer { font-size: 8px; height: 50px; }
+  .hero-footer .center, .hero-footer .right { display: none; }
+}
 </style>
