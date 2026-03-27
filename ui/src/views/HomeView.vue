@@ -159,7 +159,7 @@ const currentFrameStyle = computed(() => ({
 .hero-stage { width: 100%; min-height: 100vh; display: flex; flex-direction: column; position: relative; padding: 0 80px; overflow-x: hidden; border-bottom: 4px solid #000; background: transparent; transition: all 0.3s; box-sizing: border-box; }
 .hero-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 60px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 0; }
 .hero-visual { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.runner-scene { width: 500px; height: 260px; position: relative; border-bottom: 6px solid #000; background: transparent; flex-shrink: 0; transform-origin: center; }
+.runner-scene { width: 500px; height: 260px; position: relative; background: transparent; flex-shrink: 0; transform-origin: center; }
 
 /*
  * 碰撞时间窗口精算（Collision Window Calculation）：
