@@ -367,8 +367,16 @@ onUnmounted(() => {
 }
 
 @media (max-width: 480px) {
-  .system-status-group { display: none; }
-  .header-inner { justify-content: space-between; }
+  .system-status-group { display: flex; gap: 8px; font-size: 8px; }
+  .status-item.core-temp { display: none; }
+  .status-item.battery { gap: 2px; }
+  .battery-icon { width: 14px; height: 8px; }
+  .battery-icon::after { right: -3px; top: 1px; width: 1px; height: 3px; }
+  
+  .header-inner { padding: 0 12px; justify-content: space-between; }
+  .meta-nav { gap: 12px; }
   .lang-selector-custom { border-left: none; padding-left: 0; }
+  .custom-dropdown { min-width: 70px; }
+  .dropdown-trigger { padding: 4px 6px; font-size: 9px; }
 }
 </style>
