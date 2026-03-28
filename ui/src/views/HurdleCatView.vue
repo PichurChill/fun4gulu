@@ -13,6 +13,7 @@ const combo = ref(0)
 const showCombo = ref(false)
 const debugMode = ref(false)
 const calibrated = ref(false)
+const controlMode = ref<'body' | 'head'>('body')
 
 // ---- DOM refs ----
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -564,6 +565,124 @@ const laneDetector = {
   }
 }
 
+// ---- 头部模式检测器 ----
+const headModeDetector = {
+  // 车道检测（头部左右倾斜）
+  laneHistory: [] as number[],
+  laneMaxHistory: 20,
+  laneBaseline: null as number | null,
+  laneBaselineSamples: [] as number[],
+  laneThreshold: 0.12,  // 头部倾斜阈值（比身体大）
+  lastLaneSwitchTime: 0,
+  laneSwitchCooldown: 300,  // 防抖冷却时间
+
+  // 跳跃检测（点头）
+  jumpHistory: [] as number[],
+  jumpMaxHistory: 15,
+  jumpBaseline: null as number | null,
+  jumpBaselineSamples: [] as number[],
+  nodding: false,
+  lastJumpTime: 0,
+  jumpCooldown: 400,
+
+  reset() {
+    this.laneHistory = []
+    this.laneBaseline = null
+    this.laneBaselineSamples = []
+    this.jumpHistory = []
+    this.jumpBaseline = null
+    this.jumpBaselineSamples = []
+    this.nodding = false
+    this.lastJumpTime = 0
+    this.lastLaneSwitchTime = 0
+    calibrated.value = false
+  },
+
+  // 检测车道切换（头部左右倾斜）
+  detectLane(noseX: number): -1 | 0 | 1 {
+    if (!noseX || noseX <= 0 || noseX >= 1) return 0
+
+    // 收集基准线样本
+    if (!this.laneBaseline) {
+      this.laneBaselineSamples.push(noseX)
+      if (this.laneBaselineSamples.length >= 15) {
+        const sorted = [...this.laneBaselineSamples].sort((a, b) => a - b)
+        this.laneBaseline = sorted[Math.floor(sorted.length / 2)] ?? null
+        calibrated.value = true
+      }
+      return 0
+    }
+
+    // 记录历史
+    this.laneHistory.push(noseX)
+    if (this.laneHistory.length > this.laneMaxHistory) this.laneHistory.shift()
+
+    // 计算最近的平均位置
+    if (this.laneHistory.length < 10) return 0
+    const recent = this.laneHistory.slice(-8)
+    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
+
+    // 检查冷却时间
+    const now = Date.now()
+    if (now - this.lastLaneSwitchTime < this.laneSwitchCooldown) return 0
+
+    // 判断倾斜方向（镜像：视频是镜像的）
+    const leanLeft = avgRecent < this.laneBaseline - this.laneThreshold
+    const leanRight = avgRecent > this.laneBaseline + this.laneThreshold
+
+    if (leanLeft) {
+      this.lastLaneSwitchTime = now
+      return -1  // 向左倾斜
+    }
+    if (leanRight) {
+      this.lastLaneSwitchTime = now
+      return 1  // 向右倾斜
+    }
+    return 0
+  },
+
+  // 检测跳跃（点头）
+  detectJump(noseY: number): boolean {
+    if (!noseY || noseY <= 0 || noseY >= 1) return false
+
+    // 收集基准线样本
+    if (!this.jumpBaseline) {
+      this.jumpBaselineSamples.push(noseY)
+      if (this.jumpBaselineSamples.length >= 15) {
+        const sorted = [...this.jumpBaselineSamples].sort((a, b) => a - b)
+        this.jumpBaseline = sorted[Math.floor(sorted.length / 2)] ?? null
+      }
+      return false
+    }
+
+    // 记录历史
+    this.jumpHistory.push(noseY)
+    if (this.jumpHistory.length > this.jumpMaxHistory) this.jumpHistory.shift()
+
+    if (this.jumpHistory.length < 8) return false
+
+    const threshold = 0.04  // 点头阈值
+    const recent = this.jumpHistory.slice(-5)
+    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
+
+    // 检测点头动作：y值先下降（低头）然后恢复
+    if (!this.nodding && (this.jumpBaseline - avgRecent) > threshold) {
+      this.nodding = true
+      return false
+    }
+
+    if (this.nodding && avgRecent >= this.jumpBaseline - threshold * 0.5) {
+      this.nodding = false
+      const now = Date.now()
+      if (now - this.lastJumpTime < this.jumpCooldown) return false
+      this.lastJumpTime = now
+      return true
+    }
+
+    return false
+  }
+}
+
 // ---- 跳跃检测（保持原有逻辑）----
 const jumpDetector = {
   history: [] as number[],
@@ -754,18 +873,30 @@ function onPoseResults(results: any) {
   const leftHip = results.poseLandmarks[23]
   const rightHip = results.poseLandmarks[24]
 
-  // 检测车道切换（用鼻子的x坐标）
-  if (nose) {
-    const lane = laneDetector.detect(nose.x)
-    if (lane !== 0) {
-      cat.switchLane(lane)
+  // 根据控制模式使用不同的检测逻辑
+  if (controlMode.value === 'body') {
+    // 身体模式：用鼻子检测车道切换，用臀部检测跳跃
+    if (nose) {
+      const lane = laneDetector.detect(nose.x)
+      if (lane !== 0) {
+        cat.switchLane(lane)
+      }
     }
-  }
 
-  // 检测跳跃（用臀部的y坐标）
-  if (leftHip && rightHip) {
-    const hipY = (leftHip.y + rightHip.y) / 2
-    if (jumpDetector.detect(hipY)) cat.jump()
+    if (leftHip && rightHip) {
+      const hipY = (leftHip.y + rightHip.y) / 2
+      if (jumpDetector.detect(hipY)) cat.jump()
+    }
+  } else {
+    // 头部模式：用鼻子检测车道切换和跳跃
+    if (nose) {
+      const lane = headModeDetector.detectLane(nose.x)
+      if (lane !== 0) {
+        cat.switchLane(lane)
+      }
+
+      if (headModeDetector.detectJump(nose.y)) cat.jump()
+    }
   }
 }
 
@@ -839,6 +970,19 @@ function toggleDebug() {
   debugMode.value = !debugMode.value
 }
 
+function toggleControlMode() {
+  const oldMode = controlMode.value
+  controlMode.value = controlMode.value === 'body' ? 'head' : 'body'
+
+  // 切换模式时重置检测器状态
+  if (oldMode === 'body') {
+    laneDetector.reset()
+    jumpDetector.reset()
+  } else {
+    headModeDetector.reset()
+  }
+}
+
 function goBack() {
   stopGame()
   router.back()
@@ -873,9 +1017,18 @@ onUnmounted(() => {
       <div class="start-box">
         <h1>{{ t('message.hurdleCatView.title') }}</h1>
         <p>{{ t('message.hurdleCatView.description') }}</p>
+        <div class="mode-selector">
+          <button class="mode-option" :class="{ active: controlMode === 'body' }" @click="controlMode = 'body'">
+            {{ t('message.hurdleCatView.bodyMode') }}
+          </button>
+          <button class="mode-option" :class="{ active: controlMode === 'head' }" @click="controlMode = 'head'">
+            {{ t('message.hurdleCatView.headMode') }}
+          </button>
+        </div>
         <div class="instructions">
-          <div class="instruction-item">🦘 跳跃躲避双栏杆</div>
-          <div class="instruction-item">↔️ 左右倾斜切换车道</div>
+          <div class="instruction-item">
+            {{ controlMode === 'body' ? t('message.hurdleCatView.instructionsBody') : t('message.hurdleCatView.instructionsHead') }}
+          </div>
         </div>
         <button class="start-btn" @click="startGame">{{ t('message.hurdleCatView.startButton') }}</button>
       </div>
@@ -896,6 +1049,9 @@ onUnmounted(() => {
       <div class="top-bar">
         <button class="mario-btn" @click="goBack">&lt; {{ t('message.hurdleCatView.back') }}</button>
         <div class="score-box">{{ t('message.hurdleCatView.score') }}: {{ score }}</div>
+        <button class="mario-btn mode-btn" @click="toggleControlMode">
+          {{ t('message.hurdleCatView.controlMode') }}: {{ controlMode === 'body' ? t('message.hurdleCatView.bodyMode') : t('message.hurdleCatView.headMode') }}
+        </button>
         <div class="top-bar-right">
           <button class="mario-btn" :class="{ active: debugMode }" @click="toggleDebug">{{ t('message.hurdleCatView.debug') }}</button>
           <button class="mario-btn danger" @click="stopGame">{{ t('message.hurdleCatView.stop') }}</button>
@@ -1016,6 +1172,43 @@ onUnmounted(() => {
 
 .mario-btn.active {
   background: #2a9d8f;
+}
+
+.mode-btn {
+  background: #4a90e2;
+}
+
+/* 模式选择器 */
+.mode-selector {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.mode-option {
+  background: #fff;
+  color: #000;
+  border: 3px solid #000;
+  box-shadow: 4px 4px 0 #000;
+  padding: 10px 25px;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-option:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 #000;
+}
+
+.mode-option.active {
+  background: #000;
+  color: #fff;
+  transform: translate(4px, 4px);
+  box-shadow: none;
 }
 
 .combo-board {
@@ -1198,6 +1391,16 @@ onUnmounted(() => {
     font-size: 14px;
   }
 
+  .mode-selector {
+    flex-direction: row;
+    gap: 10px;
+  }
+
+  .mode-option {
+    font-size: 12px;
+    padding: 8px 16px;
+  }
+
   .instructions {
     flex-direction: column;
     gap: 10px;
@@ -1214,6 +1417,8 @@ onUnmounted(() => {
   }
 
   .top-bar {
+    flex-wrap: wrap;
+    gap: 8px;
     padding: 8px 12px;
   }
 
@@ -1224,6 +1429,11 @@ onUnmounted(() => {
   .mario-btn {
     padding: 6px 12px;
     font-size: 11px;
+  }
+
+  .mode-btn {
+    font-size: 10px;
+    padding: 5px 10px;
   }
 
   .combo-board {

@@ -50,7 +50,12 @@ const messages = {
         combo: '连击',
         debug: '调试',
         stop: '结束',
-        calibrating: '请站在画面中间，校准中...'
+        calibrating: '请站在画面中间，校准中...',
+        controlMode: '控制模式',
+        bodyMode: '身体',
+        headMode: '头部',
+        instructionsBody: '身体左右摆动切换车道，跳跃躲避栏杆',
+        instructionsHead: '头部左右倾斜切换车道，点头跳跃躲避栏杆'
       }
     }
   },
@@ -103,7 +108,12 @@ const messages = {
         combo: 'COMBO',
         debug: 'DEBUG',
         stop: 'STOP',
-        calibrating: 'Stand in center, calibrating...'
+        calibrating: 'Stand in center, calibrating...',
+        controlMode: 'Control Mode',
+        bodyMode: 'Body',
+        headMode: 'Head',
+        instructionsBody: 'Lean body to switch lanes, jump to avoid hurdles',
+        instructionsHead: 'Tilt head to switch lanes, nod to jump'
       }
     }
   },
@@ -156,7 +166,12 @@ const messages = {
         combo: 'コンボ',
         debug: 'デバッグ',
         stop: '終了',
-        calibrating: '画面の中央に立ってください、校正中...'
+        calibrating: '画面の中央に立ってください、校正中...',
+        controlMode: 'コントロールモード',
+        bodyMode: '体',
+        headMode: '頭',
+        instructionsBody: '体を左右に傾けてレーン変更、ジャンプしてハードルを回避',
+        instructionsHead: '頭を左右に傾けてレーン変更、うなずいてジャンプ'
       }
     }
   },
@@ -209,7 +224,12 @@ const messages = {
         combo: '콤보',
         debug: '디버그',
         stop: '종료',
-        calibrating: '화면 중앙에 서 주세요, 보정 중...'
+        calibrating: '화면 중앙에 서 주세요, 보정 중...',
+        controlMode: '컨트롤 모드',
+        bodyMode: '몸',
+        headMode: '머리',
+        instructionsBody: '몸을 좌우로 기울여 차선 변경, 점프하여 허들 회피',
+        instructionsHead: '머리를 좌우로 기울여 차선 변경, 끄덕여 점프'
       }
     }
   },
@@ -262,7 +282,12 @@ const messages = {
         combo: 'Combo',
         debug: 'Débogage',
         stop: 'Arrêter',
-        calibrating: 'Tenez-vous au centre, calibration en cours...'
+        calibrating: 'Tenez-vous au centre, calibration en cours...',
+        controlMode: 'Mode de contrôle',
+        bodyMode: 'Corps',
+        headMode: 'Tête',
+        instructionsBody: 'Penchez le corps pour changer de voie, sautez pour éviter les haies',
+        instructionsHead: 'Penchez la tête pour changer de voie, hochez la tête pour sauter'
       }
     }
   }
