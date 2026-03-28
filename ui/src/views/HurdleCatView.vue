@@ -557,8 +557,8 @@ const laneDetector = {
     const leanLeft = avgRecent < this.baseline - this.leanThreshold
     const leanRight = avgRecent > this.baseline + this.leanThreshold
 
-    if (leanLeft) return -1  // 画面中向左
-    if (leanRight) return 1  // 画面中向右
+    if (leanLeft) return 1   // noseX小=画面中往右
+    if (leanRight) return -1  // noseX大=画面中往左
     return 0  // 居中
   }
 }
