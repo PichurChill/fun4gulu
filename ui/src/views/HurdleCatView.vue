@@ -169,7 +169,7 @@ const road = {
       const stripeIndex = Math.floor((i + this.scrollOffset / 4) % 4)
       const isLight = stripeIndex < 2
       const grassColor = isLight ? '#3a6b34' : '#2d5a27'
-      const roadColor = isLight ? '#555555' : '#4a4a4a'
+      const roadColor = '#555555'
 
       // 草地分段（仅道路两侧）
       ctx.fillStyle = grassColor
