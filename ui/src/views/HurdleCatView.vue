@@ -553,12 +553,12 @@ const laneDetector = {
     const recent = this.history.slice(-8)
     const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
 
-    // 判断倾斜方向（镜像：视频是镜像的，所以鼻子的左边是用户的右边）
+    // 判断倾斜方向（镜像翻转）
     const leanLeft = avgRecent < this.baseline - this.leanThreshold
     const leanRight = avgRecent > this.baseline + this.leanThreshold
 
-    if (leanLeft) return -1  // 向左倾斜（视频中的左边）
-    if (leanRight) return 1  // 向右倾斜（视频中的右边）
+    if (leanLeft) return 1   // 原始坐标向左 → 镜像画面中实际向右
+    if (leanRight) return -1  // 原始坐标向右 → 镜像画面中实际向左
     return 0  // 居中
   }
 }
