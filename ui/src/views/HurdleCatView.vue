@@ -23,6 +23,53 @@ const gameCanvasRef = ref<HTMLCanvasElement | null>(null)
 let poseCtx: CanvasRenderingContext2D | null = null
 let gameCtx: CanvasRenderingContext2D | null = null
 
+// ---- 像素猫绘制常量（参考 HomeView） ----
+const T = '' // transparent
+const B = '#000'
+const O = '#FF9933' // 橘猫主色
+const D = '#CC7A00' // 暗橘色
+const P = '#FFB6C1' // 粉色
+const PX = 6 // 像素单位大小
+
+// 像素猫背面数据（屁股 + 后腿 + 尾巴）
+const catBackPixels = [
+  [T,T,T,T,T,T,T,T,T,T,T,T,B,B,B,B,B,B,B,B,T,T,T,T,T,T,T,T,T,T,T,T],
+  [T,T,T,T,T,T,T,B,B,B,B,B,D,O,O,O,O,O,O,O,D,B,B,B,B,T,T,T,T,T,T],
+  [T,T,T,T,T,B,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,B,T,T,T,T],
+  [T,T,T,T,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,T,T,T],
+  [T,T,T,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,T,T],
+  [T,T,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,T],
+  [T,T,B,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,B,T],
+  [T,B,D,O,O,O,O,O,O,D,D,D,D,D,D,D,D,D,D,D,O,O,O,O,O,O,O,O,D,B],
+  [T,B,O,O,O,O,O,D,D,O,D,O,D,O,D,O,D,O,D,O,D,D,O,O,O,O,O,O,O,B],
+  [T,B,O,O,O,O,D,O,O,O,D,O,O,O,D,O,O,O,D,O,O,O,D,O,O,O,O,O,O,B],
+  [T,B,O,O,O,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,O,O,O,O,B],
+  [T,B,O,O,O,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,O,O,O,O,B],
+  [T,B,O,O,D,O,O,O,T,T,T,T,T,T,T,T,T,T,T,T,T,O,O,O,O,D,O,O,O,B],
+  [T,B,O,O,D,O,O,O,T,T,T,T,T,T,T,T,T,T,T,T,T,T,O,O,O,D,O,O,O,B],
+  [T,T,B,D,O,O,O,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,O,O,D,O,O,B,T],
+  [T,T,T,B,D,D,D,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,D,D,D,D,B,T,T],
+  [T,T,T,T,B,B,B,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,B,B,B,T,T,T,T],
+  [T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T],
+]
+
+// 使用 box-shadow 技术绘制像素猫
+function pixelizeCatBack(scale = 1): string {
+  const shadows: string[] = []
+  const sPX = PX * scale
+  for (let y = 0; y < catBackPixels.length; y++) {
+    const row = catBackPixels[y]
+    if (!row) continue
+    for (let x = 0; x < row.length; x++) {
+      const color = row[x]
+      if (color && color !== T) {
+        shadows.push(`${x * sPX}px ${y * sPX}px 0 0 ${color}`)
+      }
+    }
+  }
+  return shadows.join(',')
+}
+
 // ---- 音频 ----
 let audioCtx: AudioContext | null = null
 function playJumpSound() {
@@ -59,15 +106,32 @@ function playHitSound() {
   } catch {}
 }
 
-// ---- 伪3D道路系统 ----
+function playSwitchSound() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(600, audioCtx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.1)
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1)
+    osc.start(audioCtx.currentTime)
+    osc.stop(audioCtx.currentTime + 0.1)
+  } catch {}
+}
+
+// ---- 伪3D道路系统（双车道）----
 const road = {
-  vanishingY: 0,      // 消失点Y坐标
-  roadTopY: 0,         // 道路顶部Y
-  roadBottomY: 0,      // 道路底部Y
-  roadTopWidth: 0,     // 道路顶部宽度
-  roadBottomWidth: 0,  // 道路底部宽度
-  scrollOffset: 0,     // 滚动偏移量
-  segments: 20,        // 道路分段数
+  vanishingY: 0,
+  roadTopY: 0,
+  roadBottomY: 0,
+  roadTopWidth: 0,
+  roadBottomWidth: 0,
+  scrollOffset: 0,
+  segments: 20,
 
   init(cw: number, ch: number) {
     this.vanishingY = ch * 0.3
@@ -78,9 +142,7 @@ const road = {
     this.scrollOffset = 0
   },
 
-  // 根据深度获取道路的Y坐标和宽度
   getRoadAtDepth(depth: number, cw: number, ch: number): { y: number; width: number; scale: number } {
-    // depth: 0(远) -> 1(近)
     const t = depth
     const y = this.roadTopY + (this.roadBottomY - this.roadTopY) * t * t
     const width = this.roadTopWidth + (this.roadBottomWidth - this.roadTopWidth) * t
@@ -88,19 +150,28 @@ const road = {
     return { y, width, scale }
   },
 
+  // 获取车道位置（-1=左车道，1=右车道）
+  getLaneX(lane: number, depth: number, cw: number): number {
+    const roadData = this.getRoadAtDepth(depth, cw, window.innerHeight)
+    const laneWidth = roadData.width / 2
+    // 左车道中心在 -laneWidth/2，右车道中心在 +laneWidth/2
+    return (lane === -1 ? -laneWidth * 0.25 : laneWidth * 0.25)
+  },
+
   update() {
-    this.scrollOffset = (this.scrollOffset + 8) % 64
+    // 速度减慢到原来的 40-50%（从 8 改为 3.2）
+    this.scrollOffset = (this.scrollOffset + 3.2) % 64
   },
 
   draw(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
-    // 绘制天空渐变
+    // 天空渐变
     const skyGradient = ctx.createLinearGradient(0, 0, 0, this.vanishingY)
     skyGradient.addColorStop(0, '#1a1a40')
     skyGradient.addColorStop(1, '#4a4a80')
     ctx.fillStyle = skyGradient
     ctx.fillRect(0, 0, cw, this.vanishingY)
 
-    // 绘制地面（草地）
+    // 地面（草地）
     ctx.fillStyle = '#2d5a27'
     ctx.fillRect(0, this.vanishingY, cw, ch - this.vanishingY)
 
@@ -111,17 +182,17 @@ const road = {
       const seg1 = this.getRoadAtDepth(depth1, cw, ch)
       const seg2 = this.getRoadAtDepth(depth2, cw, ch)
 
-      // 计算条纹颜色（交替）
+      // 条纹颜色
       const stripeIndex = Math.floor((i + this.scrollOffset / 4) % 4)
       const isLight = stripeIndex < 2
       const roadColor = isLight ? '#555555' : '#444444'
       const grassColor = isLight ? '#3a6b34' : '#2d5a27'
 
-      // 绘制草地分段
+      // 草地分段
       ctx.fillStyle = grassColor
       ctx.fillRect(0, seg1.y, cw, seg2.y - seg1.y + 1)
 
-      // 绘制道路分段（梯形）
+      // 道路分段（梯形）
       ctx.fillStyle = roadColor
       ctx.beginPath()
       ctx.moveTo(cw / 2 - seg1.width / 2, seg1.y)
@@ -143,9 +214,9 @@ const road = {
       ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
       ctx.stroke()
 
-      // 道路中线（虚线）
+      // **双车道中线**（道路中央，区分左右车道）
       if (stripeIndex % 2 === 0) {
-        ctx.strokeStyle = '#ffff00'
+        ctx.strokeStyle = '#ffffff'
         ctx.lineWidth = Math.max(1, 2 * seg2.scale)
         ctx.setLineDash([10 * seg2.scale, 10 * seg2.scale])
         ctx.lineDashOffset = -this.scrollOffset * seg2.scale
@@ -159,10 +230,10 @@ const road = {
   }
 }
 
-// ---- 栏杆系统 ----
+// ---- 栏杆系统（双车道）----
 interface Hurdle {
-  z: number        // 深度 0(远) -> 1(近)
-  x: number        // 相对位置 -1(左) -> 0(中) -> 1(右)
+  z: number
+  lane: -1 | 1 | 0  // -1=左车道，1=右车道，0=双车道都有
   hit: boolean
   rotation: number
   vx: number
@@ -172,14 +243,16 @@ interface Hurdle {
 
 const hurdles: Hurdle[] = []
 const hurdleSpawnTimer = ref(0)
-const HURDLE_SPAWN_INTERVAL = 150
+const HURDLE_SPAWN_INTERVAL = 200  // 增加间隔，因为速度变慢了
 
 function spawnHurdle() {
-  // 随机左右位置，但偏中心
-  const xOffset = (Math.random() - 0.5) * 0.6 // -0.3 到 0.3
+  // 90% 概率单车道，10% 概率双车道
+  const isDoubleLane = Math.random() < 0.1
+  const lane = isDoubleLane ? 0 : (Math.random() < 0.5 ? -1 : 1)
+
   hurdles.push({
-    z: 0,
-    x: xOffset,
+    z: 0,  // 从最远处开始
+    lane,
     hit: false,
     rotation: 0,
     vx: 0,
@@ -197,7 +270,7 @@ function updateHurdles() {
 
     if (h.hit) {
       // 被撞飞动画
-      h.x += h.vx
+      h.vx *= 1.05
       h.z += 0.02
       h.rotation += h.vx * 0.5
       h.alpha -= 0.02
@@ -208,33 +281,40 @@ function updateHurdles() {
       continue
     }
 
-    // 正常移动：从远到近
-    h.z += 0.012
+    // **速度减慢到 40-50%**（从 0.012 改为 0.005）
+    h.z += 0.005
 
     // 碰撞检测：当栏杆到达猫的位置
     if (h.z > 0.92 && h.z < 0.98) {
-      // 检查是否跳跃足够高
-      if (jumpHeight > 0.4) {
-        // 成功跳跃
-        score.value++
-        combo.value++
-        if (combo.value > 1) showCombo.value = true
-        if (comboTimer) clearTimeout(comboTimer)
-        comboTimer = setTimeout(() => { combo.value = 0; showCombo.value = false }, 2000)
-        spawnFloatingText(window.innerWidth / 2, cat.y - 100, combo.value > 1 ? `+${combo.value}` : '+1', '#FFD700')
-        playJumpSound()
-        hurdles.splice(i, 1)
-      } else {
+      // 检查猫是否在栏杆所在的车道
+      const catInLeftLane = cat.lane < 0
+      const catInRightLane = cat.lane > 0
+
+      const hitLeft = (h.lane === -1 || h.lane === 0) && catInLeftLane
+      const hitRight = (h.lane === 1 || h.lane === 0) && catInRightLane
+      const willHit = hitLeft || hitRight
+
+      if (willHit && jumpHeight < 0.4) {
         // 撞到栏杆
         h.hit = true
-        h.vx = h.x > 0 ? 0.03 : -0.03
+        h.vx = h.lane < 0 ? 0.03 : -0.03
         score.value = Math.max(0, score.value - 1)
         combo.value = 0
         showCombo.value = false
         spawnFloatingText(window.innerWidth / 2, cat.y - 60, '-1', '#e63946')
         playHitSound()
-        // 屏幕震动
         shakeScreen()
+        spawnParticles(cat.screenX, cat.y)
+      } else if (willHit || (!willHit && h.lane !== 0)) {
+        // 成功躲避（跳跃或切换车道）
+        score.value++
+        combo.value++
+        if (combo.value > 1) showCombo.value = true
+        if (comboTimer) clearTimeout(comboTimer)
+        comboTimer = setTimeout(() => { combo.value = 0; showCombo.value = false }, 2000)
+        spawnFloatingText(window.innerWidth / 2, cat.y - 100, combo.value > 1 ? `x${combo.value}` : '+1', '#FFD700')
+        playJumpSound()
+        hurdles.splice(i, 1)
       }
     }
 
@@ -258,32 +338,38 @@ function drawHurdles(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
 
   for (const h of hurdles) {
     const roadData = road.getRoadAtDepth(h.z, cw, ch)
-    const hurdleX = cw / 2 + h.x * roadData.width
-    const hurdleY = roadData.y
-    const scale = roadData.scale
 
-    ctx.save()
-    ctx.globalAlpha = h.alpha
+    // 如果是双车道栏杆，画两个
+    const lanesToDraw = h.lane === 0 ? [-1, 1] : [h.lane]
 
-    if (h.hit) {
-      // 被撞飞的栏杆
-      ctx.translate(hurdleX, hurdleY)
-      ctx.rotate(h.rotation)
-      drawHurdleSprite(ctx, 0, 0, scale * 120, scale * 60, true)
-    } else {
-      // 正常栏杆
-      ctx.translate(hurdleX, hurdleY)
-      drawHurdleSprite(ctx, 0, 0, scale * 120, scale * 60, false)
+    for (const lane of lanesToDraw) {
+      const laneX = road.getLaneX(lane, h.z, cw)
+      const hurdleX = cw / 2 + laneX
+      const hurdleY = roadData.y
+      const scale = roadData.scale
+
+      ctx.save()
+      ctx.globalAlpha = h.alpha
+
+      if (h.hit) {
+        // 被撞飞的栏杆
+        ctx.translate(hurdleX, hurdleY)
+        ctx.rotate(h.rotation)
+        drawHurdleSprite(ctx, 0, 0, scale * 100, scale * 50, true)
+      } else {
+        // 正常栏杆
+        ctx.translate(hurdleX, hurdleY)
+        drawHurdleSprite(ctx, 0, 0, scale * 100, scale * 50, false)
+      }
+
+      ctx.restore()
     }
-
-    ctx.restore()
   }
 }
 
 function drawHurdleSprite(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, isHit: boolean) {
-  // 水管风格栏杆（红白机风格）
   const pipeColor = isHit ? '#888888' : '#cc3333'
-  const capColor = isHit ? '#666666' : '#999999'
+  const capColor = isHit ? '#666666' : '#eeeeee'
 
   // 左支柱
   ctx.fillStyle = pipeColor
@@ -293,7 +379,6 @@ function drawHurdleSprite(ctx: CanvasRenderingContext2D, x: number, y: number, w
   ctx.strokeRect(x - w * 0.35, y, w * 0.08, h)
 
   // 右支柱
-  ctx.fillStyle = pipeColor
   ctx.fillRect(x + w * 0.27, y, w * 0.08, h)
   ctx.strokeRect(x + w * 0.27, y, w * 0.08, h)
 
@@ -314,9 +399,11 @@ function shakeScreen() {
   shakeIntensity = 8
 }
 
-// ---- 猫咪（背面视角）----
+// ---- 猫咪（像素风格背面，双车道）----
 const cat = {
-  x: 0,
+  lane: -1,           // -1=左车道，1=右车道
+  targetLane: -1,     // 目标车道
+  x: 0,               // 屏幕X坐标
   y: 0,
   baseY: 0,
   vy: 0,
@@ -325,13 +412,33 @@ const cat = {
   jumpHeight: 150,
   isJumping: false,
   tailWag: 0,
+  screenX: 0,         // 实际屏幕坐标
 
   reset(cw: number, ch: number) {
     this.baseY = ch * 0.78
+    this.lane = -1
+    this.targetLane = -1
     this.x = cw / 2
     this.y = this.baseY
     this.vy = 0
     this.isJumping = false
+    this.updateScreenX(cw)
+  },
+
+  updateScreenX(cw: number) {
+    // 根据当前车道计算屏幕X坐标（深度为1，即最近处）
+    const laneX = road.getLaneX(this.lane, 1, cw)
+    this.screenX = cw / 2 + laneX
+    this.x = this.screenX
+  },
+
+  switchLane(dir: -1 | 1) {
+    if (this.targetLane !== dir) {
+      this.targetLane = dir
+      playSwitchSound()
+      // 生成切换特效
+      spawnFloatingText(this.x, this.y - 80, dir < 0 ? '◀' : '▶', '#4a90e2')
+    }
   },
 
   jump() {
@@ -341,7 +448,20 @@ const cat = {
     playJumpSound()
   },
 
-  update() {
+  update(cw: number) {
+    // 平滑切换车道
+    const laneSpeed = 0.15
+    if (this.lane !== this.targetLane) {
+      const diff = this.targetLane - this.lane
+      if (Math.abs(diff) < laneSpeed) {
+        this.lane = this.targetLane
+      } else {
+        this.lane += Math.sign(diff) * laneSpeed
+      }
+      this.updateScreenX(cw)
+    }
+
+    // 跳跃物理
     this.vy += this.gravity
     this.y += this.vy
     if (this.y >= this.baseY) {
@@ -353,102 +473,144 @@ const cat = {
   },
 
   draw(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
-    const scale = 1.2
     const cx = this.x
     const cy = this.y
 
     ctx.save()
 
-    // 跳跃时的阴影效果
+    // 跳跃时的阴影
     if (this.isJumping) {
       const shadowScale = 1 - (this.baseY - this.y) / this.jumpHeight * 0.3
       ctx.fillStyle = 'rgba(0,0,0,0.2)'
       ctx.beginPath()
-      ctx.ellipse(cx, this.baseY + 20, 40 * shadowScale, 15 * shadowScale, 0, 0, Math.PI * 2)
+      ctx.ellipse(cx, this.baseY + 20, 50 * shadowScale, 20 * shadowScale, 0, 0, Math.PI * 2)
       ctx.fill()
     }
 
-    // 身体（椭圆，背面视角）
-    ctx.fillStyle = '#FFB347'
-    ctx.strokeStyle = '#E8A030'
-    ctx.lineWidth = 2
+    // 绘制像素猫背面
+    const catSize = 1.8  // 缩放系数
+    const catWidth = 31 * PX * catSize  // 像素网格宽度
+    const catHeight = 17 * PX * catSize // 像素网格高度
 
-    // 主体
-    ctx.beginPath()
-    ctx.ellipse(cx, cy, 35 * scale, 45 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
+    // 创建像素猫的 box-shadow
+    const pixelShadow = pixelizeCatBack(catSize)
 
-    // 身体阴影效果
-    ctx.fillStyle = 'rgba(0,0,0,0.1)'
-    ctx.beginPath()
-    ctx.ellipse(cx + 10, cy + 10, 25 * scale, 35 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
+    // 使用一个div元素来绘制（通过box-shadow）
+    // 但在Canvas中，我们需要用另一种方式
+    // 这里我们用 fillRect 逐个绘制像素
+    const sPX = PX * catSize
+    const offsetX = cx - (catWidth / 2)
+    const offsetY = cy - (catHeight / 2)
 
-    // 后背条纹（橘猫特征）
-    ctx.strokeStyle = '#E8A030'
-    ctx.lineWidth = 3
-    for (let i = 0; i < 3; i++) {
-      const stripeY = cy - 20 + i * 20
-      ctx.beginPath()
-      ctx.moveTo(cx - 15, stripeY)
-      ctx.quadraticCurveTo(cx, stripeY - 5, cx + 15, stripeY)
-      ctx.stroke()
+    for (let y = 0; y < catBackPixels.length; y++) {
+      const row = catBackPixels[y]
+      if (!row) continue
+      for (let x = 0; x < row.length; x++) {
+        const color = row[x]
+        if (color && color !== T) {
+          ctx.fillStyle = color
+          ctx.fillRect(offsetX + x * sPX, offsetY + y * sPX, sPX, sPX)
+        }
+      }
     }
 
-    // 屁股部分（稍微突出）
-    ctx.fillStyle = '#FFB347'
-    ctx.beginPath()
-    ctx.ellipse(cx, cy + 35 * scale, 30 * scale, 25 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
-
-    // 尾巴（摆动）
-    const tailWagOffset = Math.sin(this.tailWag) * 15
-    ctx.strokeStyle = '#E8A030'
-    ctx.lineWidth = 8
-    ctx.lineCap = 'round'
-    ctx.beginPath()
-    ctx.moveTo(cx, cy + 50 * scale)
-    ctx.quadraticCurveTo(
-      cx + tailWagOffset,
-      cy + 70 * scale,
-      cx + tailWagOffset * 1.5,
-      cy + 50 * scale
-    )
-    ctx.stroke()
-
-    // 尾巴尖（白色）
-    ctx.strokeStyle = '#FFF'
-    ctx.lineWidth = 6
-    ctx.beginPath()
-    ctx.moveTo(cx + tailWagOffset * 1.3, cy + 58 * scale)
-    ctx.lineTo(cx + tailWagOffset * 1.5, cy + 50 * scale)
-    ctx.stroke()
-
-    // 后腿（简化为椭圆）
-    ctx.fillStyle = '#FFB347'
-    // 左后腿
-    ctx.beginPath()
-    ctx.ellipse(cx - 20 * scale, cy + 40 * scale, 12 * scale, 18 * scale, -0.2, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
-    // 右后腿
-    ctx.beginPath()
-    ctx.ellipse(cx + 20 * scale, cy + 40 * scale, 12 * scale, 18 * scale, 0.2, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
-
-    // 脚掌
-    ctx.fillStyle = '#FFD1DC'
-    ctx.beginPath()
-    ctx.ellipse(cx - 20 * scale, cy + 52 * scale, 8 * scale, 6 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.beginPath()
-    ctx.ellipse(cx + 20 * scale, cy + 52 * scale, 8 * scale, 6 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-
     ctx.restore()
+  }
+}
+
+// ---- 车道切换检测（左右摆动）----
+const laneDetector = {
+  history: [] as number[],
+  maxHistory: 20,
+  baseline: null as number | null,
+  baselineSamples: [] as number[],
+  leanThreshold: 0.08,  // 身体倾斜阈值
+
+  reset() {
+    this.history = []
+    this.baseline = null
+    this.baselineSamples = []
+    calibrated.value = false
+  },
+
+  detect(noseX: number): -1 | 0 | 1 {
+    if (!noseX || noseX <= 0 || noseX >= 1) return 0
+
+    // 收集基准线样本
+    if (!this.baseline) {
+      this.baselineSamples.push(noseX)
+      if (this.baselineSamples.length >= 15) {
+        const sorted = [...this.baselineSamples].sort((a, b) => a - b)
+        this.baseline = sorted[Math.floor(sorted.length / 2)] ?? null
+        calibrated.value = true
+      }
+      return 0
+    }
+
+    // 记录历史
+    this.history.push(noseX)
+    if (this.history.length > this.maxHistory) this.history.shift()
+
+    // 计算最近的平均位置
+    if (this.history.length < 10) return 0
+    const recent = this.history.slice(-8)
+    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
+
+    // 判断倾斜方向（镜像：视频是镜像的，所以鼻子的左边是用户的右边）
+    const leanLeft = avgRecent < this.baseline - this.leanThreshold
+    const leanRight = avgRecent > this.baseline + this.leanThreshold
+
+    if (leanLeft) return -1  // 向左倾斜（视频中的左边）
+    if (leanRight) return 1  // 向右倾斜（视频中的右边）
+    return 0  // 居中
+  }
+}
+
+// ---- 跳跃检测（保持原有逻辑）----
+const jumpDetector = {
+  history: [] as number[],
+  maxHistory: 15,
+  baseline: null as number | null,
+  baselineSamples: [] as number[],
+  jumping: false,
+  lastJumpTime: 0,
+  jumpCooldown: 400,
+  reset() {
+    this.history = []
+    this.baseline = null
+    this.baselineSamples = []
+    this.jumping = false
+    this.lastJumpTime = 0
+  },
+  detect(hipY: number): boolean {
+    if (!hipY || hipY <= 0 || hipY >= 1) return false
+    if (!this.baseline) {
+      this.baselineSamples.push(hipY)
+      if (this.baselineSamples.length >= 15) {
+        const sorted = [...this.baselineSamples].sort((a, b) => a - b)
+        this.baseline = sorted[Math.floor(sorted.length / 2)] ?? null
+        calibrated.value = true
+      }
+      return false
+    }
+    this.history.push(hipY)
+    if (this.history.length > this.maxHistory) this.history.shift()
+    if (this.history.length < 8) return false
+    const threshold = 0.03
+    const recent = this.history.slice(-5)
+    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
+    if (!this.jumping && (this.baseline - avgRecent) > threshold) {
+      this.jumping = true
+      return false
+    }
+    if (this.jumping && avgRecent >= this.baseline - threshold * 0.5) {
+      this.jumping = false
+      const now = Date.now()
+      if (now - this.lastJumpTime < this.jumpCooldown) return false
+      this.lastJumpTime = now
+      return true
+    }
+    return false
   }
 }
 
@@ -456,12 +618,12 @@ const cat = {
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number }
 const particles: Particle[] = []
 function spawnParticles(x: number, y: number) {
-  const colors = ['#FFB347', '#FFD1DC', '#FF6B6B', '#FFF', '#FFD700']
-  for (let i = 0; i < 10; i++) {
+  const colors = ['#FF9933', '#FFB6C1', '#FF6B6B', '#FFF', '#FFD700']
+  for (let i = 0; i < 12; i++) {
     particles.push({
       x, y,
-      vx: (Math.random() - 0.5) * 8,
-      vy: -Math.random() * 6 - 2,
+      vx: (Math.random() - 0.5) * 10,
+      vy: -Math.random() * 8 - 2,
       life: 1,
       color: colors[Math.floor(Math.random() * colors.length)]!,
       size: Math.random() * 8 + 4
@@ -507,55 +669,6 @@ function updateAndDrawFloatingTexts(ctx: CanvasRenderingContext2D) {
   ctx.globalAlpha = 1
 }
 
-// ---- 跳跃检测 ----
-const jumpDetector = {
-  history: [] as number[],
-  maxHistory: 15,
-  baseline: null as number | null,
-  baselineSamples: [] as number[],
-  jumping: false,
-  lastJumpTime: 0,
-  jumpCooldown: 400,
-  reset() {
-    this.history = []
-    this.baseline = null
-    this.baselineSamples = []
-    this.jumping = false
-    this.lastJumpTime = 0
-    calibrated.value = false
-  },
-  detect(hipY: number): boolean {
-    if (!hipY || hipY <= 0 || hipY >= 1) return false
-    if (!this.baseline) {
-      this.baselineSamples.push(hipY)
-      if (this.baselineSamples.length >= 15) {
-        const sorted = [...this.baselineSamples].sort((a, b) => a - b)
-        this.baseline = sorted[Math.floor(sorted.length / 2)] ?? null
-        calibrated.value = true
-      }
-      return false
-    }
-    this.history.push(hipY)
-    if (this.history.length > this.maxHistory) this.history.shift()
-    if (this.history.length < 8) return false
-    const threshold = 0.03
-    const recent = this.history.slice(-5)
-    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
-    if (!this.jumping && (this.baseline - avgRecent) > threshold) {
-      this.jumping = true
-      return false
-    }
-    if (this.jumping && avgRecent >= this.baseline - threshold * 0.5) {
-      this.jumping = false
-      const now = Date.now()
-      if (now - this.lastJumpTime < this.jumpCooldown) return false
-      this.lastJumpTime = now
-      return true
-    }
-    return false
-  }
-}
-
 // ---- 连击 ----
 let comboTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -592,7 +705,7 @@ function gameLoop() {
   drawHurdles(gameCtx, w, h)
 
   // 更新和绘制猫
-  cat.update()
+  cat.update(w)
   cat.draw(gameCtx, w, h)
 
   // 粒子和飘字
@@ -609,7 +722,6 @@ let poseInstance: any = null
 let cameraInstance: any = null
 
 function initPose() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   poseInstance = new (window as any).Pose({
     locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`,
   })
@@ -624,7 +736,6 @@ function initPose() {
   poseInstance.onResults(onPoseResults)
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function onPoseResults(results: any) {
   if (!poseCtx || !poseCanvasRef.value) return
   poseCtx.clearRect(0, 0, poseCanvasRef.value.width, poseCanvasRef.value.height)
@@ -634,17 +745,26 @@ function onPoseResults(results: any) {
     poseCtx.save()
     poseCtx.translate(poseCanvasRef.value.width, 0)
     poseCtx.scale(-1, 1)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(window as any).drawConnectors(poseCtx, results.poseLandmarks, (window as any).POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 2 })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(window as any).drawLandmarks(poseCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 1, radius: 3 })
     poseCtx.restore()
   }
 
   if (!running.value) return
 
+  const nose = results.poseLandmarks[0]
   const leftHip = results.poseLandmarks[23]
   const rightHip = results.poseLandmarks[24]
+
+  // 检测车道切换（用鼻子的x坐标）
+  if (nose) {
+    const lane = laneDetector.detect(nose.x)
+    if (lane !== 0) {
+      cat.switchLane(lane)
+    }
+  }
+
+  // 检测跳跃（用臀部的y坐标）
   if (leftHip && rightHip) {
     const hipY = (leftHip.y + rightHip.y) / 2
     if (jumpDetector.detect(hipY)) cat.jump()
@@ -665,7 +785,7 @@ function resizeCanvases() {
   }
   road.init(w, h)
   cat.baseY = h * 0.78
-  cat.x = w / 2
+  cat.updateScreenX(w)
   if (!cat.isJumping) cat.y = cat.baseY
 }
 
@@ -684,7 +804,6 @@ async function startGame() {
     resizeCanvases()
     initPose()
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cameraInstance = new (window as any).Camera(videoRef.value, {
       onFrame: async () => { if (poseInstance) await poseInstance.send({ image: videoRef.value }) },
       width: 480,
@@ -696,6 +815,7 @@ async function startGame() {
     score.value = 0
     combo.value = 0
     showCombo.value = false
+    laneDetector.reset()
     jumpDetector.reset()
     cat.reset(window.innerWidth, window.innerHeight)
     hurdles.length = 0
@@ -727,7 +847,6 @@ function goBack() {
 }
 
 onMounted(() => {
-  // 动态加载 MediaPipe CDN scripts
   const scripts = [
     'https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js',
     'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js',
@@ -756,6 +875,10 @@ onUnmounted(() => {
       <div class="start-box">
         <h1>{{ t('message.hurdleCatView.title') }}</h1>
         <p>{{ t('message.hurdleCatView.description') }}</p>
+        <div class="instructions">
+          <div class="instruction-item">🦘 跳跃躲避双栏杆</div>
+          <div class="instruction-item">↔️ 左右倾斜切换车道</div>
+        </div>
         <button class="start-btn" @click="startGame">{{ t('message.hurdleCatView.startButton') }}</button>
       </div>
     </div>
@@ -785,6 +908,13 @@ onUnmounted(() => {
 
       <div v-if="!calibrated" class="calibrate-hint">
         {{ t('message.hurdleCatView.calibrating') }}
+      </div>
+
+      <!-- 车道指示器 -->
+      <div class="lane-indicator">
+        <div class="lane-dot" :class="{ active: cat.lane < 0 }"></div>
+        <div class="lane-divider"></div>
+        <div class="lane-dot" :class="{ active: cat.lane > 0 }"></div>
       </div>
     </div>
   </div>
@@ -947,6 +1077,42 @@ onUnmounted(() => {
   }
 }
 
+/* 车道指示器 */
+.lane-indicator {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: #fff;
+  border: 4px solid #000;
+  box-shadow: 6px 6px 0 #000;
+  padding: 10px 20px;
+  pointer-events: none;
+}
+
+.lane-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ccc;
+  border: 3px solid #000;
+  transition: all 0.2s;
+}
+
+.lane-dot.active {
+  background: #FF9933;
+  transform: scale(1.3);
+}
+
+.lane-divider {
+  width: 30px;
+  height: 4px;
+  background: #000;
+}
+
 .overlay {
   position: fixed;
   top: 0;
@@ -975,8 +1141,25 @@ onUnmounted(() => {
 .start-box p {
   font-size: 18px;
   color: #666;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
   font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.instructions {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin-bottom: 30px;
+}
+
+.instruction-item {
+  background: #fff;
+  border: 3px solid #000;
+  box-shadow: 4px 4px 0 #000;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 900;
   letter-spacing: 1px;
 }
 
@@ -1017,6 +1200,16 @@ onUnmounted(() => {
     font-size: 14px;
   }
 
+  .instructions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .instruction-item {
+    font-size: 12px;
+    padding: 8px 16px;
+  }
+
   .start-btn {
     padding: 14px 32px;
     font-size: 16px;
@@ -1038,6 +1231,20 @@ onUnmounted(() => {
   .combo-board {
     font-size: 20px;
     top: 150px;
+  }
+
+  .lane-indicator {
+    bottom: 20px;
+    padding: 8px 16px;
+  }
+
+  .lane-dot {
+    width: 16px;
+    height: 16px;
+  }
+
+  .lane-divider {
+    width: 24px;
   }
 }
 </style>
