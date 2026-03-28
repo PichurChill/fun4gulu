@@ -50,7 +50,7 @@
         </section>
     <footer class="site-footer">
       <span>© {{ new Date().getFullYear() }} FUN4GULU</span>
-      <span class="version-tag">v0.0.6</span>
+      <span class="version-tag">v0.0.7</span>
     </footer>
   </div>
 </template>

@@ -232,7 +232,7 @@ const jumpDetector = {
   baselineSamples: [] as number[],
   jumping: false,
   lastJumpTime: 0,
-  jumpCooldown: 400,
+  jumpCooldown: 250,
   reset() {
     this.history = []; this.baseline = null; this.baselineSamples = []; this.jumping = false; this.lastJumpTime = 0
     calibrated.value = false
@@ -250,8 +250,8 @@ const jumpDetector = {
     }
     this.history.push(hipY)
     if (this.history.length > this.maxHistory) this.history.shift()
-    if (this.history.length < 8) return false
-    const threshold = 0.03
+    if (this.history.length < 5) return false
+    const threshold = 0.02
     const recent = this.history.slice(-5)
     const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
     if (!this.jumping && (this.baseline - avgRecent) > threshold) {

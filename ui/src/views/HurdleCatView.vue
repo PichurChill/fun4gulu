@@ -563,91 +563,124 @@ const laneDetector = {
   }
 }
 
-// ---- 手部模式检测器 ----
-const handModeDetector = {
-  // 车道检测（检测左右手腕高度）
-  wristHistory: [] as { leftY: number; rightY: number; timestamp: number }[],
-  maxHistory: 15,
-  wristBaseline: null as { leftY: number; rightY: number } | null,
-  baselineSamples: [] as { leftY: number; rightY: number }[],
-  heightThreshold: 0.08,  // 抬手高度阈值
-  lastLaneSwitchTime: 0,
-  laneSwitchCooldown: 300,  // 防抖冷却时间
+// ---- 手部模式检测器（基于 MediaPipe Hands）----
+interface HandLandmarks {
+  x: number
+  y: number
+  z?: number
+}
 
-  // 跳跃检测（检测任一只手超过肩膀）
-  jumpHistory: [] as number[],
-  jumpMaxHistory: 10,
-  shoulderBaseline: null as { leftY: number; rightY: number } | null,
-  shoulderBaselineSamples: [] as { leftY: number; rightY: number }[],
+interface HandResult {
+  landmarks: HandLandmarks[]
+  handedness: string // 'Left' or 'Right'
+}
+
+const handModeDetector = {
+  // 存储最新的手部检测结果
+  latestHandResult: null as HandResult | null,
+
+  // 车道检测（检测手腕左右挥动）
+  wristXHistory: [] as { x: number; timestamp: number }[],
+  maxHistory: 20,
+  wristBaseline: null as number | null,
+  baselineSamples: [] as number[],
+  moveThreshold: 0.12,  // 手腕移动阈值
+  lastLaneSwitchTime: 0,
+  laneSwitchCooldown: 400,  // 防抖冷却时间
+
+  // 跳跃检测（检测手指张开）
+  fingersOpenHistory: [] as boolean[],
+  maxFingerHistory: 8,
   lastJumpTime: 0,
-  jumpCooldown: 400,
+  jumpCooldown: 500,
+  fingersOpenThreshold: 3,  // 至少3个手指张开才算张开
 
   reset() {
-    this.wristHistory = []
-    this.wristBaseline = null
+    this.wristXHistory = []
+    this.wristBaseline = null as any
     this.baselineSamples = []
-    this.jumpHistory = []
-    this.shoulderBaseline = null
-    this.shoulderBaselineSamples = []
+    this.fingersOpenHistory = []
     this.lastJumpTime = 0
     this.lastLaneSwitchTime = 0
+    this.latestHandResult = null
     calibrated.value = false
   },
 
-  // 检测车道切换（检测哪只手抬得更高）
-  detectLane(leftWristY: number, rightWristY: number): -1 | 0 | 1 {
-    if (!leftWristY || leftWristY <= 0 || leftWristY >= 1 ||
-        !rightWristY || rightWristY <= 0 || rightWristY >= 1) return 0
+  // 更新手部检测结果
+  updateHandResult(result: HandResult | null) {
+    this.latestHandResult = result
+  },
+
+  // 检测手指是否张开
+  areFingersOpen(landmarks: HandLandmarks[]): boolean {
+    if (!landmarks || landmarks.length < 21) return false
+
+    // MediaPipe Hands 关键点索引：
+    // 0: 手腕
+    // 4: 大拇指尖, 2: 大拇指 MCP
+    // 8: 食指尖, 5: 食指 MCP
+    // 12: 中指尖, 9: 中指 MCP
+    // 16: 无名指尖, 13: 无名指 MCP
+    // 20: 小指尖, 17: 小指 MCP
+
+    const wrist = landmarks[0]!
+
+    // 检查食指、中指、无名指、小指是否张开（指尖在 MCP 关节上方，即 y 值更小）
+    const indexOpen = landmarks[8]!.y < landmarks[5]!.y
+    const middleOpen = landmarks[12]!.y < landmarks[9]!.y
+    const ringOpen = landmarks[16]!.y < landmarks[13]!.y
+    const pinkyOpen = landmarks[20]!.y < landmarks[17]!.y
+
+    const openCount = [indexOpen, middleOpen, ringOpen, pinkyOpen].filter(Boolean).length
+    return openCount >= this.fingersOpenThreshold
+  },
+
+  // 检测车道切换（检测手腕左右挥动）
+  detectLane(): -1 | 0 | 1 {
+    const result = this.latestHandResult
+    if (!result || !result.landmarks || result.landmarks.length < 1) return 0
+
+    const wrist = result.landmarks[0]! // 手腕 (landmark 0)
+    const wristX = wrist.x
 
     // 收集基准线样本（站立时手腕位置）
-    if (!this.wristBaseline) {
-      this.baselineSamples.push({ leftY: leftWristY, rightY: rightWristY })
+    if (this.wristBaseline === null) {
+      this.baselineSamples.push(wristX)
       if (this.baselineSamples.length >= 15) {
-        // 取中位数作为基准
-        const sortedLeft = [...this.baselineSamples].sort((a, b) => a.leftY - b.leftY)
-        const sortedRight = [...this.baselineSamples].sort((a, b) => a.rightY - b.rightY)
-        this.wristBaseline = {
-          leftY: sortedLeft[Math.floor(sortedLeft.length / 2)]!.leftY,
-          rightY: sortedRight[Math.floor(sortedRight.length / 2)]!.rightY
-        }
+        const sorted = [...this.baselineSamples].sort((a, b) => a - b)
+        this.wristBaseline = sorted[Math.floor(sorted.length / 2)]!
         calibrated.value = true
       }
       return 0
     }
 
     // 记录历史
-    this.wristHistory.push({
-      leftY: leftWristY,
-      rightY: rightWristY,
+    this.wristXHistory.push({
+      x: wristX,
       timestamp: Date.now()
     })
-    if (this.wristHistory.length > this.maxHistory) this.wristHistory.shift()
+    if (this.wristXHistory.length > this.maxHistory) this.wristXHistory.shift()
 
     // 计算最近的平均位置
-    if (this.wristHistory.length < 10) return 0
-    const recent = this.wristHistory.slice(-6)
+    if (this.wristXHistory.length < 10) return 0
+    const recent = this.wristXHistory.slice(-8)
 
     // 检查冷却时间
     const now = Date.now()
     if (now - this.lastLaneSwitchTime < this.laneSwitchCooldown) return 0
 
-    const avgLeft = recent.reduce((sum, h) => sum + h.leftY, 0) / recent.length
-    const avgRight = recent.reduce((sum, h) => sum + h.rightY, 0) / recent.length
+    const avgX = recent.reduce((sum, h) => sum + h.x, 0) / recent.length
 
-    // 计算相对于基准的抬手高度（y值越小表示越高）
-    const leftLift = this.wristBaseline.leftY - avgLeft
-    const rightLift = this.wristBaseline.rightY - avgRight
-
-    // 判断哪只手抬得更高
-    // 注意：MediaPipe Pose 中，landmark 15 是图像左侧=用户右手，landmark 16 是图像右侧=用户左手
-    // 所以这里需要镜像判断
-    if (leftLift > this.heightThreshold && leftLift > rightLift + 0.03) {
-      // 左手腕抬得高（图像左侧=用户右手）→ 切换到右车道
+    // 判断左右挥动（注意镜像：摄像头是镜像的，左手在画面右侧）
+    // wristX > baseline 表示手向右移动（画面中）= 用户向左挥 = 左车道
+    // wristX < baseline 表示手向左移动（画面中）= 用户向右挥 = 右车道
+    if (avgX < this.wristBaseline - this.moveThreshold) {
+      // 手向左移（画面中）= 用户向右挥 → 右车道
       this.lastLaneSwitchTime = now
       return 1
     }
-    if (rightLift > this.heightThreshold && rightLift > leftLift + 0.03) {
-      // 右手腕抬得高（图像右侧=用户左手）→ 切换到左车道
+    if (avgX > this.wristBaseline + this.moveThreshold) {
+      // 手向右移（画面中）= 用户向左挥 → 左车道
       this.lastLaneSwitchTime = now
       return -1
     }
@@ -655,35 +688,34 @@ const handModeDetector = {
     return 0
   },
 
-  // 检测跳跃（检测任一只手超过肩膀）
-  detectJump(leftWristY: number, rightWristY: number, leftShoulderY: number, rightShoulderY: number): boolean {
-    if (!leftWristY || !rightWristY || !leftShoulderY || !rightShoulderY) return false
-
-    // 收集肩膀基准
-    if (!this.shoulderBaseline) {
-      this.shoulderBaselineSamples.push({ leftY: leftShoulderY, rightY: rightShoulderY })
-      if (this.shoulderBaselineSamples.length >= 10) {
-        const sortedLeft = [...this.shoulderBaselineSamples].sort((a, b) => a.leftY - b.leftY)
-        const sortedRight = [...this.shoulderBaselineSamples].sort((a, b) => a.rightY - b.rightY)
-        this.shoulderBaseline = {
-          leftY: sortedLeft[Math.floor(sortedLeft.length / 2)]!.leftY,
-          rightY: sortedRight[Math.floor(sortedRight.length / 2)]!.rightY
-        }
-      }
-      return false
-    }
+  // 检测跳跃（检测手指张开）
+  detectJump(): boolean {
+    const result = this.latestHandResult
+    if (!result || !result.landmarks || result.landmarks.length < 21) return false
 
     // 检查冷却时间
     const now = Date.now()
     if (now - this.lastJumpTime < this.jumpCooldown) return false
 
-    // 检查任一只手是否超过对应肩膀（y值更小=更高）
-    const leftHandAbove = leftWristY < this.shoulderBaseline.leftY - 0.05
-    const rightHandAbove = rightWristY < this.shoulderBaseline.rightY - 0.05
+    const fingersOpen = this.areFingersOpen(result.landmarks)
 
-    if (leftHandAbove || rightHandAbove) {
-      this.lastJumpTime = now
-      return true
+    // 记录历史
+    this.fingersOpenHistory.push(fingersOpen)
+    if (this.fingersOpenHistory.length > this.maxFingerHistory) {
+      this.fingersOpenHistory.shift()
+    }
+
+    // 检测从握拳到张开的转换
+    if (this.fingersOpenHistory.length >= 4) {
+      const recent = this.fingersOpenHistory.slice(-4)
+      // 前几个是握拳，最后一个是张开
+      const wasClosed = recent.slice(0, -1).every(state => !state)
+      const isOpen = recent[recent.length - 1]
+
+      if (wasClosed && isOpen) {
+        this.lastJumpTime = now
+        return true
+      }
     }
 
     return false
@@ -843,6 +875,7 @@ function gameLoop() {
 
 // ---- MediaPipe ----
 let poseInstance: any = null
+let handsInstance: any = null
 let cameraInstance: any = null
 
 function initPose() {
@@ -858,6 +891,75 @@ function initPose() {
     minTrackingConfidence: 0.5,
   })
   poseInstance.onResults(onPoseResults)
+}
+
+function initHands() {
+  handsInstance = new (window as any).Hands({
+    locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+  })
+  handsInstance.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  })
+  handsInstance.onResults(onHandsResults)
+}
+
+function onHandsResults(results: any) {
+  // 更新手部检测结果
+  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    const landmarks = results.multiHandLandmarks[0]
+    const handedness = results.multiHandedness?.[0]?.label || 'Right'
+    handModeDetector.updateHandResult({
+      landmarks,
+      handedness
+    })
+
+    // Debug 模式下绘制手部关键点
+    if (debugMode.value && poseCtx && poseCanvasRef.value) {
+      poseCtx.save()
+      poseCtx.translate(poseCanvasRef.value.width, 0)
+      poseCtx.scale(-1, 1)
+
+      // 绘制手部连接线
+      const HAND_CONNECTIONS = [
+        [0, 1], [1, 2], [2, 3], [3, 4],           // 拇指
+        [0, 5], [5, 6], [6, 7], [7, 8],           // 食指
+        [0, 9], [9, 10], [10, 11], [11, 12],      // 中指
+        [0, 13], [13, 14], [14, 15], [15, 16],    // 无名指
+        [0, 17], [17, 18], [18, 19], [19, 20],    // 小指
+        [5, 9], [9, 13], [13, 17]                 // 手掌
+      ]
+
+      for (const [start, end] of HAND_CONNECTIONS) {
+        const p1 = landmarks[start!]
+        const p2 = landmarks[end!]
+        poseCtx.strokeStyle = '#00FFFF'
+        poseCtx.lineWidth = 2
+        poseCtx.beginPath()
+        poseCtx.moveTo(p1.x * poseCanvasRef.value.width, p1.y * poseCanvasRef.value.height)
+        poseCtx.lineTo(p2.x * poseCanvasRef.value.width, p2.y * poseCanvasRef.value.height)
+        poseCtx.stroke()
+      }
+
+      // 绘制关键点
+      for (const landmark of landmarks) {
+        poseCtx.fillStyle = '#FF00FF'
+        poseCtx.beginPath()
+        poseCtx.arc(
+          landmark.x * poseCanvasRef.value.width,
+          landmark.y * poseCanvasRef.value.height,
+          4, 0, Math.PI * 2
+        )
+        poseCtx.fill()
+      }
+
+      poseCtx.restore()
+    }
+  } else {
+    handModeDetector.updateHandResult(null)
+  }
 }
 
 function onPoseResults(results: any) {
@@ -879,10 +981,6 @@ function onPoseResults(results: any) {
   const nose = results.poseLandmarks[0]
   const leftHip = results.poseLandmarks[23]
   const rightHip = results.poseLandmarks[24]
-  const leftWrist = results.poseLandmarks[15]
-  const rightWrist = results.poseLandmarks[16]
-  const leftShoulder = results.poseLandmarks[11]
-  const rightShoulder = results.poseLandmarks[12]
 
   // 根据控制模式使用不同的检测逻辑
   if (controlMode.value === 'body') {
@@ -899,18 +997,14 @@ function onPoseResults(results: any) {
       if (jumpDetector.detect(hipY)) cat.jump()
     }
   } else {
-    // 手部模式：用手腕检测车道切换和跳跃
-    if (leftWrist && rightWrist) {
-      const lane = handModeDetector.detectLane(leftWrist.y, rightWrist.y)
-      if (lane !== 0) {
-        cat.switchLane(lane)
-      }
+    // 手部模式：使用 Hands 模型的检测结果
+    const lane = handModeDetector.detectLane()
+    if (lane !== 0) {
+      cat.switchLane(lane)
     }
 
-    if (leftWrist && rightWrist && leftShoulder && rightShoulder) {
-      if (handModeDetector.detectJump(leftWrist.y, rightWrist.y, leftShoulder.y, rightShoulder.y)) {
-        cat.jump()
-      }
+    if (handModeDetector.detectJump()) {
+      cat.jump()
     }
   }
 }
@@ -947,9 +1041,13 @@ async function startGame() {
     gameCtx = gameCanvasRef.value?.getContext('2d') ?? null
     resizeCanvases()
     initPose()
+    initHands()
 
     cameraInstance = new (window as any).Camera(videoRef.value, {
-      onFrame: async () => { if (poseInstance) await poseInstance.send({ image: videoRef.value }) },
+      onFrame: async () => {
+        if (poseInstance) await poseInstance.send({ image: videoRef.value })
+        if (handsInstance) await handsInstance.send({ image: videoRef.value })
+      },
       width: 480,
       height: 360,
     })
@@ -961,6 +1059,7 @@ async function startGame() {
     showCombo.value = false
     laneDetector.reset()
     jumpDetector.reset()
+    handModeDetector.reset()
     cat.reset(window.innerWidth, window.innerHeight)
     hurdles.length = 0
     particles.length = 0
@@ -1006,6 +1105,7 @@ function goBack() {
 onMounted(() => {
   const scripts = [
     'https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js',
+    'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js',
     'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js',
     'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.js',
   ]
