@@ -169,10 +169,10 @@ const road = {
       const stripeIndex = Math.floor((i + this.scrollOffset / 4) % 4)
       const isLight = stripeIndex < 2
       const grassColor = isLight ? '#3a6b34' : '#2d5a27'
+      const roadColor = isLight ? '#555555' : '#4a4a4a'
 
-      // 草地分段（仅道路两侧，不覆盖道路）
+      // 草地分段（仅道路两侧）
       ctx.fillStyle = grassColor
-      // 左侧草地
       ctx.beginPath()
       ctx.moveTo(0, seg2.y)
       ctx.lineTo(0, seg1.y)
@@ -180,12 +180,21 @@ const road = {
       ctx.lineTo(cw / 2 - seg2.width / 2, seg2.y)
       ctx.closePath()
       ctx.fill()
-      // 右侧草地
       ctx.beginPath()
       ctx.moveTo(cw, seg2.y)
       ctx.lineTo(cw, seg1.y)
       ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
       ctx.lineTo(cw / 2 + seg2.width / 2, seg2.y)
+      ctx.closePath()
+      ctx.fill()
+
+      // 道路分段（梯形，逐段填充）
+      ctx.fillStyle = roadColor
+      ctx.beginPath()
+      ctx.moveTo(cw / 2 - seg1.width / 2, seg1.y)
+      ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
+      ctx.lineTo(cw / 2 + seg2.width / 2, seg2.y)
+      ctx.lineTo(cw / 2 - seg2.width / 2, seg2.y)
       ctx.closePath()
       ctx.fill()
 
@@ -214,16 +223,6 @@ const road = {
         ctx.setLineDash([])
       }
     }
-
-    // 道路纯色填充（覆盖在草地之上，确保道路干净）
-    ctx.fillStyle = '#555555'
-    ctx.beginPath()
-    ctx.moveTo(cw / 2 - this.getRoadAtDepth(0, cw, ch).width / 2, this.getRoadAtDepth(0, cw, ch).y)
-    ctx.lineTo(cw / 2 + this.getRoadAtDepth(0, cw, ch).width / 2, this.getRoadAtDepth(0, cw, ch).y)
-    ctx.lineTo(cw / 2 + this.getRoadAtDepth(1, cw, ch).width / 2, this.getRoadAtDepth(1, cw, ch).y)
-    ctx.lineTo(cw / 2 - this.getRoadAtDepth(1, cw, ch).width / 2, this.getRoadAtDepth(1, cw, ch).y)
-    ctx.closePath()
-    ctx.fill()
   }
 }
 
