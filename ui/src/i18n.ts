@@ -25,6 +25,17 @@ const messages = {
           title: '示例小游戏 2',
           desc: '探索未知的像素世界。'
         }
+      },
+      jumpCatView: {
+        title: '🐱 跳跳猫',
+        description: '站在摄像头前，跳跃得分！',
+        startButton: '🎮 开始游戏',
+        back: '返回',
+        score: '分数',
+        combo: '连击',
+        debug: '调试',
+        stop: '结束',
+        calibrating: '请站在画面中间，校准中...'
       }
     }
   },
@@ -52,6 +63,17 @@ const messages = {
           title: 'Demo Game 2',
           desc: 'Explore the unknown pixel world.'
         }
+      },
+      jumpCatView: {
+        title: '🐱 Jump Cat',
+        description: 'Stand in front of the camera and jump to score!',
+        startButton: '🎮 Start Game',
+        back: 'BACK',
+        score: 'SCORE',
+        combo: 'COMBO',
+        debug: 'DEBUG',
+        stop: 'STOP',
+        calibrating: 'Stand in center, calibrating...'
       }
     }
   },
@@ -79,6 +101,17 @@ const messages = {
           title: 'デモゲーム 2',
           desc: '未知のピクセル世界を探索しよう。'
         }
+      },
+      jumpCatView: {
+        title: '🐱 ジャンプ猫',
+        description: 'カメラの前に立ってジャンプして得点！',
+        startButton: '🎮 ゲームスタート',
+        back: '戻る',
+        score: 'スコア',
+        combo: 'コンボ',
+        debug: 'デバッグ',
+        stop: '終了',
+        calibrating: '画面の中央に立ってください、校正中...'
       }
     }
   },
@@ -106,6 +139,17 @@ const messages = {
           title: '데모 게임 2',
           desc: '미지의 픽셀 세계를 탐험하세요.'
         }
+      },
+      jumpCatView: {
+        title: '🐱 점프 고양이',
+        description: '카메라 앞에 서서 점프하여 점수를 획득하세요!',
+        startButton: '🎮 게임 시작',
+        back: '뒤로',
+        score: '점수',
+        combo: '콤보',
+        debug: '디버그',
+        stop: '종료',
+        calibrating: '화면 중앙에 서 주세요, 보정 중...'
       }
     }
   },
@@ -133,6 +177,17 @@ const messages = {
           title: 'Jeu de Démo 2',
           desc: 'Explorez le monde pixel inconnu.'
         }
+      },
+      jumpCatView: {
+        title: '🐱 Chat Sauteur',
+        description: 'Tenez-vous devant la caméra et sautez pour marquer !',
+        startButton: '🎮 Démarrer',
+        back: 'Retour',
+        score: 'Score',
+        combo: 'Combo',
+        debug: 'Débogage',
+        stop: 'Arrêter',
+        calibrating: 'Tenez-vous au centre, calibration en cours...'
       }
     }
   }

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
+const { t } = useI18n()
 
 // ---- 状态 ----
 const running = ref(false)
@@ -430,9 +432,9 @@ onUnmounted(() => {
     <!-- 开始界面 -->
     <div v-if="!running" class="overlay">
       <div class="start-box">
-        <h1>🐱 跳跳猫</h1>
-        <p>站在摄像头前，跳跃得分！</p>
-        <button class="start-btn" @click="startGame">🎮 开始游戏</button>
+        <h1>{{ t('message.jumpCatView.title') }}</h1>
+        <p>{{ t('message.jumpCatView.description') }}</p>
+        <button class="start-btn" @click="startGame">{{ t('message.jumpCatView.startButton') }}</button>
       </div>
     </div>
 
@@ -449,18 +451,18 @@ onUnmounted(() => {
     <div v-if="running" class="ui-layer">
       <!-- 顶部工具栏 -->
       <div class="top-bar">
-        <button class="mario-btn" @click="goBack">&lt; BACK</button>
-        <div class="score-box">SCORE: {{ score }}</div>
+        <button class="mario-btn" @click="goBack">&lt; {{ t('message.jumpCatView.back') }}</button>
+        <div class="score-box">{{ t('message.jumpCatView.score') }}: {{ score }}</div>
         <div class="top-bar-right">
-          <button class="mario-btn" :class="{ active: debugMode }" @click="toggleDebug">DEBUG</button>
-          <button class="mario-btn danger" @click="stopGame">STOP</button>
+          <button class="mario-btn" :class="{ active: debugMode }" @click="toggleDebug">{{ t('message.jumpCatView.debug') }}</button>
+          <button class="mario-btn danger" @click="stopGame">{{ t('message.jumpCatView.stop') }}</button>
         </div>
       </div>
 
-      <div v-if="showCombo" class="combo-board" :key="combo">COMBO x{{ combo }}</div>
+      <div v-if="showCombo" class="combo-board" :key="combo">{{ t('message.jumpCatView.combo') }} x{{ combo }}</div>
 
       <div v-if="!calibrated" class="calibrate-hint">
-        STAND IN CENTER / CALIBRATING...
+        {{ t('message.jumpCatView.calibrating') }}
       </div>
     </div>
   </div>
