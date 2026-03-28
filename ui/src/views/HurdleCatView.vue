@@ -1121,7 +1121,19 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopGame()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
+
+// 浏览器切回前台时重启检测
+function onVisibilityChange() {
+  if (!document.hidden && running.value) {
+    // 重置检测状态
+    laneDetector.reset()
+    handModeDetector.reset()
+    calibrated.value = false
+  }
+}
+document.addEventListener('visibilitychange', onVisibilityChange)
 </script>
 
 <template>

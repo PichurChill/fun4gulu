@@ -424,7 +424,16 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopGame()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
+
+function onVisibilityChange() {
+  if (!document.hidden && running.value) {
+    jumpDetector.reset()
+    calibrated.value = false
+  }
+}
+document.addEventListener('visibilitychange', onVisibilityChange)
 </script>
 
 <template>
