@@ -37,7 +37,7 @@
       <div class="stage-inner">
         <div class="title-block"><h2 class="section-label">/ SOFTWARE_LIBRARY</h2><div class="title-line"></div></div>
         <div class="game-grid">
-          <router-link v-for="(game, index) in games" :key="game.id" :to="`/game/${game.id}`" class="game-card">
+          <router-link v-for="(game, index) in games" :key="game.id" :to="getGameRoute(game)" class="game-card">
             <div class="card-top"><span class="card-id">#0{{index + 1}}</span><div class="card-status-dot"></div></div>
             <div class="card-main">
                <div class="pixel-art-container"><img :src="getIcon(game.id)" class="game-icon" /></div>
@@ -56,11 +56,19 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
-const games = [{ id: 'demo1' }, { id: 'demo2' }]
+const games = [
+  { id: 'jump-cat', external: true },
+  { id: 'demo1' },
+  { id: 'demo2' }
+]
 function getIcon(id: string) {
+  if (id === 'jump-cat') return 'https://win98icons.alexmeub.com/icons/png/object_cat-4.png'
   return id === 'demo1'
     ? 'https://win98icons.alexmeub.com/icons/png/game_solitaire-4.png'
     : 'https://win98icons.alexmeub.com/icons/png/game_freecell-4.png'
+}
+function getGameRoute(game: { id: string; external?: boolean }) {
+  return game.external ? `/${game.id}` : `/game/${game.id}`
 }
 
 const mouse = reactive({ x: 0, y: 0 })

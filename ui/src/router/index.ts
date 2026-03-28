@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import GameView from '../views/GameView.vue'
+import JumpCatView from '../views/JumpCatView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -14,6 +15,11 @@ const router = createRouter({
       path: '/game/:id',
       name: 'game',
       component: GameView
+    },
+    {
+      path: '/jump-cat',
+      name: 'jump-cat',
+      component: JumpCatView
     }
   ]
 })

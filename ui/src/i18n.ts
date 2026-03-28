@@ -17,6 +17,10 @@ const messages = {
           title: '示例小游戏 1',
           desc: '一个简单的网页小游戏Demo。'
         },
+        jump-cat: {
+          title: '跳跳猫',
+          desc: '体感跳跃小游戏！站在摄像头前跳跃，小猫同步跳跃得分！'
+        },
         demo2: {
           title: '示例小游戏 2',
           desc: '探索未知的像素世界。'
@@ -36,6 +40,10 @@ const messages = {
       loading: 'Loading...',
       coming_soon: 'More games coming soon...',
       games: {
+        jump-cat: {
+          title: 'Jump Cat',
+          desc: 'A motion-sensing jumping game! Stand in front of the camera and jump!'
+        },
         demo1: {
           title: 'Demo Game 1',
           desc: 'A simple web game demo.'
@@ -59,6 +67,10 @@ const messages = {
       loading: 'ロード中...',
       coming_soon: 'もっと多くのゲームをお楽しみに...',
       games: {
+        jump-cat: {
+          title: 'ジャンプ猫',
+          desc: '体感ジャンプゲーム！カメラの前に立ってジャンプしよう！'
+        },
         demo1: {
           title: 'デモゲーム 1',
           desc: '簡単なWebゲームのデモ。'
@@ -82,6 +94,10 @@ const messages = {
       loading: '로딩 중...',
       coming_soon: '더 많은 게임이 곧 제공됩니다...',
       games: {
+        jump-cat: {
+          title: '점프 고양이',
+          desc: '체감 점프 게임! 카메라 앞에 서서 점프하세요!'
+        },
         demo1: {
           title: '데모 게임 1',
           desc: '간단한 웹 게임 데모.'
@@ -105,6 +121,10 @@ const messages = {
       loading: 'Chargement...',
       coming_soon: 'Plus de jeux à venir...',
       games: {
+        jump-cat: {
+          title: 'Chat Sauteur',
+          desc: 'Jeu de saut sensoriel ! Tenez-vous devant la caméra et sautez !'
+        },
         demo1: {
           title: 'Jeu de Démo 1',
           desc: 'Une simple démo de jeu web.'
