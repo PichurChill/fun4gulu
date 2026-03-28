@@ -349,7 +349,7 @@ function resizeCanvases() {
   const h = window.innerHeight
   if (poseCanvasRef.value) { poseCanvasRef.value.width = w; poseCanvasRef.value.height = h }
   if (gameCanvasRef.value) { gameCanvasRef.value.width = w; gameCanvasRef.value.height = h }
-  cat.baseY = h - 150
+  cat.baseY = h * 0.6
   cat.x = w / 2
   if (!cat.isJumping) cat.y = cat.baseY
 }
@@ -550,7 +550,7 @@ onUnmounted(() => {
 
 .controls {
   position: absolute;
-  bottom: 30px; right: 30px;
+  top: 20px; right: 30px;
   display: flex; gap: 10px;
 }
 .ctrl-btn {
