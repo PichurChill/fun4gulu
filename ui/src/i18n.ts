@@ -17,6 +17,10 @@ const messages = {
           title: '跳跳猫',
           desc: '体感跳跃小游戏！站在摄像头前跳跃，小猫同步跳跃得分！'
         },
+        "hurdle-cat": {
+          title: '跨栏小猫',
+          desc: '第一视角跨栏游戏！小猫持续前进，跳跃躲避栏杆！'
+        },
         demo1: {
           title: '示例小游戏 1',
           desc: '一个简单的网页小游戏Demo。'
@@ -29,6 +33,17 @@ const messages = {
       jumpCatView: {
         title: '跳跳猫',
         description: '站在摄像头前，跳跃得分！',
+        startButton: '🎮 开始游戏',
+        back: '返回',
+        score: '分数',
+        combo: '连击',
+        debug: '调试',
+        stop: '结束',
+        calibrating: '请站在画面中间，校准中...'
+      },
+      hurdleCatView: {
+        title: '跨栏小猫',
+        description: '小猫一直在前进，跳跃躲避栏杆！',
         startButton: '🎮 开始游戏',
         back: '返回',
         score: '分数',
@@ -55,6 +70,10 @@ const messages = {
           title: 'Jump Cat',
           desc: 'A motion-sensing jumping game! Stand in front of the camera and jump!'
         },
+        "hurdle-cat": {
+          title: 'Hurdle Cat',
+          desc: 'First-person hurdle game! The cat keeps moving forward, jump to avoid hurdles!'
+        },
         demo1: {
           title: 'Demo Game 1',
           desc: 'A simple web game demo.'
@@ -67,6 +86,17 @@ const messages = {
       jumpCatView: {
         title: 'Jump Cat',
         description: 'Stand in front of the camera and jump to score!',
+        startButton: '🎮 Start Game',
+        back: 'BACK',
+        score: 'SCORE',
+        combo: 'COMBO',
+        debug: 'DEBUG',
+        stop: 'STOP',
+        calibrating: 'Stand in center, calibrating...'
+      },
+      hurdleCatView: {
+        title: 'Hurdle Cat',
+        description: 'The cat keeps moving forward, jump to avoid hurdles!',
         startButton: '🎮 Start Game',
         back: 'BACK',
         score: 'SCORE',
@@ -93,6 +123,10 @@ const messages = {
           title: 'ジャンプ猫',
           desc: '体感ジャンプゲーム！カメラの前に立ってジャンプしよう！'
         },
+        "hurdle-cat": {
+          title: 'ハードル猫',
+          desc: '一人称視点ハードルゲーム！猫が前に進み続け、ジャンプしてハードルを避けよう！'
+        },
         demo1: {
           title: 'デモゲーム 1',
           desc: '簡単なWebゲームのデモ。'
@@ -105,6 +139,17 @@ const messages = {
       jumpCatView: {
         title: 'ジャンプ猫',
         description: 'カメラの前に立ってジャンプして得点！',
+        startButton: '🎮 ゲームスタート',
+        back: '戻る',
+        score: 'スコア',
+        combo: 'コンボ',
+        debug: 'デバッグ',
+        stop: '終了',
+        calibrating: '画面の中央に立ってください、校正中...'
+      },
+      hurdleCatView: {
+        title: 'ハードル猫',
+        description: '猫が前に進み続け、ジャンプしてハードルを避けよう！',
         startButton: '🎮 ゲームスタート',
         back: '戻る',
         score: 'スコア',
@@ -131,6 +176,10 @@ const messages = {
           title: '점프 고양이',
           desc: '체감 점프 게임! 카메라 앞에 서서 점프하세요!'
         },
+        "hurdle-cat": {
+          title: '허들 고양이',
+          desc: '1인칭 허들 게임! 고양이가 계속 앞으로 나아가고, 점프하여 허들을 피하세요!'
+        },
         demo1: {
           title: '데모 게임 1',
           desc: '간단한 웹 게임 데모.'
@@ -143,6 +192,17 @@ const messages = {
       jumpCatView: {
         title: '점프 고양이',
         description: '카메라 앞에 서서 점프하여 점수를 획득하세요!',
+        startButton: '🎮 게임 시작',
+        back: '뒤로',
+        score: '점수',
+        combo: '콤보',
+        debug: '디버그',
+        stop: '종료',
+        calibrating: '화면 중앙에 서 주세요, 보정 중...'
+      },
+      hurdleCatView: {
+        title: '허들 고양이',
+        description: '고양이가 계속 앞으로 나아가고, 점프하여 허들을 피하세요!',
         startButton: '🎮 게임 시작',
         back: '뒤로',
         score: '점수',
@@ -169,6 +229,10 @@ const messages = {
           title: 'Chat Sauteur',
           desc: 'Jeu de saut sensoriel ! Tenez-vous devant la caméra et sautez !'
         },
+        "hurdle-cat": {
+          title: 'Chat Haies',
+          desc: 'Jeu de haies à la première personne ! Le chat avance constamment, sautez pour éviter les haies !'
+        },
         demo1: {
           title: 'Jeu de Démo 1',
           desc: 'Une simple démo de jeu web.'
@@ -181,6 +245,17 @@ const messages = {
       jumpCatView: {
         title: 'Chat Sauteur',
         description: 'Tenez-vous devant la caméra et sautez pour marquer !',
+        startButton: '🎮 Démarrer',
+        back: 'Retour',
+        score: 'Score',
+        combo: 'Combo',
+        debug: 'Débogage',
+        stop: 'Arrêter',
+        calibrating: 'Tenez-vous au centre, calibration en cours...'
+      },
+      hurdleCatView: {
+        title: 'Chat Haies',
+        description: 'Le chat avance constamment, sautez pour éviter les haies !',
         startButton: '🎮 Démarrer',
         back: 'Retour',
         score: 'Score',

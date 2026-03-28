@@ -58,11 +58,13 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const games = [
   { id: 'jump-cat', external: true },
+  { id: 'hurdle-cat', external: true },
   { id: 'demo1' },
   { id: 'demo2' }
 ]
 function getIcon(id: string) {
   if (id === 'jump-cat') return 'https://win98icons.alexmeub.com/icons/png/object_cat-4.png'
+  if (id === 'hurdle-cat') return 'https://win98icons.alexmeub.com/icons/png/msagent2-4.png'
   return id === 'demo1'
     ? 'https://win98icons.alexmeub.com/icons/png/game_solitaire-4.png'
     : 'https://win98icons.alexmeub.com/icons/png/game_freecell-4.png'
