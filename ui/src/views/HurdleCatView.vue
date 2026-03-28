@@ -23,52 +23,10 @@ const gameCanvasRef = ref<HTMLCanvasElement | null>(null)
 let poseCtx: CanvasRenderingContext2D | null = null
 let gameCtx: CanvasRenderingContext2D | null = null
 
-// ---- 像素猫绘制常量（参考 HomeView） ----
-const T = '' // transparent
-const B = '#000'
-const O = '#FF9933' // 橘猫主色
-const D = '#CC7A00' // 暗橘色
-const P = '#FFB6C1' // 粉色
-const PX = 6 // 像素单位大小
-
-// 像素猫背面数据（屁股 + 后腿 + 尾巴）
-const catBackPixels = [
-  [T,T,T,T,T,T,T,T,T,T,T,T,B,B,B,B,B,B,B,B,T,T,T,T,T,T,T,T,T,T,T,T],
-  [T,T,T,T,T,T,T,B,B,B,B,B,D,O,O,O,O,O,O,O,D,B,B,B,B,T,T,T,T,T,T],
-  [T,T,T,T,T,B,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,B,T,T,T,T],
-  [T,T,T,T,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,T,T,T],
-  [T,T,T,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,T,T],
-  [T,T,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B,T],
-  [T,T,B,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,B,T],
-  [T,B,D,O,O,O,O,O,O,D,D,D,D,D,D,D,D,D,D,D,O,O,O,O,O,O,O,O,D,B],
-  [T,B,O,O,O,O,O,D,D,O,D,O,D,O,D,O,D,O,D,O,D,D,O,O,O,O,O,O,O,B],
-  [T,B,O,O,O,O,D,O,O,O,D,O,O,O,D,O,O,O,D,O,O,O,D,O,O,O,O,O,O,B],
-  [T,B,O,O,O,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,O,O,O,O,B],
-  [T,B,O,O,O,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,O,O,O,O,B],
-  [T,B,O,O,D,O,O,O,T,T,T,T,T,T,T,T,T,T,T,T,T,O,O,O,O,D,O,O,O,B],
-  [T,B,O,O,D,O,O,O,T,T,T,T,T,T,T,T,T,T,T,T,T,T,O,O,O,D,O,O,O,B],
-  [T,T,B,D,O,O,O,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,O,O,D,O,O,B,T],
-  [T,T,T,B,D,D,D,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,D,D,D,D,B,T,T],
-  [T,T,T,T,B,B,B,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,B,B,B,T,T,T,T],
-  [T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T],
-]
-
-// 使用 box-shadow 技术绘制像素猫
-function pixelizeCatBack(scale = 1): string {
-  const shadows: string[] = []
-  const sPX = PX * scale
-  for (let y = 0; y < catBackPixels.length; y++) {
-    const row = catBackPixels[y]
-    if (!row) continue
-    for (let x = 0; x < row.length; x++) {
-      const color = row[x]
-      if (color && color !== T) {
-        shadows.push(`${x * sPX}px ${y * sPX}px 0 0 ${color}`)
-      }
-    }
-  }
-  return shadows.join(',')
-}
+// ---- 橘猫绘制常量 ----
+const CAT_MAIN_COLOR = '#FFB347'    // 橘猫主色
+const CAT_DARK_COLOR = '#E8A030'    // 暗橘色
+const CAT_PINK_COLOR = '#FFD1DC'    // 粉色（内耳）
 
 // ---- 音频 ----
 let audioCtx: AudioContext | null = null
@@ -483,36 +441,87 @@ const cat = {
       const shadowScale = 1 - (this.baseY - this.y) / this.jumpHeight * 0.3
       ctx.fillStyle = 'rgba(0,0,0,0.2)'
       ctx.beginPath()
-      ctx.ellipse(cx, this.baseY + 20, 50 * shadowScale, 20 * shadowScale, 0, 0, Math.PI * 2)
+      ctx.ellipse(cx, this.baseY + 20, 40 * shadowScale, 15 * shadowScale, 0, 0, Math.PI * 2)
       ctx.fill()
     }
 
-    // 绘制像素猫背面
-    const catSize = 1.8  // 缩放系数
-    const catWidth = 31 * PX * catSize  // 像素网格宽度
-    const catHeight = 17 * PX * catSize // 像素网格高度
+    // 绘制橘猫背面（60% 大小）
+    const scale = 0.6
 
-    // 创建像素猫的 box-shadow
-    const pixelShadow = pixelizeCatBack(catSize)
+    // 身体（椭圆形）
+    ctx.fillStyle = CAT_MAIN_COLOR
+    ctx.beginPath()
+    ctx.ellipse(cx, cy - 10 * scale, 45 * scale, 50 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = CAT_DARK_COLOR
+    ctx.lineWidth = 3 * scale
+    ctx.stroke()
 
-    // 使用一个div元素来绘制（通过box-shadow）
-    // 但在Canvas中，我们需要用另一种方式
-    // 这里我们用 fillRect 逐个绘制像素
-    const sPX = PX * catSize
-    const offsetX = cx - (catWidth / 2)
-    const offsetY = cy - (catHeight / 2)
+    // 左耳朵（尖三角形）
+    ctx.fillStyle = CAT_MAIN_COLOR
+    ctx.beginPath()
+    ctx.moveTo(cx - 25 * scale, cy - 40 * scale)
+    ctx.lineTo(cx - 35 * scale, cy - 75 * scale)
+    ctx.lineTo(cx - 12 * scale, cy - 50 * scale)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
 
-    for (let y = 0; y < catBackPixels.length; y++) {
-      const row = catBackPixels[y]
-      if (!row) continue
-      for (let x = 0; x < row.length; x++) {
-        const color = row[x]
-        if (color && color !== T) {
-          ctx.fillStyle = color
-          ctx.fillRect(offsetX + x * sPX, offsetY + y * sPX, sPX, sPX)
-        }
-      }
-    }
+    // 左耳朵内部（粉色）
+    ctx.fillStyle = CAT_PINK_COLOR
+    ctx.beginPath()
+    ctx.moveTo(cx - 23 * scale, cy - 43 * scale)
+    ctx.lineTo(cx - 31 * scale, cy - 68 * scale)
+    ctx.lineTo(cx - 15 * scale, cy - 48 * scale)
+    ctx.closePath()
+    ctx.fill()
+
+    // 右耳朵（尖三角形）
+    ctx.fillStyle = CAT_MAIN_COLOR
+    ctx.beginPath()
+    ctx.moveTo(cx + 25 * scale, cy - 40 * scale)
+    ctx.lineTo(cx + 35 * scale, cy - 75 * scale)
+    ctx.lineTo(cx + 12 * scale, cy - 50 * scale)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+
+    // 右耳朵内部（粉色）
+    ctx.fillStyle = CAT_PINK_COLOR
+    ctx.beginPath()
+    ctx.moveTo(cx + 23 * scale, cy - 43 * scale)
+    ctx.lineTo(cx + 31 * scale, cy - 68 * scale)
+    ctx.lineTo(cx + 15 * scale, cy - 48 * scale)
+    ctx.closePath()
+    ctx.fill()
+
+    // 尾巴（从右上方伸出，微微弯曲）
+    ctx.strokeStyle = CAT_MAIN_COLOR
+    ctx.lineWidth = 12 * scale
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(cx + 30 * scale, cy - 20 * scale)
+    ctx.quadraticCurveTo(cx + 60 * scale, cy - 50 * scale, cx + 50 * scale, cy - 85 * scale)
+    ctx.stroke()
+    ctx.strokeStyle = CAT_DARK_COLOR
+    ctx.lineWidth = 2 * scale
+    ctx.stroke()
+
+    // 左后腿（椭圆形）
+    ctx.fillStyle = CAT_MAIN_COLOR
+    ctx.beginPath()
+    ctx.ellipse(cx - 25 * scale, cy + 35 * scale, 18 * scale, 12 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = CAT_DARK_COLOR
+    ctx.lineWidth = 3 * scale
+    ctx.stroke()
+
+    // 右后腿（椭圆形）
+    ctx.fillStyle = CAT_MAIN_COLOR
+    ctx.beginPath()
+    ctx.ellipse(cx + 25 * scale, cy + 35 * scale, 18 * scale, 12 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
 
     ctx.restore()
   }
