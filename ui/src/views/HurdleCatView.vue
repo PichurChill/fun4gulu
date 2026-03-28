@@ -625,14 +625,15 @@ const handModeDetector = {
 
     const wrist = landmarks[0]!
 
-    // 检查食指、中指、无名指、小指是否张开（指尖在 MCP 关节上方，即 y 值更小）
-    const indexOpen = landmarks[8]!.y < landmarks[5]!.y
-    const middleOpen = landmarks[12]!.y < landmarks[9]!.y
-    const ringOpen = landmarks[16]!.y < landmarks[13]!.y
-    const pinkyOpen = landmarks[20]!.y < landmarks[17]!.y
+    // 检查5根手指是否全部张开（指尖在对应关节上方，即 y 值更小）
+    const thumbOpen = landmarks[4]!.y < landmarks[2]!.y
+    const indexOpen = landmarks[8]!.y < landmarks[6]!.y - 0.02
+    const middleOpen = landmarks[12]!.y < landmarks[10]!.y - 0.02
+    const ringOpen = landmarks[16]!.y < landmarks[14]!.y - 0.02
+    const pinkyOpen = landmarks[20]!.y < landmarks[18]!.y - 0.02
 
-    const openCount = [indexOpen, middleOpen, ringOpen, pinkyOpen].filter(Boolean).length
-    return openCount >= this.fingersOpenThreshold
+    const allOpen = thumbOpen && indexOpen && middleOpen && ringOpen && pinkyOpen
+    return allOpen
   },
 
   // 检测车道切换（检测手挥动趋势/速度）
