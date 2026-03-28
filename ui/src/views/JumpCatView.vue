@@ -550,7 +550,7 @@ onUnmounted(() => {
 
 .controls {
   position: absolute;
-  top: 20px; right: 30px;
+  top: 100px; right: 30px;
   display: flex; gap: 10px;
 }
 .ctrl-btn {
