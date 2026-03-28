@@ -27,7 +27,7 @@ const messages = {
         }
       },
       jumpCatView: {
-        title: '🐱 跳跳猫',
+        title: '跳跳猫',
         description: '站在摄像头前，跳跃得分！',
         startButton: '🎮 开始游戏',
         back: '返回',
@@ -65,7 +65,7 @@ const messages = {
         }
       },
       jumpCatView: {
-        title: '🐱 Jump Cat',
+        title: 'Jump Cat',
         description: 'Stand in front of the camera and jump to score!',
         startButton: '🎮 Start Game',
         back: 'BACK',
@@ -103,7 +103,7 @@ const messages = {
         }
       },
       jumpCatView: {
-        title: '🐱 ジャンプ猫',
+        title: 'ジャンプ猫',
         description: 'カメラの前に立ってジャンプして得点！',
         startButton: '🎮 ゲームスタート',
         back: '戻る',
@@ -141,7 +141,7 @@ const messages = {
         }
       },
       jumpCatView: {
-        title: '🐱 점프 고양이',
+        title: '점프 고양이',
         description: '카메라 앞에 서서 점프하여 점수를 획득하세요!',
         startButton: '🎮 게임 시작',
         back: '뒤로',
@@ -179,7 +179,7 @@ const messages = {
         }
       },
       jumpCatView: {
-        title: '🐱 Chat Sauteur',
+        title: 'Chat Sauteur',
         description: 'Tenez-vous devant la caméra et sautez pour marquer !',
         startButton: '🎮 Démarrer',
         back: 'Retour',
