@@ -893,7 +893,7 @@ function onPoseResults(results: any) {
         cat.switchLane(lane)
       }
 
-      if (headModeDetector.detectJump(nose.y)) cat.jump()
+      // 头部模式下不检测跳跃，只通过左右移动躲避
     }
   }
 }
