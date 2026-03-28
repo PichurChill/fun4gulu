@@ -13,7 +13,7 @@ const combo = ref(0)
 const showCombo = ref(false)
 const debugMode = ref(false)
 const calibrated = ref(false)
-const controlMode = ref<'body' | 'head'>('body')
+const controlMode = ref<'body' | 'hand'>('body')
 
 // ---- DOM refs ----
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -563,116 +563,125 @@ const laneDetector = {
   }
 }
 
-// ---- 头部模式检测器 ----
-const headModeDetector = {
-  // 车道检测（头部左右倾斜）
-  laneHistory: [] as number[],
-  laneMaxHistory: 20,
-  laneBaseline: null as number | null,
-  laneBaselineSamples: [] as number[],
-  laneThreshold: 0.12,  // 头部倾斜阈值（比身体大）
+// ---- 手部模式检测器 ----
+const handModeDetector = {
+  // 车道检测（检测左右手腕高度）
+  wristHistory: [] as { leftY: number; rightY: number; timestamp: number }[],
+  maxHistory: 15,
+  wristBaseline: null as { leftY: number; rightY: number } | null,
+  baselineSamples: [] as { leftY: number; rightY: number }[],
+  heightThreshold: 0.08,  // 抬手高度阈值
   lastLaneSwitchTime: 0,
   laneSwitchCooldown: 300,  // 防抖冷却时间
 
-  // 跳跃检测（点头）
+  // 跳跃检测（检测任一只手超过肩膀）
   jumpHistory: [] as number[],
-  jumpMaxHistory: 15,
-  jumpBaseline: null as number | null,
-  jumpBaselineSamples: [] as number[],
-  nodding: false,
+  jumpMaxHistory: 10,
+  shoulderBaseline: null as { leftY: number; rightY: number } | null,
+  shoulderBaselineSamples: [] as { leftY: number; rightY: number }[],
   lastJumpTime: 0,
   jumpCooldown: 400,
 
   reset() {
-    this.laneHistory = []
-    this.laneBaseline = null
-    this.laneBaselineSamples = []
+    this.wristHistory = []
+    this.wristBaseline = null
+    this.baselineSamples = []
     this.jumpHistory = []
-    this.jumpBaseline = null
-    this.jumpBaselineSamples = []
-    this.nodding = false
+    this.shoulderBaseline = null
+    this.shoulderBaselineSamples = []
     this.lastJumpTime = 0
     this.lastLaneSwitchTime = 0
     calibrated.value = false
   },
 
-  // 检测车道切换（头部左右倾斜）
-  detectLane(noseX: number): -1 | 0 | 1 {
-    if (!noseX || noseX <= 0 || noseX >= 1) return 0
+  // 检测车道切换（检测哪只手抬得更高）
+  detectLane(leftWristY: number, rightWristY: number): -1 | 0 | 1 {
+    if (!leftWristY || leftWristY <= 0 || leftWristY >= 1 ||
+        !rightWristY || rightWristY <= 0 || rightWristY >= 1) return 0
 
-    // 收集基准线样本
-    if (!this.laneBaseline) {
-      this.laneBaselineSamples.push(noseX)
-      if (this.laneBaselineSamples.length >= 15) {
-        const sorted = [...this.laneBaselineSamples].sort((a, b) => a - b)
-        this.laneBaseline = sorted[Math.floor(sorted.length / 2)] ?? null
+    // 收集基准线样本（站立时手腕位置）
+    if (!this.wristBaseline) {
+      this.baselineSamples.push({ leftY: leftWristY, rightY: rightWristY })
+      if (this.baselineSamples.length >= 15) {
+        // 取中位数作为基准
+        const sortedLeft = [...this.baselineSamples].sort((a, b) => a.leftY - b.leftY)
+        const sortedRight = [...this.baselineSamples].sort((a, b) => a.rightY - b.rightY)
+        this.wristBaseline = {
+          leftY: sortedLeft[Math.floor(sortedLeft.length / 2)]!.leftY,
+          rightY: sortedRight[Math.floor(sortedRight.length / 2)]!.rightY
+        }
         calibrated.value = true
       }
       return 0
     }
 
     // 记录历史
-    this.laneHistory.push(noseX)
-    if (this.laneHistory.length > this.laneMaxHistory) this.laneHistory.shift()
+    this.wristHistory.push({
+      leftY: leftWristY,
+      rightY: rightWristY,
+      timestamp: Date.now()
+    })
+    if (this.wristHistory.length > this.maxHistory) this.wristHistory.shift()
 
     // 计算最近的平均位置
-    if (this.laneHistory.length < 10) return 0
-    const recent = this.laneHistory.slice(-8)
-    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
+    if (this.wristHistory.length < 10) return 0
+    const recent = this.wristHistory.slice(-6)
 
     // 检查冷却时间
     const now = Date.now()
     if (now - this.lastLaneSwitchTime < this.laneSwitchCooldown) return 0
 
-    // 判断倾斜方向（镜像：视频是镜像的）
-    const leanLeft = avgRecent < this.laneBaseline - this.laneThreshold
-    const leanRight = avgRecent > this.laneBaseline + this.laneThreshold
+    const avgLeft = recent.reduce((sum, h) => sum + h.leftY, 0) / recent.length
+    const avgRight = recent.reduce((sum, h) => sum + h.rightY, 0) / recent.length
 
-    if (leanLeft) {
+    // 计算相对于基准的抬手高度（y值越小表示越高）
+    const leftLift = this.wristBaseline.leftY - avgLeft
+    const rightLift = this.wristBaseline.rightY - avgRight
+
+    // 判断哪只手抬得更高
+    // 注意：MediaPipe Pose 中，landmark 15 是图像左侧=用户右手，landmark 16 是图像右侧=用户左手
+    // 所以这里需要镜像判断
+    if (leftLift > this.heightThreshold && leftLift > rightLift + 0.03) {
+      // 左手腕抬得高（图像左侧=用户右手）→ 切换到右车道
       this.lastLaneSwitchTime = now
-      return -1  // 向左倾斜
+      return 1
     }
-    if (leanRight) {
+    if (rightLift > this.heightThreshold && rightLift > leftLift + 0.03) {
+      // 右手腕抬得高（图像右侧=用户左手）→ 切换到左车道
       this.lastLaneSwitchTime = now
-      return 1  // 向右倾斜
+      return -1
     }
+
     return 0
   },
 
-  // 检测跳跃（点头）
-  detectJump(noseY: number): boolean {
-    if (!noseY || noseY <= 0 || noseY >= 1) return false
+  // 检测跳跃（检测任一只手超过肩膀）
+  detectJump(leftWristY: number, rightWristY: number, leftShoulderY: number, rightShoulderY: number): boolean {
+    if (!leftWristY || !rightWristY || !leftShoulderY || !rightShoulderY) return false
 
-    // 收集基准线样本
-    if (!this.jumpBaseline) {
-      this.jumpBaselineSamples.push(noseY)
-      if (this.jumpBaselineSamples.length >= 15) {
-        const sorted = [...this.jumpBaselineSamples].sort((a, b) => a - b)
-        this.jumpBaseline = sorted[Math.floor(sorted.length / 2)] ?? null
+    // 收集肩膀基准
+    if (!this.shoulderBaseline) {
+      this.shoulderBaselineSamples.push({ leftY: leftShoulderY, rightY: rightShoulderY })
+      if (this.shoulderBaselineSamples.length >= 10) {
+        const sortedLeft = [...this.shoulderBaselineSamples].sort((a, b) => a.leftY - b.leftY)
+        const sortedRight = [...this.shoulderBaselineSamples].sort((a, b) => a.rightY - b.rightY)
+        this.shoulderBaseline = {
+          leftY: sortedLeft[Math.floor(sortedLeft.length / 2)]!.leftY,
+          rightY: sortedRight[Math.floor(sortedRight.length / 2)]!.rightY
+        }
       }
       return false
     }
 
-    // 记录历史
-    this.jumpHistory.push(noseY)
-    if (this.jumpHistory.length > this.jumpMaxHistory) this.jumpHistory.shift()
+    // 检查冷却时间
+    const now = Date.now()
+    if (now - this.lastJumpTime < this.jumpCooldown) return false
 
-    if (this.jumpHistory.length < 8) return false
+    // 检查任一只手是否超过对应肩膀（y值更小=更高）
+    const leftHandAbove = leftWristY < this.shoulderBaseline.leftY - 0.05
+    const rightHandAbove = rightWristY < this.shoulderBaseline.rightY - 0.05
 
-    const threshold = 0.04  // 点头阈值
-    const recent = this.jumpHistory.slice(-5)
-    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
-
-    // 检测点头动作：y值先下降（低头）然后恢复
-    if (!this.nodding && (this.jumpBaseline - avgRecent) > threshold) {
-      this.nodding = true
-      return false
-    }
-
-    if (this.nodding && avgRecent >= this.jumpBaseline - threshold * 0.5) {
-      this.nodding = false
-      const now = Date.now()
-      if (now - this.lastJumpTime < this.jumpCooldown) return false
+    if (leftHandAbove || rightHandAbove) {
       this.lastJumpTime = now
       return true
     }
@@ -870,6 +879,10 @@ function onPoseResults(results: any) {
   const nose = results.poseLandmarks[0]
   const leftHip = results.poseLandmarks[23]
   const rightHip = results.poseLandmarks[24]
+  const leftWrist = results.poseLandmarks[15]
+  const rightWrist = results.poseLandmarks[16]
+  const leftShoulder = results.poseLandmarks[11]
+  const rightShoulder = results.poseLandmarks[12]
 
   // 根据控制模式使用不同的检测逻辑
   if (controlMode.value === 'body') {
@@ -886,14 +899,18 @@ function onPoseResults(results: any) {
       if (jumpDetector.detect(hipY)) cat.jump()
     }
   } else {
-    // 头部模式：用鼻子检测车道切换和跳跃
-    if (nose) {
-      const lane = headModeDetector.detectLane(nose.x)
+    // 手部模式：用手腕检测车道切换和跳跃
+    if (leftWrist && rightWrist) {
+      const lane = handModeDetector.detectLane(leftWrist.y, rightWrist.y)
       if (lane !== 0) {
         cat.switchLane(lane)
       }
+    }
 
-      // 头部模式下不检测跳跃，只通过左右移动躲避
+    if (leftWrist && rightWrist && leftShoulder && rightShoulder) {
+      if (handModeDetector.detectJump(leftWrist.y, rightWrist.y, leftShoulder.y, rightShoulder.y)) {
+        cat.jump()
+      }
     }
   }
 }
@@ -970,14 +987,14 @@ function toggleDebug() {
 
 function toggleControlMode() {
   const oldMode = controlMode.value
-  controlMode.value = controlMode.value === 'body' ? 'head' : 'body'
+  controlMode.value = controlMode.value === 'body' ? 'hand' : 'body'
 
   // 切换模式时重置检测器状态
   if (oldMode === 'body') {
     laneDetector.reset()
     jumpDetector.reset()
   } else {
-    headModeDetector.reset()
+    handModeDetector.reset()
   }
 }
 
@@ -1019,13 +1036,13 @@ onUnmounted(() => {
           <button class="mode-option" :class="{ active: controlMode === 'body' }" @click="controlMode = 'body'">
             {{ t('message.hurdleCatView.bodyMode') }}
           </button>
-          <button class="mode-option" :class="{ active: controlMode === 'head' }" @click="controlMode = 'head'">
-            {{ t('message.hurdleCatView.headMode') }}
+          <button class="mode-option" :class="{ active: controlMode === 'hand' }" @click="controlMode = 'hand'">
+            {{ t('message.hurdleCatView.handMode') }}
           </button>
         </div>
         <div class="instructions">
           <div class="instruction-item">
-            {{ controlMode === 'body' ? t('message.hurdleCatView.instructionsBody') : t('message.hurdleCatView.instructionsHead') }}
+            {{ controlMode === 'body' ? t('message.hurdleCatView.instructionsBody') : t('message.hurdleCatView.instructionsHand') }}
           </div>
         </div>
         <button class="start-btn" @click="startGame">{{ t('message.hurdleCatView.startButton') }}</button>
@@ -1048,7 +1065,7 @@ onUnmounted(() => {
         <button class="mario-btn" @click="goBack">&lt; {{ t('message.hurdleCatView.back') }}</button>
         <div class="score-box">{{ t('message.hurdleCatView.score') }}: {{ score }}</div>
         <button class="mario-btn mode-btn" @click="toggleControlMode">
-          {{ t('message.hurdleCatView.controlMode') }}: {{ controlMode === 'body' ? t('message.hurdleCatView.bodyMode') : t('message.hurdleCatView.headMode') }}
+          {{ t('message.hurdleCatView.controlMode') }}: {{ controlMode === 'body' ? t('message.hurdleCatView.bodyMode') : t('message.hurdleCatView.handMode') }}
         </button>
         <div class="top-bar-right">
           <button class="mario-btn" :class="{ active: debugMode }" @click="toggleDebug">{{ t('message.hurdleCatView.debug') }}</button>

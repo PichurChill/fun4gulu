@@ -53,9 +53,9 @@ const messages = {
         calibrating: '请站在画面中间，校准中...',
         controlMode: '控制模式',
         bodyMode: '身体',
-        headMode: '头部',
+        handMode: '手部',
         instructionsBody: '身体左右摆动切换车道，跳跃躲避栏杆',
-        instructionsHead: '头部左右倾斜切换车道，点头跳跃躲避栏杆'
+        instructionsHand: '抬起左手/右手切换车道，双手上抬跳跃'
       }
     }
   },
@@ -111,9 +111,9 @@ const messages = {
         calibrating: 'Stand in center, calibrating...',
         controlMode: 'Control Mode',
         bodyMode: 'Body',
-        headMode: 'Head',
+        handMode: 'Hand',
         instructionsBody: 'Lean body to switch lanes, jump to avoid hurdles',
-        instructionsHead: 'Tilt head to switch lanes, nod to jump'
+        instructionsHand: 'Raise left/right hand to switch lane, raise both to jump'
       }
     }
   },
@@ -169,9 +169,9 @@ const messages = {
         calibrating: '画面の中央に立ってください、校正中...',
         controlMode: 'コントロールモード',
         bodyMode: '体',
-        headMode: '頭',
+        handMode: '手',
         instructionsBody: '体を左右に傾けてレーン変更、ジャンプしてハードルを回避',
-        instructionsHead: '頭を左右に傾けてレーン変更、うなずいてジャンプ'
+        instructionsHand: '左右の手を上げてレーン切り替え、両手上げでジャンプ'
       }
     }
   },
@@ -227,9 +227,9 @@ const messages = {
         calibrating: '화면 중앙에 서 주세요, 보정 중...',
         controlMode: '컨트롤 모드',
         bodyMode: '몸',
-        headMode: '머리',
+        handMode: '손',
         instructionsBody: '몸을 좌우로 기울여 차선 변경, 점프하여 허들 회피',
-        instructionsHead: '머리를 좌우로 기울여 차선 변경, 끄덕여 점프'
+        instructionsHand: '왼손/오른손을 들어 차선 변경, 양손을 들어 점프'
       }
     }
   },
@@ -285,9 +285,9 @@ const messages = {
         calibrating: 'Tenez-vous au centre, calibration en cours...',
         controlMode: 'Mode de contrôle',
         bodyMode: 'Corps',
-        headMode: 'Tête',
+        handMode: 'Main',
         instructionsBody: 'Penchez le corps pour changer de voie, sautez pour éviter les haies',
-        instructionsHead: 'Penchez la tête pour changer de voie, hochez la tête pour sauter'
+        instructionsHand: 'Levez la main gauche/droite pour changer de voie, les deux pour sauter'
       }
     }
   }
