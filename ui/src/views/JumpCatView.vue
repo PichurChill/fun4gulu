@@ -349,7 +349,7 @@ function resizeCanvases() {
   const h = window.innerHeight
   if (poseCanvasRef.value) { poseCanvasRef.value.width = w; poseCanvasRef.value.height = h }
   if (gameCanvasRef.value) { gameCanvasRef.value.width = w; gameCanvasRef.value.height = h }
-  cat.baseY = h * 0.5
+  cat.baseY = h * 0.4
   cat.x = w / 2
   if (!cat.isJumping) cat.y = cat.baseY
 }
@@ -566,7 +566,7 @@ onUnmounted(() => {
 
 .calibrate-hint {
   position: fixed;
-  bottom: 80px; left: 50%;
+  bottom: 160px; left: 50%;
   transform: translateX(-50%);
   background: #fff;
   border: 4px solid #000;
