@@ -47,7 +47,11 @@
           </router-link>
         </div>
       </div>
-    </section>
+        </section>
+    <footer class="site-footer">
+      <span>© 2025 FUN4GULU</span>
+      <span class="version-tag">v0.0.1</span>
+    </footer>
   </div>
 </template>
 
@@ -252,6 +256,30 @@ const currentFrameStyle = computed(() => ({
   .game-grid { grid-template-columns: 1fr; gap: 20px; }
 }
 
+.site-footer {
+  border-top: 4px solid #000;
+  padding: 20px 80px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-secondary, #666);
+  background: transparent;
+}
+.version-tag {
+  background: #000;
+  color: #fff;
+  padding: 4px 12px;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+@media (max-width: 1024px) {
+  .site-footer { padding: 20px 40px; }
+}
+@media (max-width: 768px) {
+  .site-footer { padding: 20px; }
+}
 @media (max-width: 480px) {
   .hero-stage { padding: 0 15px 40px; }
   .hero-title { font-size: 12vw; white-space: nowrap; letter-spacing: -2px; }
