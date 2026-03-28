@@ -349,7 +349,7 @@ function resizeCanvases() {
   const h = window.innerHeight
   if (poseCanvasRef.value) { poseCanvasRef.value.width = w; poseCanvasRef.value.height = h }
   if (gameCanvasRef.value) { gameCanvasRef.value.width = w; gameCanvasRef.value.height = h }
-  cat.baseY = h * 0.6
+  cat.baseY = h * 0.5
   cat.x = w / 2
   if (!cat.isJumping) cat.y = cat.baseY
 }
