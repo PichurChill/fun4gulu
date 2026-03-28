@@ -502,7 +502,7 @@ onUnmounted(() => {
 
 .score-board {
   position: absolute;
-  top: 20px; left: 50%;
+  top: 100px; left: 50%;
   transform: translateX(-50%);
   background: rgba(0,0,0,0.5);
   backdrop-filter: blur(10px);
@@ -516,7 +516,7 @@ onUnmounted(() => {
 
 .combo-board {
   position: absolute;
-  top: 80px; left: 50%;
+  top: 160px; left: 50%;
   transform: translateX(-50%);
   background: linear-gradient(135deg, #ff6b6b, #ee5a24);
   color: #fff;
