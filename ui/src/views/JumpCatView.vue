@@ -190,12 +190,12 @@ const particles: Particle[] = []
 function spawnParticles(x: number, y: number) {
   const colors = ['#FFB347', '#FFD1DC', '#FF6B6B', '#FFF']
   for (let i = 0; i < 8; i++) {
-    particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: -Math.random() * 4 - 2, life: 1, color: colors[Math.floor(Math.random() * colors.length)], size: Math.random() * 6 + 3 })
+    particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: -Math.random() * 4 - 2, life: 1, color: colors[Math.floor(Math.random() * colors.length)]!, size: Math.random() * 6 + 3 })
   }
 }
 function updateAndDrawParticles(ctx: CanvasRenderingContext2D) {
   for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i]
+    const p = particles[i]!
     p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= 0.025
     if (p.life <= 0) { particles.splice(i, 1); continue }
     ctx.globalAlpha = p.life; ctx.fillStyle = p.color
@@ -212,7 +212,7 @@ function spawnFloatingText(x: number, y: number, text: string) {
 }
 function updateAndDrawFloatingTexts(ctx: CanvasRenderingContext2D) {
   for (let i = floatingTexts.length - 1; i >= 0; i--) {
-    const t = floatingTexts[i]
+    const t = floatingTexts[i]!
     t.y -= 2; t.life -= 0.02
     if (t.life <= 0) { floatingTexts.splice(i, 1); continue }
     ctx.globalAlpha = t.life; ctx.fillStyle = '#FFD700'
@@ -241,7 +241,7 @@ const jumpDetector = {
       this.baselineSamples.push(hipY)
       if (this.baselineSamples.length >= 30) {
         const sorted = [...this.baselineSamples].sort((a, b) => a - b)
-        this.baseline = sorted[Math.floor(sorted.length / 2)]
+        this.baseline = sorted[Math.floor(sorted.length / 2)] ?? null
         calibrated.value = true
       }
       return false
