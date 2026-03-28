@@ -31,23 +31,25 @@ const D = '#CC7A00'    // 暗橘色
 const P = '#FFD1DC'    // 粉色（内耳）
 const PX = 4           // 像素单位大小
 
-// 从背后看的橘猫像素图（身体+双耳+尾巴+后腿）
+// 从背后看的橘猫像素图（19x17，耳朵+头+身体+尾巴+后腿）
 const backCatPixels = [
-  [T,T,T,B,B,B,T,T,T,T,T,T,T,T,B,B,B,T,T,T],
-  [T,T,B,O,O,O,B,T,T,T,T,T,T,B,O,O,O,B,T,T],
-  [T,T,B,O,D,O,B,T,T,T,T,T,B,O,D,O,O,B,T,T],
-  [T,T,B,O,O,O,B,T,T,T,T,T,B,O,O,O,O,B,T,T],
-  [T,B,O,O,O,O,O,B,T,T,T,T,B,O,O,O,O,O,B,T],
-  [T,B,O,O,O,O,O,B,T,T,T,T,B,O,O,O,O,O,B,T],
-  [B,O,O,O,O,O,O,O,B,T,T,B,O,O,O,O,O,O,O,B],
-  [B,O,O,O,O,O,O,O,B,T,T,B,O,O,O,O,O,O,O,B],
-  [B,D,O,O,O,O,O,O,D,B,T,B,D,O,O,O,O,O,D,B],
-  [B,D,O,O,O,O,O,O,D,B,T,B,D,O,O,O,O,O,D,B],
-  [T,B,D,O,O,O,O,O,D,B,T,B,D,O,O,O,O,D,B,T],
-  [T,T,B,D,D,O,O,O,O,D,D,D,O,O,O,O,D,B,T,T],
-  [T,T,T,B,D,D,D,O,O,O,O,O,O,D,D,D,B,T,T,T],
-  [T,T,T,T,T,B,B,B,D,D,D,D,D,B,B,B,T,T,T,T,T],
-  [T,T,T,T,T,T,T,T,B,B,B,B,B,T,T,T,T,T,T,T,T],
+  [T,T,T,T,B,T,T,T,T,T,T,T,T,T,B,T,T,T,T,T],
+  [T,T,T,B,O,B,T,T,T,T,T,T,T,T,B,O,B,T,T,T],
+  [T,T,T,B,P,B,T,T,T,T,T,T,T,T,B,P,B,T,T,T],
+  [T,T,T,B,O,B,T,T,T,T,T,T,T,T,B,O,B,T,T,T],
+  [T,T,B,O,O,O,B,T,T,T,T,T,B,O,O,O,B,T,T,T],
+  [T,T,B,O,O,O,O,B,T,T,T,B,O,O,O,O,B,T,T,T],
+  [T,T,B,D,O,O,O,O,B,T,T,B,O,O,O,D,B,T,T,T],
+  [T,B,O,O,O,O,O,O,O,T,O,O,O,O,O,O,O,B,T,T],
+  [T,B,O,O,O,O,O,O,O,T,O,O,O,O,O,O,O,B,T,T],
+  [B,O,O,O,O,O,O,O,O,T,O,O,O,O,O,O,O,O,B,T],
+  [B,O,D,O,O,O,O,O,O,T,O,O,O,O,O,O,D,O,B,T],
+  [B,D,D,O,O,O,O,O,O,T,O,O,O,O,O,D,D,O,B,T],
+  [T,B,D,D,O,O,O,O,O,T,O,O,O,O,O,D,B,T,T,T],
+  [T,T,B,D,D,D,O,O,O,T,O,O,O,D,D,D,B,T,T,T],
+  [T,T,T,B,B,B,D,D,D,T,D,D,D,B,B,B,T,T,T,T],
+  [T,T,T,T,T,T,B,D,B,T,B,D,B,T,T,T,T,T,T,T],
+  [T,T,T,T,T,T,T,B,B,T,B,B,T,T,T,T,T,T,T,T],
 ]
 
 // ---- 音频 ----
