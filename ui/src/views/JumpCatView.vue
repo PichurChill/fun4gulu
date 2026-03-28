@@ -447,17 +447,20 @@ onUnmounted(() => {
 
     <!-- UI 层 -->
     <div v-if="running" class="ui-layer">
-      <div class="score-board">🎯 分数: {{ score }}</div>
-      <div v-if="showCombo" class="combo-board" :key="combo">🔥 连击 x{{ combo }}</div>
-
-      <div v-if="!calibrated" class="calibrate-hint">
-        👤 请站在画面中间，校准中...
+      <!-- 顶部工具栏 -->
+      <div class="top-bar">
+        <button class="mario-btn" @click="goBack">&lt; BACK</button>
+        <div class="score-box">SCORE: {{ score }}</div>
+        <div class="top-bar-right">
+          <button class="mario-btn" :class="{ active: debugMode }" @click="toggleDebug">DEBUG</button>
+          <button class="mario-btn danger" @click="stopGame">STOP</button>
+        </div>
       </div>
 
-      <div class="controls">
-        <button class="ctrl-btn" :class="{ active: debugMode }" @click="toggleDebug">🔍 调试</button>
-        <button class="ctrl-btn" @click="stopGame">⏹ 结束</button>
-        <button class="ctrl-btn" @click="goBack">← 返回</button>
+      <div v-if="showCombo" class="combo-board" :key="combo">COMBO x{{ combo }}</div>
+
+      <div v-if="!calibrated" class="calibrate-hint">
+        STAND IN CENTER / CALIBRATING...
       </div>
     </div>
   </div>
@@ -491,116 +494,141 @@ onUnmounted(() => {
 
 .ui-layer {
   position: fixed;
-  top: 0; left: 0;
-  width: 100vw; height: 100vh;
+  top: 80px; left: 0;
+  width: 100vw;
   z-index: 10;
   pointer-events: none;
-}
-.ui-layer .controls {
-  pointer-events: auto;
+  padding: 0 30px;
+  box-sizing: border-box;
 }
 
-.score-board {
-  position: absolute;
-  top: 100px; left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0,0,0,0.5);
-  backdrop-filter: blur(10px);
-  color: #fff;
-  font-size: 28px;
-  font-weight: bold;
-  padding: 10px 30px;
-  border-radius: 50px;
-  border: 2px solid rgba(255,255,255,0.2);
+/* 顶部工具栏 - 首页风格 */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: auto;
+  background: #fff;
+  border: 4px solid #000;
+  box-shadow: 6px 6px 0 #000;
+  padding: 10px 20px;
 }
+
+.score-box {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: #000;
+}
+
+.top-bar-right {
+  display: flex;
+  gap: 10px;
+}
+
+.mario-btn {
+  background: #000;
+  color: #fff;
+  border: none;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.3);
+  transition: transform 0.1s;
+}
+.mario-btn:hover { transform: translate(2px, 2px); box-shadow: 2px 2px 0 rgba(0,0,0,0.3); }
+.mario-btn:active { transform: translate(4px, 4px); box-shadow: none; }
+.mario-btn.danger { background: #e63946; }
+.mario-btn.active { background: #2a9d8f; }
 
 .combo-board {
-  position: absolute;
+  position: fixed;
   top: 160px; left: 50%;
   transform: translateX(-50%);
-  background: linear-gradient(135deg, #ff6b6b, #ee5a24);
-  color: #fff;
-  font-size: 22px;
-  font-weight: bold;
-  padding: 6px 24px;
-  border-radius: 30px;
+  background: #fff;
+  border: 4px solid #000;
+  box-shadow: 6px 6px 0 #000;
+  color: #e63946;
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  padding: 8px 28px;
   animation: comboPulse 0.3s ease;
+  pointer-events: none;
+  z-index: 10;
 }
 @keyframes comboPulse {
-  0% { transform: translateX(-50%) scale(1.3); }
+  0% { transform: translateX(-50%) scale(1.2); }
   100% { transform: translateX(-50%) scale(1); }
 }
 
 .calibrate-hint {
-  position: absolute;
-  bottom: 100px; left: 50%;
+  position: fixed;
+  bottom: 80px; left: 50%;
   transform: translateX(-50%);
-  background: rgba(0,0,0,0.6);
-  backdrop-filter: blur(10px);
-  color: #fff;
+  background: #fff;
+  border: 4px solid #000;
+  box-shadow: 6px 6px 0 #000;
+  color: #000;
   padding: 12px 28px;
-  border-radius: 30px;
-  font-size: 18px;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 1px;
   animation: hintBounce 1.5s ease infinite;
+  pointer-events: none;
+  z-index: 10;
 }
 @keyframes hintBounce {
   0%, 100% { transform: translateX(-50%) translateY(0); }
   50% { transform: translateX(-50%) translateY(-10px); }
 }
 
-.controls {
-  position: absolute;
-  top: 100px; right: 30px;
-  display: flex; gap: 10px;
-}
-.ctrl-btn {
-  background: rgba(0,0,0,0.5);
-  backdrop-filter: blur(10px);
-  color: #fff;
-  border: 2px solid rgba(255,255,255,0.2);
-  border-radius: 12px;
-  padding: 8px 16px;
-  font-size: 16px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.ctrl-btn:hover { background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.5); }
-.ctrl-btn.active { border-color: #00FF00; }
-
 .overlay {
   position: fixed;
   top: 0; left: 0;
   width: 100vw; height: 100vh;
   z-index: 100;
-  background: rgba(26, 26, 46, 0.92);
+  background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(20px);
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.start-box { text-align: center; color: #fff; }
-.start-box h1 { font-size: 64px; margin-bottom: 10px; }
-.start-box p { font-size: 20px; color: rgba(255,255,255,0.7); margin-bottom: 30px; }
+.start-box { text-align: center; color: #000; }
+.start-box h1 { font-size: 64px; margin-bottom: 10px; font-weight: 950; }
+.start-box p { font-size: 18px; color: #666; margin-bottom: 30px; font-weight: 800; letter-spacing: 1px; }
 .start-btn {
-  background: linear-gradient(135deg, #ff9a9e, #fad0c4);
-  color: #333;
+  background: #000;
+  color: #fff;
   border: none;
-  padding: 16px 48px;
-  font-size: 24px;
-  font-weight: bold;
-  border-radius: 50px;
+  padding: 18px 48px;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 2px;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 6px 6px 0 #000;
+  transition: transform 0.2s;
+  position: relative;
 }
-.start-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 8px 30px rgba(255, 154, 158, 0.4);
+.start-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #e63946;
+  transform: translate(6px, 6px);
+  z-index: -1;
 }
+.start-btn:hover { transform: translate(2px, 2px); box-shadow: 4px 4px 0 #000; }
 
 @media (max-width: 768px) {
   .start-box h1 { font-size: 40px; }
-  .start-box p { font-size: 16px; }
-  .start-btn { padding: 12px 32px; font-size: 18px; }
-  .score-board { font-size: 20px; padding: 8px 20px; }
+  .start-box p { font-size: 14px; }
+  .start-btn { padding: 14px 32px; font-size: 16px; }
+  .top-bar { padding: 8px 12px; }
+  .score-box { font-size: 18px; }
+  .mario-btn { padding: 6px 12px; font-size: 11px; }
+  .combo-board { font-size: 20px; top: 150px; }
 }
 </style>
