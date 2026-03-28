@@ -584,16 +584,16 @@ const handModeDetector = {
   maxHistory: 20,
   wristBaseline: null as number | null,
   baselineSamples: [] as number[],
-  moveThreshold: 0.12,  // 手腕移动阈值
+  moveThreshold: 0.06,  // 手腕移动阈值
   lastLaneSwitchTime: 0,
-  laneSwitchCooldown: 400,  // 防抖冷却时间
+  laneSwitchCooldown: 250,  // 防抖冷却时间
 
   // 跳跃检测（检测手指张开）
   fingersOpenHistory: [] as boolean[],
   maxFingerHistory: 8,
   lastJumpTime: 0,
-  jumpCooldown: 500,
-  fingersOpenThreshold: 3,  // 至少3个手指张开才算张开
+  jumpCooldown: 300,
+  fingersOpenThreshold: 4,  // 4根手指全张开才算张开
 
   reset() {
     this.wristXHistory = []
@@ -662,7 +662,7 @@ const handModeDetector = {
     if (this.wristXHistory.length > this.maxHistory) this.wristXHistory.shift()
 
     // 计算最近的平均位置
-    if (this.wristXHistory.length < 10) return 0
+    if (this.wristXHistory.length < 5) return 0
     const recent = this.wristXHistory.slice(-8)
 
     // 检查冷却时间
