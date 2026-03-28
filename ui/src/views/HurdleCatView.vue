@@ -635,54 +635,53 @@ const handModeDetector = {
     return openCount >= this.fingersOpenThreshold
   },
 
-  // 检测车道切换（检测手腕左右挥动）
+  // 检测车道切换（检测手挥动趋势/速度）
   detectLane(): -1 | 0 | 1 {
     const result = this.latestHandResult
     if (!result || !result.landmarks || result.landmarks.length < 1) return 0
 
     const wrist = result.landmarks[0]! // 手腕 (landmark 0)
     const wristX = wrist.x
-
-    // 收集基准线样本（站立时手腕位置）
-    if (this.wristBaseline === null) {
-      this.baselineSamples.push(wristX)
-      if (this.baselineSamples.length >= 15) {
-        const sorted = [...this.baselineSamples].sort((a, b) => a - b)
-        this.wristBaseline = sorted[Math.floor(sorted.length / 2)]!
-        calibrated.value = true
-      }
-      return 0
-    }
+    const now = Date.now()
 
     // 记录历史
-    this.wristXHistory.push({
-      x: wristX,
-      timestamp: Date.now()
-    })
+    this.wristXHistory.push({ x: wristX, timestamp: now })
     if (this.wristXHistory.length > this.maxHistory) this.wristXHistory.shift()
 
-    // 计算最近的平均位置
-    if (this.wristXHistory.length < 5) return 0
-    const recent = this.wristXHistory.slice(-8)
+    // 需要至少5帧数据
+    if (this.wristXHistory.length < 5) {
+      calibrated.value = this.wristXHistory.length >= 10
+      return 0
+    }
+    calibrated.value = true
 
     // 检查冷却时间
-    const now = Date.now()
     if (now - this.lastLaneSwitchTime < this.laneSwitchCooldown) return 0
 
-    const avgX = recent.reduce((sum, h) => sum + h.x, 0) / recent.length
+    // 计算最近几帧的移动速度（x方向的变化量）
+    const recent = this.wristXHistory.slice(-6)
+    const oldest = recent[0]!
+    const newest = recent[recent.length - 1]!
+    const deltaX = newest.x - oldest.x
+    const deltaTime = newest.timestamp - oldest.timestamp
 
-    // 判断左右挥动（注意镜像：摄像头是镜像的，左手在画面右侧）
-    // wristX > baseline 表示手向右移动（画面中）= 用户向左挥 = 左车道
-    // wristX < baseline 表示手向左移动（画面中）= 用户向右挥 = 右车道
-    if (avgX < this.wristBaseline - this.moveThreshold) {
-      // 手向左移（画面中）= 用户向右挥 → 右车道
+    if (deltaTime <= 0) return 0
+
+    // 速度阈值：每毫秒至少移动多少才算有效挥动
+    const speedThreshold = 0.0003
+    const speed = Math.abs(deltaX) / deltaTime
+
+    if (speed < speedThreshold) return 0
+
+    // 判断方向：deltaX > 0 表示 wristX 增大（画面中向左移动）→ 猫向左
+    // deltaX < 0 表示 wristX 减小（画面中向右移动）→ 猫向右
+    if (deltaX > this.moveThreshold) {
       this.lastLaneSwitchTime = now
-      return 1
+      return -1  // 画面中向左 → 猫向左
     }
-    if (avgX > this.wristBaseline + this.moveThreshold) {
-      // 手向右移（画面中）= 用户向左挥 → 左车道
+    if (deltaX < -this.moveThreshold) {
       this.lastLaneSwitchTime = now
-      return -1
+      return 1   // 画面中向右 → 猫向右
     }
 
     return 0
