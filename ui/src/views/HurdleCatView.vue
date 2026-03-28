@@ -23,10 +23,32 @@ const gameCanvasRef = ref<HTMLCanvasElement | null>(null)
 let poseCtx: CanvasRenderingContext2D | null = null
 let gameCtx: CanvasRenderingContext2D | null = null
 
-// ---- 橘猫绘制常量 ----
-const CAT_MAIN_COLOR = '#FFB347'    // 橘猫主色
-const CAT_DARK_COLOR = '#E8A030'    // 暗橘色
-const CAT_PINK_COLOR = '#FFD1DC'    // 粉色（内耳）
+// ---- 像素猫绘制常量 ----
+const T = ''           // transparent
+const B = '#000'       // black (outline)
+const O = '#FFB347'    // 橘猫主色
+const D = '#CC7A00'    // 暗橘色
+const P = '#FFD1DC'    // 粉色（内耳）
+const PX = 4           // 像素单位大小
+
+// 从背后看的橘猫像素图（身体+双耳+尾巴+后腿）
+const backCatPixels = [
+  [T,T,T,B,B,B,T,T,T,T,T,T,T,T,B,B,B,T,T,T],
+  [T,T,B,O,O,O,B,T,T,T,T,T,T,B,O,O,O,B,T,T],
+  [T,T,B,O,D,O,B,T,T,T,T,T,B,O,D,O,O,B,T,T],
+  [T,T,B,O,O,O,B,T,T,T,T,T,B,O,O,O,O,B,T,T],
+  [T,B,O,O,O,O,O,B,T,T,T,T,B,O,O,O,O,O,B,T],
+  [T,B,O,O,O,O,O,B,T,T,T,T,B,O,O,O,O,O,B,T],
+  [B,O,O,O,O,O,O,O,B,T,T,B,O,O,O,O,O,O,O,B],
+  [B,O,O,O,O,O,O,O,B,T,T,B,O,O,O,O,O,O,O,B],
+  [B,D,O,O,O,O,O,O,D,B,T,B,D,O,O,O,O,O,D,B],
+  [B,D,O,O,O,O,O,O,D,B,T,B,D,O,O,O,O,O,D,B],
+  [T,B,D,O,O,O,O,O,D,B,T,B,D,O,O,O,O,D,B,T],
+  [T,T,B,D,D,O,O,O,O,D,D,D,O,O,O,O,D,B,T,T],
+  [T,T,T,B,D,D,D,O,O,O,O,O,O,D,D,D,B,T,T,T],
+  [T,T,T,T,T,B,B,B,D,D,D,D,D,B,B,B,T,T,T,T,T],
+  [T,T,T,T,T,T,T,T,B,B,B,B,B,T,T,T,T,T,T,T,T],
+]
 
 // ---- 音频 ----
 let audioCtx: AudioContext | null = null
@@ -109,11 +131,11 @@ const road = {
   },
 
   // 获取车道位置（-1=左车道，1=右车道）
-  getLaneX(lane: number, depth: number, cw: number): number {
-    const roadData = this.getRoadAtDepth(depth, cw, window.innerHeight)
+  getLaneX(lane: number, depth: number, cw: number, ch: number): number {
+    const roadData = this.getRoadAtDepth(depth, cw, ch)
     const laneWidth = roadData.width / 2
     // 左车道中心在 -laneWidth/2，右车道中心在 +laneWidth/2
-    return (lane === -1 ? -laneWidth * 0.25 : laneWidth * 0.25)
+    return (lane === -1 ? -laneWidth * 0.5 : laneWidth * 0.5)
   },
 
   update() {
@@ -301,7 +323,7 @@ function drawHurdles(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
     const lanesToDraw = h.lane === 0 ? [-1, 1] : [h.lane]
 
     for (const lane of lanesToDraw) {
-      const laneX = road.getLaneX(lane, h.z, cw)
+      const laneX = road.getLaneX(lane, h.z, cw, ch)
       const hurdleX = cw / 2 + laneX
       const hurdleY = roadData.y
       const scale = roadData.scale
@@ -380,12 +402,12 @@ const cat = {
     this.y = this.baseY
     this.vy = 0
     this.isJumping = false
-    this.updateScreenX(cw)
+    this.updateScreenX(cw, ch)
   },
 
-  updateScreenX(cw: number) {
+  updateScreenX(cw: number, ch: number) {
     // 根据当前车道计算屏幕X坐标（深度为1，即最近处）
-    const laneX = road.getLaneX(this.lane, 1, cw)
+    const laneX = road.getLaneX(this.lane, 1, cw, ch)
     this.screenX = cw / 2 + laneX
     this.x = this.screenX
   },
@@ -406,7 +428,7 @@ const cat = {
     playJumpSound()
   },
 
-  update(cw: number) {
+  update(cw: number, ch: number) {
     // 平滑切换车道
     const laneSpeed = 0.15
     if (this.lane !== this.targetLane) {
@@ -416,7 +438,7 @@ const cat = {
       } else {
         this.lane += Math.sign(diff) * laneSpeed
       }
-      this.updateScreenX(cw)
+      this.updateScreenX(cw, ch)
     }
 
     // 跳跃物理
@@ -445,83 +467,33 @@ const cat = {
       ctx.fill()
     }
 
-    // 绘制橘猫背面（60% 大小）
+    // 绘制像素猫（60% 大小）
     const scale = 0.6
+    const pixelSize = PX * scale
 
-    // 身体（椭圆形）
-    ctx.fillStyle = CAT_MAIN_COLOR
-    ctx.beginPath()
-    ctx.ellipse(cx, cy - 10 * scale, 45 * scale, 50 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = CAT_DARK_COLOR
-    ctx.lineWidth = 3 * scale
-    ctx.stroke()
+    // 计算像素图的总尺寸
+    const catWidth = backCatPixels[0]!.length * pixelSize
+    const catHeight = backCatPixels.length * pixelSize
 
-    // 左耳朵（尖三角形）
-    ctx.fillStyle = CAT_MAIN_COLOR
-    ctx.beginPath()
-    ctx.moveTo(cx - 25 * scale, cy - 40 * scale)
-    ctx.lineTo(cx - 35 * scale, cy - 75 * scale)
-    ctx.lineTo(cx - 12 * scale, cy - 50 * scale)
-    ctx.closePath()
-    ctx.fill()
-    ctx.stroke()
+    // 居中偏移
+    const startX = cx - catWidth / 2
+    const startY = cy - catHeight / 2 - 20 * scale  // 稍微向上偏移
 
-    // 左耳朵内部（粉色）
-    ctx.fillStyle = CAT_PINK_COLOR
-    ctx.beginPath()
-    ctx.moveTo(cx - 23 * scale, cy - 43 * scale)
-    ctx.lineTo(cx - 31 * scale, cy - 68 * scale)
-    ctx.lineTo(cx - 15 * scale, cy - 48 * scale)
-    ctx.closePath()
-    ctx.fill()
-
-    // 右耳朵（尖三角形）
-    ctx.fillStyle = CAT_MAIN_COLOR
-    ctx.beginPath()
-    ctx.moveTo(cx + 25 * scale, cy - 40 * scale)
-    ctx.lineTo(cx + 35 * scale, cy - 75 * scale)
-    ctx.lineTo(cx + 12 * scale, cy - 50 * scale)
-    ctx.closePath()
-    ctx.fill()
-    ctx.stroke()
-
-    // 右耳朵内部（粉色）
-    ctx.fillStyle = CAT_PINK_COLOR
-    ctx.beginPath()
-    ctx.moveTo(cx + 23 * scale, cy - 43 * scale)
-    ctx.lineTo(cx + 31 * scale, cy - 68 * scale)
-    ctx.lineTo(cx + 15 * scale, cy - 48 * scale)
-    ctx.closePath()
-    ctx.fill()
-
-    // 尾巴（从右上方伸出，微微弯曲）
-    ctx.strokeStyle = CAT_MAIN_COLOR
-    ctx.lineWidth = 12 * scale
-    ctx.lineCap = 'round'
-    ctx.beginPath()
-    ctx.moveTo(cx + 30 * scale, cy - 20 * scale)
-    ctx.quadraticCurveTo(cx + 60 * scale, cy - 50 * scale, cx + 50 * scale, cy - 85 * scale)
-    ctx.stroke()
-    ctx.strokeStyle = CAT_DARK_COLOR
-    ctx.lineWidth = 2 * scale
-    ctx.stroke()
-
-    // 左后腿（椭圆形）
-    ctx.fillStyle = CAT_MAIN_COLOR
-    ctx.beginPath()
-    ctx.ellipse(cx - 25 * scale, cy + 35 * scale, 18 * scale, 12 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = CAT_DARK_COLOR
-    ctx.lineWidth = 3 * scale
-    ctx.stroke()
-
-    // 右后腿（椭圆形）
-    ctx.fillStyle = CAT_MAIN_COLOR
-    ctx.beginPath()
-    ctx.ellipse(cx + 25 * scale, cy + 35 * scale, 18 * scale, 12 * scale, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
+    // 逐个像素绘制
+    for (let y = 0; y < backCatPixels.length; y++) {
+      for (let x = 0; x < backCatPixels[y]!.length; x++) {
+        const color = backCatPixels[y]![x]
+        if (color && color !== T) {
+          ctx.fillStyle = color
+          ctx.fillRect(
+            startX + x * pixelSize,
+            startY + y * pixelSize,
+            pixelSize,
+            pixelSize
+          )
+        }
+      }
+    }
 
     ctx.restore()
   }
@@ -714,7 +686,7 @@ function gameLoop() {
   drawHurdles(gameCtx, w, h)
 
   // 更新和绘制猫
-  cat.update(w)
+  cat.update(w, h)
   cat.draw(gameCtx, w, h)
 
   // 粒子和飘字
@@ -794,7 +766,7 @@ function resizeCanvases() {
   }
   road.init(w, h)
   cat.baseY = h * 0.78
-  cat.updateScreenX(w)
+  cat.updateScreenX(w, h)
   if (!cat.isJumping) cat.y = cat.baseY
 }
 
