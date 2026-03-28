@@ -230,7 +230,7 @@ const jumpDetector = {
   baselineSamples: [] as number[],
   jumping: false,
   lastJumpTime: 0,
-  jumpCooldown: 600,
+  jumpCooldown: 400,
   reset() {
     this.history = []; this.baseline = null; this.baselineSamples = []; this.jumping = false; this.lastJumpTime = 0
     calibrated.value = false
@@ -239,7 +239,7 @@ const jumpDetector = {
     if (!hipY || hipY <= 0 || hipY >= 1) return false
     if (!this.baseline) {
       this.baselineSamples.push(hipY)
-      if (this.baselineSamples.length >= 30) {
+      if (this.baselineSamples.length >= 15) {
         const sorted = [...this.baselineSamples].sort((a, b) => a - b)
         this.baseline = sorted[Math.floor(sorted.length / 2)] ?? null
         calibrated.value = true
@@ -249,7 +249,7 @@ const jumpDetector = {
     this.history.push(hipY)
     if (this.history.length > this.maxHistory) this.history.shift()
     if (this.history.length < 8) return false
-    const threshold = 0.04
+    const threshold = 0.03
     const recent = this.history.slice(-5)
     const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length
     if (!this.jumping && (this.baseline - avgRecent) > threshold) {
@@ -270,6 +270,7 @@ const jumpDetector = {
 // ---- 跳跃事件 ----
 let comboTimer: ReturnType<typeof setTimeout> | null = null
 function onJump() {
+  cat.jump()
   score.value++
   combo.value++
   if (combo.value > 1) {
@@ -278,7 +279,6 @@ function onJump() {
   }
   if (comboTimer) clearTimeout(comboTimer)
   comboTimer = setTimeout(() => { combo.value = 0; showCombo.value = false }, 2000)
-  cat.jump()
   spawnParticles(cat.x, cat.y + cat.size * 0.4)
   spawnFloatingText(cat.x, cat.y - cat.size, combo.value > 1 ? `+${combo.value}` : '+1')
 }
@@ -359,7 +359,7 @@ async function startGame() {
   if (!videoRef.value) return
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 360 } }
     })
     videoRef.value.srcObject = stream
     await videoRef.value.play()
@@ -372,7 +372,7 @@ async function startGame() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cameraInstance = new (window as any).Camera(videoRef.value, {
       onFrame: async () => { if (poseInstance) await poseInstance.send({ image: videoRef.value }) },
-      width: 640, height: 480,
+      width: 480, height: 360,
     })
     cameraInstance.start()
 
