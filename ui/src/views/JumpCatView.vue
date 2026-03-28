@@ -568,8 +568,8 @@ onUnmounted(() => {
 
 .calibrate-hint {
   position: fixed;
-  bottom: 160px; left: 50%;
-  transform: translateX(-50%);
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
   background: #fff;
   border: 4px solid #000;
   box-shadow: 6px 6px 0 #000;
@@ -583,8 +583,8 @@ onUnmounted(() => {
   z-index: 10;
 }
 @keyframes hintBounce {
-  0%, 100% { transform: translateX(-50%) translateY(0); }
-  50% { transform: translateX(-50%) translateY(-10px); }
+  0%, 100% { transform: translate(-50%, -50%); }
+  50% { transform: translate(-50%, calc(-50% - 10px)); }
 }
 
 .overlay {
