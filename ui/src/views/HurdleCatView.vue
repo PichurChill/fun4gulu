@@ -32,13 +32,13 @@ function playJumpSound() {
     const gain = audioCtx.createGain()
     osc.connect(gain)
     gain.connect(audioCtx.destination)
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(600, audioCtx.currentTime)
-    osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1)
-    gain.gain.setValueAtTime(0.3, audioCtx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2)
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(400, audioCtx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1)
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15)
     osc.start(audioCtx.currentTime)
-    osc.stop(audioCtx.currentTime + 0.2)
+    osc.stop(audioCtx.currentTime + 0.15)
   } catch {}
 }
 
@@ -49,183 +49,148 @@ function playHitSound() {
     const gain = audioCtx.createGain()
     osc.connect(gain)
     gain.connect(audioCtx.destination)
-    osc.type = 'square'
-    osc.frequency.setValueAtTime(150, audioCtx.currentTime)
-    osc.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.3)
-    gain.gain.setValueAtTime(0.2, audioCtx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3)
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(200, audioCtx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.2)
+    gain.gain.setValueAtTime(0.25, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2)
     osc.start(audioCtx.currentTime)
-    osc.stop(audioCtx.currentTime + 0.3)
+    osc.stop(audioCtx.currentTime + 0.2)
   } catch {}
 }
 
-// ---- 像素猫数据（复用 HomeView 的像素风格）----
-const T = '' // transparent
-const B = '#000'
-const O = '#FF9933' // 橘猫主色
-const D = '#CC7A00' // 暗橘色
-const P = '#FFB6C1' // 粉色
+// ---- 伪3D道路系统 ----
+const road = {
+  vanishingY: 0,      // 消失点Y坐标
+  roadTopY: 0,         // 道路顶部Y
+  roadBottomY: 0,      // 道路底部Y
+  roadTopWidth: 0,     // 道路顶部宽度
+  roadBottomWidth: 0,  // 道路底部宽度
+  scrollOffset: 0,     // 滚动偏移量
+  segments: 20,        // 道路分段数
 
-const PX = 4
-
-// 头部 + 身体
-const catSharedRows = [
-  [T,T,T,B,T,T,T,T,T,T,B],
-  [T,T,B,O,B,T,T,T,T,B,O,B],
-  [T,T,B,O,D,B,B,B,B,D,O,B,T,T,T,T,T,T,T,T,B,B],
-  [T,B,D,O,O,D,D,O,D,O,O,D,B,T,T,T,T,T,T,B,O,O,B],
-  [T,B,O,O,O,O,O,O,O,O,O,O,B,T,T,T,T,T,T,B,O,O,B],
-  [B,D,O,O,O,O,O,O,O,O,O,O,D,B,B,B,B,T,T,T,B,D,B],
-  [B,O,O,B,O,O,B,O,O,B,O,O,O,D,O,D,O,B,T,T,B,O,B],
-  [B,O,P,O,O,B,O,B,O,O,P,O,O,D,O,D,O,O,B,B,B,D,B],
-  [B,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,B,O,B],
-  [B,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,B,O,B],
-  [B,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,B],
-  [B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,B],
-  [B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,B],
-  [B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B],
-  [T,B,D,O,O,O,O,O,O,O,O,O,O,O,O,O,O,O,D,B],
-]
-
-// Frame A 腿部
-const catLegsA = [
-  [T,T,B,D,O,D,D,O,D,O,O,O,D,O,D,D,O,D,B],
-  [T,T,T,B,O,B,B,O,B,B,B,B,B,O,B,B,O,B],
-  [T,T,T,B,B,T,T,B,B,T,T,T,B,B,T,T,B,B],
-]
-
-// ---- 像素猫绘制函数 ----
-function pixelize(grid: string[][], flip = false): string {
-  const maxCols = Math.max(...grid.map(r => r.length))
-  const shadows: string[] = []
-  for (let y = 0; y < grid.length; y++) {
-    const row = grid[y]
-    if (!row) continue
-    for (let x = 0; x < row.length; x++) {
-      if (row[x] && row[x] !== T) {
-        const px = flip ? (maxCols - 1 - x) : x
-        shadows.push(`${px * PX}px ${y * PX}px 0 0 ${row[x]}`)
-      }
-    }
-  }
-  return shadows.join(',')
-}
-
-// 猫咪对象
-const cat = {
-  x: 0, y: 0, baseY: 0,
-  vy: 0, gravity: 0.8, jumpForce: -18,
-  isJumping: false,
-  frame: 0,
-  frameTimer: 0,
-  size: 80,
-  reset(cw: number, ch: number) {
-    this.baseY = ch - 180
-    this.x = cw * 0.25
-    this.y = this.baseY
-    this.vy = 0
-    this.isJumping = false
-    this.frame = 0
-    this.frameTimer = 0
+  init(cw: number, ch: number) {
+    this.vanishingY = ch * 0.3
+    this.roadTopY = this.vanishingY
+    this.roadBottomY = ch * 0.92
+    this.roadTopWidth = cw * 0.02
+    this.roadBottomWidth = cw * 0.7
+    this.scrollOffset = 0
   },
-  jump() {
-    if (this.isJumping) return
-    this.vy = this.jumpForce
-    this.isJumping = true
-    playJumpSound()
+
+  // 根据深度获取道路的Y坐标和宽度
+  getRoadAtDepth(depth: number, cw: number, ch: number): { y: number; width: number; scale: number } {
+    // depth: 0(远) -> 1(近)
+    const t = depth
+    const y = this.roadTopY + (this.roadBottomY - this.roadTopY) * t * t
+    const width = this.roadTopWidth + (this.roadBottomWidth - this.roadTopWidth) * t
+    const scale = 0.1 + t * 0.9
+    return { y, width, scale }
   },
+
   update() {
-    this.vy += this.gravity
-    this.y += this.vy
-    if (this.y >= this.baseY) {
-      this.y = this.baseY
-      this.vy = 0
-      this.isJumping = false
-    }
-
-    // 动画帧更新
-    this.frameTimer++
-    if (this.frameTimer > 8) {
-      this.frame = this.frame === 0 ? 1 : 0
-      this.frameTimer = 0
-    }
+    this.scrollOffset = (this.scrollOffset + 8) % 64
   },
-  draw(ctx: CanvasRenderingContext2D) {
-    const catData = this.frame === 0 ? [...catSharedRows, ...catLegsA] : [...catSharedRows, ...catLegsA]
-    const shadows = pixelize(catData, false)
 
-    ctx.save()
-    ctx.translate(this.x - 60, this.y - 60)
+  draw(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+    // 绘制天空渐变
+    const skyGradient = ctx.createLinearGradient(0, 0, 0, this.vanishingY)
+    skyGradient.addColorStop(0, '#1a1a40')
+    skyGradient.addColorStop(1, '#4a4a80')
+    ctx.fillStyle = skyGradient
+    ctx.fillRect(0, 0, cw, this.vanishingY)
 
-    // 使用 box-shadow 绘制像素猫
-    ctx.fillStyle = 'transparent'
-    const el = document.createElement('div')
-    el.style.width = '4px'
-    el.style.height = '4px'
-    el.style.boxShadow = shadows
+    // 绘制地面（草地）
+    ctx.fillStyle = '#2d5a27'
+    ctx.fillRect(0, this.vanishingY, cw, ch - this.vanishingY)
 
-    // 手动绘制像素
-    const maxCols = Math.max(...catData.map(r => r.length))
-    for (let y = 0; y < catData.length; y++) {
-      const row = catData[y]
-      if (!row) continue
-      for (let x = 0; x < row.length; x++) {
-        const color = row[x]
-        if (color && color !== T) {
-          ctx.fillStyle = color
-          ctx.fillRect(x * PX, y * PX, PX, PX)
-        }
+    // 绘制道路分段
+    for (let i = this.segments; i >= 0; i--) {
+      const depth1 = i / this.segments
+      const depth2 = (i + 1) / this.segments
+      const seg1 = this.getRoadAtDepth(depth1, cw, ch)
+      const seg2 = this.getRoadAtDepth(depth2, cw, ch)
+
+      // 计算条纹颜色（交替）
+      const stripeIndex = Math.floor((i + this.scrollOffset / 4) % 4)
+      const isLight = stripeIndex < 2
+      const roadColor = isLight ? '#555555' : '#444444'
+      const grassColor = isLight ? '#3a6b34' : '#2d5a27'
+
+      // 绘制草地分段
+      ctx.fillStyle = grassColor
+      ctx.fillRect(0, seg1.y, cw, seg2.y - seg1.y + 1)
+
+      // 绘制道路分段（梯形）
+      ctx.fillStyle = roadColor
+      ctx.beginPath()
+      ctx.moveTo(cw / 2 - seg1.width / 2, seg1.y)
+      ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
+      ctx.lineTo(cw / 2 + seg2.width / 2, seg2.y)
+      ctx.lineTo(cw / 2 - seg2.width / 2, seg2.y)
+      ctx.closePath()
+      ctx.fill()
+
+      // 道路边线
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = Math.max(1, 3 * seg2.scale)
+      ctx.beginPath()
+      ctx.moveTo(cw / 2 - seg2.width / 2, seg2.y)
+      ctx.lineTo(cw / 2 - seg1.width / 2, seg1.y)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(cw / 2 + seg2.width / 2, seg2.y)
+      ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
+      ctx.stroke()
+
+      // 道路中线（虚线）
+      if (stripeIndex % 2 === 0) {
+        ctx.strokeStyle = '#ffff00'
+        ctx.lineWidth = Math.max(1, 2 * seg2.scale)
+        ctx.setLineDash([10 * seg2.scale, 10 * seg2.scale])
+        ctx.lineDashOffset = -this.scrollOffset * seg2.scale
+        ctx.beginPath()
+        ctx.moveTo(cw / 2, seg1.y)
+        ctx.lineTo(cw / 2, seg2.y)
+        ctx.stroke()
+        ctx.setLineDash([])
       }
     }
-
-    ctx.restore()
   }
 }
 
 // ---- 栏杆系统 ----
 interface Hurdle {
-  z: number // 深度 (0 = 远, 1 = 近)
-  x: number // 屏幕x位置
-  width: number
-  height: number
+  z: number        // 深度 0(远) -> 1(近)
+  x: number        // 相对位置 -1(左) -> 0(中) -> 1(右)
   hit: boolean
   rotation: number
   vx: number
   vy: number
+  alpha: number
 }
 
 const hurdles: Hurdle[] = []
 const hurdleSpawnTimer = ref(0)
-const HURDLE_SPAWN_INTERVAL = 180 // 帧数
-const groundScroll = ref(0)
+const HURDLE_SPAWN_INTERVAL = 150
 
 function spawnHurdle() {
+  // 随机左右位置，但偏中心
+  const xOffset = (Math.random() - 0.5) * 0.6 // -0.3 到 0.3
   hurdles.push({
     z: 0,
-    x: 0.5, // 屏幕中央
-    width: 0.08,
-    height: 0.15,
+    x: xOffset,
     hit: false,
     rotation: 0,
     vx: 0,
-    vy: 0
+    vy: 0,
+    alpha: 1
   })
 }
 
-// 透视转换：将3D坐标转换为2D屏幕坐标
-function project(z: number, x: number): { screenX: number; scale: number } {
-  // z: 0(远) -> 1(近)
-  // 使用简单的透视投影
-  const perspective = 0.3 + z * 0.7 // 缩放因子从0.3到1
-  const screenX = window.innerWidth * (0.25 + (x - 0.5) * perspective * 2)
-  return { screenX, scale: perspective }
-}
-
 function updateHurdles() {
-  const catLeft = cat.x - 40
-  const catRight = cat.x + 40
-  const catBottom = cat.baseY
-  const catTop = cat.y - 40
+  const catY = cat.y
+  const jumpHeight = (cat.baseY - catY) / cat.jumpHeight
 
   for (let i = hurdles.length - 1; i >= 0; i--) {
     const h = hurdles[i]!
@@ -233,52 +198,43 @@ function updateHurdles() {
     if (h.hit) {
       // 被撞飞动画
       h.x += h.vx
-      h.rotation += h.vx * 0.1
-      h.vy += 0.3
-      h.z += h.vy * 0.01
+      h.z += 0.02
+      h.rotation += h.vx * 0.5
+      h.alpha -= 0.02
 
-      if (h.z > 1.5 || h.x > 2) {
+      if (h.alpha <= 0 || h.z > 1.5) {
         hurdles.splice(i, 1)
       }
       continue
     }
 
     // 正常移动：从远到近
-    h.z += 0.008
+    h.z += 0.012
 
-    // 碰撞检测
-    if (h.z > 0.95 && h.z < 1.05) {
-      const proj = project(h.z, h.x)
-      const hurdleWidth = window.innerWidth * h.width * proj.scale
-      const hurdleHeight = window.innerHeight * h.height * proj.scale
-      const hurdleX = proj.screenX - hurdleWidth / 2
-      const hurdleY = cat.baseY - hurdleHeight
-
-      // 检查水平重叠
-      if (hurdleX < catRight && hurdleX + hurdleWidth > catLeft) {
-        // 检查垂直碰撞
-        if (catTop > cat.baseY - hurdleHeight * 0.7) {
-          // 撞到栏杆
-          h.hit = true
-          h.vx = 0.02
-          h.vy = -5
-          score.value = Math.max(0, score.value - 1)
-          combo.value = 0
-          showCombo.value = false
-          playHitSound()
-          spawnFloatingText(cat.x, cat.y - 60, '-1', '#e63946')
-        } else {
-          // 成功跳跃
-          score.value++
-          combo.value++
-          if (combo.value > 1) {
-            showCombo.value = true
-          }
-          if (comboTimer) clearTimeout(comboTimer)
-          comboTimer = setTimeout(() => { combo.value = 0; showCombo.value = false }, 2000)
-          spawnParticles(cat.x, cat.y + 40)
-          spawnFloatingText(cat.x, cat.y - 80, combo.value > 1 ? `+${combo.value}` : '+1', '#FFD700')
-        }
+    // 碰撞检测：当栏杆到达猫的位置
+    if (h.z > 0.92 && h.z < 0.98) {
+      // 检查是否跳跃足够高
+      if (jumpHeight > 0.4) {
+        // 成功跳跃
+        score.value++
+        combo.value++
+        if (combo.value > 1) showCombo.value = true
+        if (comboTimer) clearTimeout(comboTimer)
+        comboTimer = setTimeout(() => { combo.value = 0; showCombo.value = false }, 2000)
+        spawnFloatingText(window.innerWidth / 2, cat.y - 100, combo.value > 1 ? `+${combo.value}` : '+1', '#FFD700')
+        playJumpSound()
+        hurdles.splice(i, 1)
+      } else {
+        // 撞到栏杆
+        h.hit = true
+        h.vx = h.x > 0 ? 0.03 : -0.03
+        score.value = Math.max(0, score.value - 1)
+        combo.value = 0
+        showCombo.value = false
+        spawnFloatingText(window.innerWidth / 2, cat.y - 60, '-1', '#e63946')
+        playHitSound()
+        // 屏幕震动
+        shakeScreen()
       }
     }
 
@@ -294,86 +250,221 @@ function updateHurdles() {
     spawnHurdle()
     hurdleSpawnTimer.value = 0
   }
-
-  // 地面滚动
-  groundScroll.value = (groundScroll.value + 8) % 40
 }
 
-function drawHurdles(ctx: CanvasRenderingContext2D) {
+function drawHurdles(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
   // 按z坐标排序，先画远的
   hurdles.sort((a, b) => a.z - b.z)
 
   for (const h of hurdles) {
-    const proj = project(h.z, h.x)
-    const scale = proj.scale
-    const w = window.innerWidth * h.width * scale
-    const hurdleHeight = window.innerHeight * h.height * scale
-    const hx = proj.screenX - w / 2
-    const hy = cat.baseY - hurdleHeight
+    const roadData = road.getRoadAtDepth(h.z, cw, ch)
+    const hurdleX = cw / 2 + h.x * roadData.width
+    const hurdleY = roadData.y
+    const scale = roadData.scale
 
     ctx.save()
+    ctx.globalAlpha = h.alpha
 
     if (h.hit) {
       // 被撞飞的栏杆
-      const hitProj = project(h.z, h.x)
-      const hitScale = hitProj.scale
-      const hitW = window.innerWidth * h.width * hitScale
-      const hitH = window.innerHeight * h.height * hitScale
-      const hitX = hitProj.screenX - hitW / 2
-      const hitY = cat.baseY - hitH
-
-      ctx.translate(hitX + hitW / 2, hitY + hitH / 2)
+      ctx.translate(hurdleX, hurdleY)
       ctx.rotate(h.rotation)
-      ctx.translate(-(hitX + hitW / 2), -(hitY + hitH / 2))
-
-      drawHurdle(ctx, hitX, hitY, hitW, hitH, true)
+      drawHurdleSprite(ctx, 0, 0, scale * 120, scale * 60, true)
     } else {
-      drawHurdle(ctx, hx, hy, w, hurdleHeight, false)
+      // 正常栏杆
+      ctx.translate(hurdleX, hurdleY)
+      drawHurdleSprite(ctx, 0, 0, scale * 120, scale * 60, false)
     }
 
     ctx.restore()
   }
 }
 
-function drawHurdle(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, isHit: boolean) {
-  // 绘制水管风格的栏杆
-  const pipeColor = isHit ? '#a8dadc' : '#2a9d8f'
-  const borderWidth = Math.max(3, w * 0.08)
+function drawHurdleSprite(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, isHit: boolean) {
+  // 水管风格栏杆（红白机风格）
+  const pipeColor = isHit ? '#888888' : '#cc3333'
+  const capColor = isHit ? '#666666' : '#999999'
 
-  // 杆身
+  // 左支柱
   ctx.fillStyle = pipeColor
-  ctx.fillRect(x + w * 0.1, y + h * 0.4, w * 0.8, h * 0.6)
+  ctx.fillRect(x - w * 0.35, y, w * 0.08, h)
   ctx.strokeStyle = '#000'
-  ctx.lineWidth = borderWidth
-  ctx.strokeRect(x + w * 0.1, y + h * 0.4, w * 0.8, h * 0.6)
+  ctx.lineWidth = Math.max(1, w * 0.02)
+  ctx.strokeRect(x - w * 0.35, y, w * 0.08, h)
 
-  // 横杆（顶部）
+  // 右支柱
   ctx.fillStyle = pipeColor
-  ctx.fillRect(x, y, w, h * 0.5)
-  ctx.strokeRect(x, y, w, h * 0.5)
+  ctx.fillRect(x + w * 0.27, y, w * 0.08, h)
+  ctx.strokeRect(x + w * 0.27, y, w * 0.08, h)
 
-  // 阴影效果
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)'
-  ctx.fillRect(x + w * 0.1 + w * 0.3, y + h * 0.4, w * 0.2, h * 0.6)
+  // 横杆
+  ctx.fillStyle = capColor
+  ctx.fillRect(x - w * 0.4, y - h * 0.3, w * 0.8, h * 0.35)
+  ctx.strokeRect(x - w * 0.4, y - h * 0.3, w * 0.8, h * 0.35)
 
   // 高光
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'
-  ctx.fillRect(x + w * 0.1, y + h * 0.4, w * 0.1, h * 0.6)
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'
+  ctx.fillRect(x - w * 0.33, y, w * 0.02, h)
+  ctx.fillRect(x + w * 0.29, y, w * 0.02, h)
+}
+
+// ---- 屏幕震动 ----
+let shakeIntensity = 0
+function shakeScreen() {
+  shakeIntensity = 8
+}
+
+// ---- 猫咪（背面视角）----
+const cat = {
+  x: 0,
+  y: 0,
+  baseY: 0,
+  vy: 0,
+  gravity: 0.9,
+  jumpForce: -20,
+  jumpHeight: 150,
+  isJumping: false,
+  tailWag: 0,
+
+  reset(cw: number, ch: number) {
+    this.baseY = ch * 0.78
+    this.x = cw / 2
+    this.y = this.baseY
+    this.vy = 0
+    this.isJumping = false
+  },
+
+  jump() {
+    if (this.isJumping) return
+    this.vy = this.jumpForce
+    this.isJumping = true
+    playJumpSound()
+  },
+
+  update() {
+    this.vy += this.gravity
+    this.y += this.vy
+    if (this.y >= this.baseY) {
+      this.y = this.baseY
+      this.vy = 0
+      this.isJumping = false
+    }
+    this.tailWag += 0.15
+  },
+
+  draw(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+    const scale = 1.2
+    const cx = this.x
+    const cy = this.y
+
+    ctx.save()
+
+    // 跳跃时的阴影效果
+    if (this.isJumping) {
+      const shadowScale = 1 - (this.baseY - this.y) / this.jumpHeight * 0.3
+      ctx.fillStyle = 'rgba(0,0,0,0.2)'
+      ctx.beginPath()
+      ctx.ellipse(cx, this.baseY + 20, 40 * shadowScale, 15 * shadowScale, 0, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    // 身体（椭圆，背面视角）
+    ctx.fillStyle = '#FFB347'
+    ctx.strokeStyle = '#E8A030'
+    ctx.lineWidth = 2
+
+    // 主体
+    ctx.beginPath()
+    ctx.ellipse(cx, cy, 35 * scale, 45 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // 身体阴影效果
+    ctx.fillStyle = 'rgba(0,0,0,0.1)'
+    ctx.beginPath()
+    ctx.ellipse(cx + 10, cy + 10, 25 * scale, 35 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // 后背条纹（橘猫特征）
+    ctx.strokeStyle = '#E8A030'
+    ctx.lineWidth = 3
+    for (let i = 0; i < 3; i++) {
+      const stripeY = cy - 20 + i * 20
+      ctx.beginPath()
+      ctx.moveTo(cx - 15, stripeY)
+      ctx.quadraticCurveTo(cx, stripeY - 5, cx + 15, stripeY)
+      ctx.stroke()
+    }
+
+    // 屁股部分（稍微突出）
+    ctx.fillStyle = '#FFB347'
+    ctx.beginPath()
+    ctx.ellipse(cx, cy + 35 * scale, 30 * scale, 25 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // 尾巴（摆动）
+    const tailWagOffset = Math.sin(this.tailWag) * 15
+    ctx.strokeStyle = '#E8A030'
+    ctx.lineWidth = 8
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(cx, cy + 50 * scale)
+    ctx.quadraticCurveTo(
+      cx + tailWagOffset,
+      cy + 70 * scale,
+      cx + tailWagOffset * 1.5,
+      cy + 50 * scale
+    )
+    ctx.stroke()
+
+    // 尾巴尖（白色）
+    ctx.strokeStyle = '#FFF'
+    ctx.lineWidth = 6
+    ctx.beginPath()
+    ctx.moveTo(cx + tailWagOffset * 1.3, cy + 58 * scale)
+    ctx.lineTo(cx + tailWagOffset * 1.5, cy + 50 * scale)
+    ctx.stroke()
+
+    // 后腿（简化为椭圆）
+    ctx.fillStyle = '#FFB347'
+    // 左后腿
+    ctx.beginPath()
+    ctx.ellipse(cx - 20 * scale, cy + 40 * scale, 12 * scale, 18 * scale, -0.2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    // 右后腿
+    ctx.beginPath()
+    ctx.ellipse(cx + 20 * scale, cy + 40 * scale, 12 * scale, 18 * scale, 0.2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // 脚掌
+    ctx.fillStyle = '#FFD1DC'
+    ctx.beginPath()
+    ctx.ellipse(cx - 20 * scale, cy + 52 * scale, 8 * scale, 6 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.ellipse(cx + 20 * scale, cy + 52 * scale, 8 * scale, 6 * scale, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.restore()
+  }
 }
 
 // ---- 粒子 ----
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number }
 const particles: Particle[] = []
 function spawnParticles(x: number, y: number) {
-  const colors = ['#FFB347', '#FFD1DC', '#FF6B6B', '#FFF']
-  for (let i = 0; i < 8; i++) {
+  const colors = ['#FFB347', '#FFD1DC', '#FF6B6B', '#FFF', '#FFD700']
+  for (let i = 0; i < 10; i++) {
     particles.push({
       x, y,
-      vx: (Math.random() - 0.5) * 6,
-      vy: -Math.random() * 4 - 2,
+      vx: (Math.random() - 0.5) * 8,
+      vy: -Math.random() * 6 - 2,
       life: 1,
       color: colors[Math.floor(Math.random() * colors.length)]!,
-      size: Math.random() * 6 + 3
+      size: Math.random() * 8 + 4
     })
   }
 }
@@ -382,14 +473,12 @@ function updateAndDrawParticles(ctx: CanvasRenderingContext2D) {
     const p = particles[i]!
     p.x += p.vx
     p.y += p.vy
-    p.vy += 0.15
+    p.vy += 0.2
     p.life -= 0.025
     if (p.life <= 0) { particles.splice(i, 1); continue }
     ctx.globalAlpha = p.life
     ctx.fillStyle = p.color
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size)
   }
   ctx.globalAlpha = 1
 }
@@ -408,8 +497,11 @@ function updateAndDrawFloatingTexts(ctx: CanvasRenderingContext2D) {
     if (t.life <= 0) { floatingTexts.splice(i, 1); continue }
     ctx.globalAlpha = t.life
     ctx.fillStyle = t.color
-    ctx.font = 'bold 28px sans-serif'
+    ctx.strokeStyle = '#000'
+    ctx.lineWidth = 4
+    ctx.font = 'bold 32px sans-serif'
     ctx.textAlign = 'center'
+    ctx.strokeText(t.text, t.x, t.y)
     ctx.fillText(t.text, t.x, t.y)
   }
   ctx.globalAlpha = 1
@@ -476,43 +568,38 @@ function gameLoop() {
   const w = gameCanvasRef.value!.width
   const h = gameCanvasRef.value!.height
 
+  // 屏幕震动
+  let shakeX = 0, shakeY = 0
+  if (shakeIntensity > 0) {
+    shakeX = (Math.random() - 0.5) * shakeIntensity
+    shakeY = (Math.random() - 0.5) * shakeIntensity
+    shakeIntensity *= 0.8
+    if (shakeIntensity < 0.5) shakeIntensity = 0
+  }
+
   // 清空画布
   gameCtx.clearRect(0, 0, w, h)
 
-  // 绘制背景（天空渐变）
-  const skyGradient = gameCtx.createLinearGradient(0, 0, 0, h)
-  skyGradient.addColorStop(0, '#87CEEB')
-  skyGradient.addColorStop(1, '#E0F7FA')
-  gameCtx.fillStyle = skyGradient
-  gameCtx.fillRect(0, 0, w, h)
+  gameCtx.save()
+  gameCtx.translate(shakeX, shakeY)
 
-  // 绘制地面
-  const groundY = cat.baseY + 20
-  gameCtx.fillStyle = '#8B4513'
-  gameCtx.fillRect(0, groundY, w, h - groundY)
-
-  // 绘制地面纹理（滚动效果）
-  gameCtx.strokeStyle = '#654321'
-  gameCtx.lineWidth = 3
-  for (let i = 0; i < w + 40; i += 40) {
-    const x = i - groundScroll.value
-    gameCtx.beginPath()
-    gameCtx.moveTo(x, groundY)
-    gameCtx.lineTo(x, h)
-    gameCtx.stroke()
-  }
+  // 更新和绘制道路
+  road.update()
+  road.draw(gameCtx, w, h)
 
   // 更新和绘制栏杆
   updateHurdles()
-  drawHurdles(gameCtx)
+  drawHurdles(gameCtx, w, h)
 
   // 更新和绘制猫
   cat.update()
-  cat.draw(gameCtx)
+  cat.draw(gameCtx, w, h)
 
   // 粒子和飘字
   updateAndDrawParticles(gameCtx)
   updateAndDrawFloatingTexts(gameCtx)
+
+  gameCtx.restore()
 
   animFrameId = requestAnimationFrame(gameLoop)
 }
@@ -576,8 +663,9 @@ function resizeCanvases() {
     gameCanvasRef.value.width = w
     gameCanvasRef.value.height = h
   }
-  cat.baseY = h - 180
-  cat.x = w * 0.25
+  road.init(w, h)
+  cat.baseY = h * 0.78
+  cat.x = w / 2
   if (!cat.isJumping) cat.y = cat.baseY
 }
 
@@ -614,6 +702,7 @@ async function startGame() {
     particles.length = 0
     floatingTexts.length = 0
     hurdleSpawnTimer.value = 0
+    shakeIntensity = 0
     gameLoop()
   } catch (err: any) {
     alert('无法启动摄像头或 MediaPipe：\n' + err.message)
@@ -909,7 +998,7 @@ onUnmounted(() => {
   content: '';
   position: absolute;
   inset: 0;
-  background: #2a9d8f;
+  background: #cc3333;
   transform: translate(6px, 6px);
   z-index: -1;
 }
