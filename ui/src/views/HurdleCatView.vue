@@ -158,73 +158,44 @@ const road = {
     ctx.fillStyle = '#2d5a27'
     ctx.fillRect(0, this.vanishingY, cw, ch - this.vanishingY)
 
-    // 绘制道路分段
-    for (let i = this.segments; i >= 0; i--) {
-      const depth1 = i / this.segments
-      const depth2 = (i + 1) / this.segments
-      const seg1 = this.getRoadAtDepth(depth1, cw, ch)
-      const seg2 = this.getRoadAtDepth(depth2, cw, ch)
+    // 草地纯色（不覆盖道路）
+    ctx.fillStyle = '#2d5a27'
+    ctx.fillRect(0, this.vanishingY, cw, ch - this.vanishingY)
 
-      // 条纹颜色
-      const stripeIndex = Math.floor((i + this.scrollOffset / 4) % 4)
-      const isLight = stripeIndex < 2
-      const roadColor = isLight ? '#555555' : '#444444'
-      const grassColor = isLight ? '#3a6b34' : '#2d5a27'
+    // 道路（纯色梯形）
+    const roadTop = this.getRoadAtDepth(0, cw, ch)
+    const roadBottom = this.getRoadAtDepth(1, cw, ch)
+    ctx.fillStyle = '#555555'
+    ctx.beginPath()
+    ctx.moveTo(cw / 2 - roadTop.width / 2, roadTop.y)
+    ctx.lineTo(cw / 2 + roadTop.width / 2, roadTop.y)
+    ctx.lineTo(cw / 2 + roadBottom.width / 2, roadBottom.y)
+    ctx.lineTo(cw / 2 - roadBottom.width / 2, roadBottom.y)
+    ctx.closePath()
+    ctx.fill()
 
-      // 草地分段（道路两侧）
-      ctx.fillStyle = grassColor
-      // 左侧草地
-      ctx.beginPath()
-      ctx.moveTo(0, seg2.y)
-      ctx.lineTo(0, seg1.y)
-      ctx.lineTo(cw / 2 - seg1.width / 2, seg1.y)
-      ctx.lineTo(cw / 2 - seg2.width / 2, seg2.y)
-      ctx.closePath()
-      ctx.fill()
-      // 右侧草地
-      ctx.beginPath()
-      ctx.moveTo(cw, seg2.y)
-      ctx.lineTo(cw, seg1.y)
-      ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
-      ctx.lineTo(cw / 2 + seg2.width / 2, seg2.y)
-      ctx.closePath()
-      ctx.fill()
+    // 道路边线
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.moveTo(cw / 2 - roadTop.width / 2, roadTop.y)
+    ctx.lineTo(cw / 2 - roadBottom.width / 2, roadBottom.y)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cw / 2 + roadTop.width / 2, roadTop.y)
+    ctx.lineTo(cw / 2 + roadBottom.width / 2, roadBottom.y)
+    ctx.stroke()
 
-      // 道路分段（梯形）
-      ctx.fillStyle = roadColor
-      ctx.beginPath()
-      ctx.moveTo(cw / 2 - seg1.width / 2, seg1.y)
-      ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
-      ctx.lineTo(cw / 2 + seg2.width / 2, seg2.y)
-      ctx.lineTo(cw / 2 - seg2.width / 2, seg2.y)
-      ctx.closePath()
-      ctx.fill()
-
-      // 道路边线
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = Math.max(1, 3 * seg2.scale)
-      ctx.beginPath()
-      ctx.moveTo(cw / 2 - seg2.width / 2, seg2.y)
-      ctx.lineTo(cw / 2 - seg1.width / 2, seg1.y)
-      ctx.stroke()
-      ctx.beginPath()
-      ctx.moveTo(cw / 2 + seg2.width / 2, seg2.y)
-      ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
-      ctx.stroke()
-
-      // **双车道中线**（道路中央，区分左右车道）
-      if (stripeIndex % 2 === 0) {
-        ctx.strokeStyle = '#ffffff'
-        ctx.lineWidth = Math.max(1, 2 * seg2.scale)
-        ctx.setLineDash([10 * seg2.scale, 10 * seg2.scale])
-        ctx.lineDashOffset = -this.scrollOffset * seg2.scale
-        ctx.beginPath()
-        ctx.moveTo(cw / 2, seg1.y)
-        ctx.lineTo(cw / 2, seg2.y)
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-    }
+    // 双车道中线（虚线）
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 2
+    ctx.setLineDash([15, 15])
+    ctx.lineDashOffset = -this.scrollOffset * 0.5
+    ctx.beginPath()
+    ctx.moveTo(cw / 2, roadTop.y)
+    ctx.lineTo(cw / 2, roadBottom.y)
+    ctx.stroke()
+    ctx.setLineDash([])
   }
 }
 
