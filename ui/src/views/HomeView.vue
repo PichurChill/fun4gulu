@@ -49,7 +49,7 @@
       </div>
         </section>
     <footer class="site-footer">
-      <span>© 2025 FUN4GULU</span>
+      <span>© {{ new Date().getFullYear() }} FUN4GULU</span>
       <span class="version-tag">v0.0.1</span>
     </footer>
   </div>
