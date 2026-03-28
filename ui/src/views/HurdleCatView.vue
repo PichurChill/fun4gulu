@@ -1129,6 +1129,11 @@ onUnmounted(() => {
   border: 4px solid #000;
   box-shadow: 6px 6px 0 #000;
   padding: 10px 20px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.top-bar > * {
+  flex-shrink: 0;
 }
 
 .score-box {
