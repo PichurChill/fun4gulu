@@ -170,9 +170,24 @@ const road = {
       const roadColor = isLight ? '#555555' : '#444444'
       const grassColor = isLight ? '#3a6b34' : '#2d5a27'
 
-      // 草地分段
+      // 草地分段（道路两侧）
       ctx.fillStyle = grassColor
-      ctx.fillRect(0, seg1.y, cw, seg2.y - seg1.y + 1)
+      // 左侧草地
+      ctx.beginPath()
+      ctx.moveTo(0, seg2.y)
+      ctx.lineTo(0, seg1.y)
+      ctx.lineTo(cw / 2 - seg1.width / 2, seg1.y)
+      ctx.lineTo(cw / 2 - seg2.width / 2, seg2.y)
+      ctx.closePath()
+      ctx.fill()
+      // 右侧草地
+      ctx.beginPath()
+      ctx.moveTo(cw, seg2.y)
+      ctx.lineTo(cw, seg1.y)
+      ctx.lineTo(cw / 2 + seg1.width / 2, seg1.y)
+      ctx.lineTo(cw / 2 + seg2.width / 2, seg2.y)
+      ctx.closePath()
+      ctx.fill()
 
       // 道路分段（梯形）
       ctx.fillStyle = roadColor
