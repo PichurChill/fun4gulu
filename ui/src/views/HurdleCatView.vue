@@ -1009,7 +1009,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="hurdle-cat-page">
+  <div class="hurdle-cat-page" :class="{ 'debug-overlay': debugMode }">
     <!-- 开始界面 -->
     <div v-if="!running" class="overlay">
       <div class="start-box">
@@ -1036,7 +1036,7 @@ onUnmounted(() => {
     <video ref="videoRef" autoplay playsinline class="camera-video" />
 
     <!-- 骨架层 -->
-    <canvas ref="poseCanvasRef" class="layer-canvas" />
+    <canvas ref="poseCanvasRef" class="layer-canvas pose-canvas-layer" />
 
     <!-- 游戏层 -->
     <canvas ref="gameCanvasRef" class="layer-canvas game-layer" />
@@ -1104,6 +1104,11 @@ onUnmounted(() => {
 
 .game-layer {
   z-index: 3;
+}
+
+/* 调试模式下骨架层显示在最上面 */
+.debug-overlay .pose-canvas-layer {
+  z-index: 4 !important;
 }
 
 .ui-layer {
