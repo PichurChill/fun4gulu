@@ -239,7 +239,7 @@ interface Hurdle {
 
 const hurdles: Hurdle[] = []
 const hurdleSpawnTimer = ref(0)
-const HURDLE_SPAWN_INTERVAL = 200  // 增加间隔，因为速度变慢了
+const HURDLE_SPAWN_INTERVAL = 120  // 增加间隔，因为速度变慢了
 
 function spawnHurdle() {
   // 90% 概率单车道，10% 概率双车道
