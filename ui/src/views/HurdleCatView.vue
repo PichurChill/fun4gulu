@@ -432,8 +432,6 @@ const cat = {
     if (this.targetLane !== dir) {
       this.targetLane = dir
       playSwitchSound()
-      // 生成切换特效
-      spawnFloatingText(this.x, this.y - 80, dir < 0 ? '◀' : '▶', '#4a90e2')
     }
   },
 
