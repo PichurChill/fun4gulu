@@ -600,6 +600,8 @@ onUnmounted(() => {
 
 <style scoped>
 .tetris-page {
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
   padding: 96px 16px 28px;
   display: flex;
