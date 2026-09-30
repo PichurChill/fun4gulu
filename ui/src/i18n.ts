@@ -21,6 +21,10 @@ const messages = {
           title: '跨栏小猫',
           desc: '第一视角跨栏游戏！小猫持续前进，跳跃躲避栏杆！'
         },
+        tetris: {
+          title: '俄罗斯方块',
+          desc: '经典掌机俄罗斯方块！移动、旋转、消行，冲击最高分！'
+        },
         demo1: {
           title: '示例小游戏 1',
           desc: '一个简单的网页小游戏Demo。'
@@ -29,6 +33,24 @@ const messages = {
           title: '示例小游戏 2',
           desc: '探索未知的像素世界。'
         }
+      },
+      tetrisView: {
+        title: '俄罗斯方块',
+        description: '经典掌机俄罗斯方块！移动、旋转方块，消除整行得分！',
+        startButton: '🎮 开始游戏',
+        back: '返回',
+        score: '得分',
+        level: '等级',
+        lines: '行数',
+        next: '下一个',
+        item: '道具',
+        itemEmpty: '空',
+        paused: '已暂停',
+        clickToResume: '点击继续',
+        gameOver: '游戏结束',
+        finalScore: '最终得分',
+        restartButton: '🔄 再来一局',
+        instructions: '← → 移动 · ↓ 加速下落 · ↑ 旋转 · P 暂停（触屏用下方按键）'
       },
       jumpCatView: {
         title: '跳跳猫',
@@ -79,6 +101,10 @@ const messages = {
           title: 'Hurdle Cat',
           desc: 'First-person hurdle game! The cat keeps moving forward, jump to avoid hurdles!'
         },
+        tetris: {
+          title: 'Tetris',
+          desc: 'Classic handheld Tetris! Move, rotate and clear lines for the high score!'
+        },
         demo1: {
           title: 'Demo Game 1',
           desc: 'A simple web game demo.'
@@ -87,6 +113,24 @@ const messages = {
           title: 'Demo Game 2',
           desc: 'Explore the unknown pixel world.'
         }
+      },
+      tetrisView: {
+        title: 'Tetris',
+        description: 'Classic handheld Tetris! Move and rotate blocks, clear full lines to score!',
+        startButton: '🎮 Start Game',
+        back: 'BACK',
+        score: 'SCORE',
+        level: 'LEVEL',
+        lines: 'LINES',
+        next: 'NEXT',
+        item: 'ITEM',
+        itemEmpty: 'EMPTY',
+        paused: 'PAUSED',
+        clickToResume: 'Click to resume',
+        gameOver: 'GAME OVER',
+        finalScore: 'FINAL SCORE',
+        restartButton: '🔄 Play Again',
+        instructions: '← → move · ↓ soft drop · ↑ rotate · P pause (or touch buttons below)'
       },
       jumpCatView: {
         title: 'Jump Cat',
@@ -137,6 +181,10 @@ const messages = {
           title: 'ハードル猫',
           desc: '一人称視点ハードルゲーム！猫が前に進み続け、ジャンプしてハードルを避けよう！'
         },
+        tetris: {
+          title: 'テトリス',
+          desc: 'クラシックな携帯型テトリス！移動・回転・ライン消去でハイスコアを狙え！'
+        },
         demo1: {
           title: 'デモゲーム 1',
           desc: '簡単なWebゲームのデモ。'
@@ -145,6 +193,24 @@ const messages = {
           title: 'デモゲーム 2',
           desc: '未知のピクセル世界を探索しよう。'
         }
+      },
+      tetrisView: {
+        title: 'テトリス',
+        description: 'クラシックな携帯型テトリス！ブロックを移動・回転してラインを消そう！',
+        startButton: '🎮 ゲームスタート',
+        back: '戻る',
+        score: 'スコア',
+        level: 'レベル',
+        lines: 'ライン',
+        next: 'つぎ',
+        item: 'アイテム',
+        itemEmpty: 'なし',
+        paused: '一時停止',
+        clickToResume: 'クリックで再開',
+        gameOver: 'ゲームオーバー',
+        finalScore: '最終スコア',
+        restartButton: '🔄 もう一度',
+        instructions: '← → 移動 · ↓ 高速落下 · ↑ 回転 · P 一時停止（画面下のボタンもOK）'
       },
       jumpCatView: {
         title: 'ジャンプ猫',
@@ -195,6 +261,10 @@ const messages = {
           title: '허들 고양이',
           desc: '1인칭 허들 게임! 고양이가 계속 앞으로 나아가고, 점프하여 허들을 피하세요!'
         },
+        tetris: {
+          title: '테트리스',
+          desc: '클래식 휴대용 테트리스! 이동, 회전, 라인 클리어로 최고 점수에 도전!'
+        },
         demo1: {
           title: '데모 게임 1',
           desc: '간단한 웹 게임 데모.'
@@ -203,6 +273,24 @@ const messages = {
           title: '데모 게임 2',
           desc: '미지의 픽셀 세계를 탐험하세요.'
         }
+      },
+      tetrisView: {
+        title: '테트리스',
+        description: '클래식 휴대용 테트리스! 블록을 이동하고 회전하여 라인을 지우세요!',
+        startButton: '🎮 게임 시작',
+        back: '뒤로',
+        score: '점수',
+        level: '레벨',
+        lines: '줄',
+        next: '다음',
+        item: '아이템',
+        itemEmpty: '없음',
+        paused: '일시정지',
+        clickToResume: '클릭하여 계속',
+        gameOver: '게임 오버',
+        finalScore: '최종 점수',
+        restartButton: '🔄 다시 하기',
+        instructions: '← → 이동 · ↓ 빠른 낙하 · ↑ 회전 · P 일시정지 (하단 버튼 사용 가능)'
       },
       jumpCatView: {
         title: '점프 고양이',
@@ -253,6 +341,10 @@ const messages = {
           title: 'Chat Haies',
           desc: 'Jeu de haies à la première personne ! Le chat avance constamment, sautez pour éviter les haies !'
         },
+        tetris: {
+          title: 'Tetris',
+          desc: 'Tetris classique de console portable ! Déplacez, pivotez et effacez des lignes !'
+        },
         demo1: {
           title: 'Jeu de Démo 1',
           desc: 'Une simple démo de jeu web.'
@@ -261,6 +353,24 @@ const messages = {
           title: 'Jeu de Démo 2',
           desc: 'Explorez le monde pixel inconnu.'
         }
+      },
+      tetrisView: {
+        title: 'Tetris',
+        description: 'Tetris classique de console portable ! Déplacez et faites pivoter les pièces, effacez des lignes !',
+        startButton: '🎮 Démarrer',
+        back: 'Retour',
+        score: 'Score',
+        level: 'Niveau',
+        lines: 'Lignes',
+        next: 'Suivante',
+        item: 'Objet',
+        itemEmpty: 'Vide',
+        paused: 'En pause',
+        clickToResume: 'Cliquez pour reprendre',
+        gameOver: 'Game Over',
+        finalScore: 'Score final',
+        restartButton: '🔄 Rejouer',
+        instructions: '← → déplacer · ↓ chute rapide · ↑ pivoter · P pause (ou boutons tactiles ci-dessous)'
       },
       jumpCatView: {
         title: 'Chat Sauteur',

@@ -3,6 +3,7 @@ import HomeView from '../views/HomeView.vue'
 import GameView from '../views/GameView.vue'
 import JumpCatView from '../views/JumpCatView.vue'
 import HurdleCatView from '../views/HurdleCatView.vue'
+import TetrisView from '../views/TetrisView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -26,6 +27,11 @@ const router = createRouter({
       path: '/hurdle-cat',
       name: 'hurdle-cat',
       component: HurdleCatView
+    },
+    {
+      path: '/tetris',
+      name: 'tetris',
+      component: TetrisView
     }
   ]
 })

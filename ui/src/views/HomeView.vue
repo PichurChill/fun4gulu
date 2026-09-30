@@ -50,7 +50,7 @@
         </section>
     <footer class="site-footer">
       <span>© {{ new Date().getFullYear() }} FUN4GULU</span>
-      <span class="version-tag">v0.0.13</span>
+      <span class="version-tag">v0.0.14</span>
     </footer>
   </div>
 </template>
@@ -63,12 +63,24 @@ const { t } = useI18n()
 const games = [
   { id: 'jump-cat', external: true },
   { id: 'hurdle-cat', external: true },
+  { id: 'tetris', external: true },
   { id: 'demo1' },
   { id: 'demo2' }
 ]
 function getIcon(id: string) {
   if (id === 'jump-cat') return 'https://win98icons.alexmeub.com/icons/png/object_cat-4.png'
   if (id === 'hurdle-cat') return 'https://win98icons.alexmeub.com/icons/png/msagent2-4.png'
+  if (id === 'tetris') {
+    // 像素方块图标（win98 图标库无俄罗斯方块，用内联 SVG 保持本地可靠）
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+      '<rect x="1" y="1" width="13" height="13" fill="#4FB033" stroke="#000" stroke-width="2"/>' +
+      '<rect x="16" y="1" width="13" height="13" fill="#FFD200" stroke="#000" stroke-width="2"/>' +
+      '<rect x="1" y="16" width="13" height="13" fill="#E63946" stroke="#000" stroke-width="2"/>' +
+      '<rect x="16" y="16" width="13" height="13" fill="#4A90E2" stroke="#000" stroke-width="2"/>' +
+      '</svg>'
+    )
+  }
   return id === 'demo1'
     ? 'https://win98icons.alexmeub.com/icons/png/game_solitaire-4.png'
     : 'https://win98icons.alexmeub.com/icons/png/game_freecell-4.png'
