@@ -525,41 +525,49 @@ onUnmounted(() => {
         <div class="screen-caption">COLOR TETRIS · 10×20 DOT MATRIX</div>
       </div>
 
-      <!-- 触屏控制区：方向键 + 暂停 + 大旋转键 -->
+      <!-- 触屏控制区：GameBoy 十字键 + A/B 键 -->
       <div class="controls">
-        <div class="dpad">
+        <div class="dpad" role="group" aria-label="direction pad">
           <button
-            class="pad-btn"
+            class="d-btn d-up"
+            aria-label="rotate"
+            @pointerdown.prevent="rotate"
+          ></button>
+          <button
+            class="d-btn d-left"
             aria-label="left"
             @pointerdown.prevent="padMoveStart(-1)"
             @pointerup="padMoveEnd"
             @pointercancel="padMoveEnd"
             @pointerleave="padMoveEnd"
-          >◀</button>
+          ></button>
+          <div class="d-center"></div>
           <button
-            class="pad-btn"
-            aria-label="down"
-            @pointerdown.prevent="padSoftDropStart"
-            @pointerup="padSoftDropEnd"
-            @pointercancel="padSoftDropEnd"
-            @pointerleave="padSoftDropEnd"
-          >▼</button>
-          <button
-            class="pad-btn"
+            class="d-btn d-right"
             aria-label="right"
             @pointerdown.prevent="padMoveStart(1)"
             @pointerup="padMoveEnd"
             @pointercancel="padMoveEnd"
             @pointerleave="padMoveEnd"
-          >▶</button>
-        </div>
-        <div class="action-group">
-          <button class="pause-btn" @click="togglePause">{{ phase === 'paused' ? '▶' : '❚❚' }}</button>
+          ></button>
           <button
-            class="rotate-btn"
-            aria-label="rotate"
-            @pointerdown.prevent="rotate"
-          >⟳</button>
+            class="d-btn d-down"
+            aria-label="down"
+            @pointerdown.prevent="padSoftDropStart"
+            @pointerup="padSoftDropEnd"
+            @pointercancel="padSoftDropEnd"
+            @pointerleave="padSoftDropEnd"
+          ></button>
+        </div>
+        <div class="ab-group">
+          <div class="ab-unit">
+            <button class="ab-btn" aria-label="pause" @click="togglePause"></button>
+            <span class="ab-label">B</span>
+          </div>
+          <div class="ab-unit">
+            <button class="ab-btn" aria-label="rotate" @pointerdown.prevent="rotate"></button>
+            <span class="ab-label">A</span>
+          </div>
         </div>
       </div>
 
@@ -761,89 +769,119 @@ onUnmounted(() => {
   font-family: 'DotGothic16', monospace;
 }
 
-/* 触屏控制区 */
+/* 触屏控制区：GameBoy 十字键 + A/B */
 .controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 6px;
+  padding: 4px 6px 0;
 }
 
+/* 十字键 */
 .dpad {
-  display: flex;
-  gap: 10px;
+  position: relative;
+  width: 138px;
+  height: 138px;
 }
 
-.pad-btn {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
+.d-btn {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  padding: 0;
   background: #23232e;
-  color: #fff;
-  font-size: 18px;
-  border: 4px solid #000;
-  box-shadow: 0 5px 0 #000;
+  border: 3px solid #000;
   cursor: pointer;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
-  padding: 0;
 }
 
-.pad-btn:active {
-  transform: translateY(4px);
-  box-shadow: 0 1px 0 #000;
+.d-up    { left: 46px; top: 0;    border-radius: 9px 9px 0 0; }
+.d-down  { left: 46px; top: 92px; border-radius: 0 0 9px 9px; }
+.d-left  { left: 0;    top: 46px; border-radius: 9px 0 0 9px; }
+.d-right { left: 92px; top: 46px; border-radius: 0 9px 9px 0; }
+
+/* 凹刻三角箭头（CSS 绘制，非字符）*/
+.d-btn::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border: 8px solid transparent;
 }
 
-.action-group {
+.d-up::before    { transform: translate(-50%, -62%); border-bottom-color: #5c5c72; }
+.d-down::before  { transform: translate(-50%, -38%); border-top-color: #5c5c72; }
+.d-left::before  { transform: translate(-62%, -50%); border-right-color: #5c5c72; }
+.d-right::before { transform: translate(-38%, -50%); border-left-color: #5c5c72; }
+
+.d-btn:active {
+  background: #1a1a24;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+/* 十字中心枢轴 */
+.d-center {
+  position: absolute;
+  left: 46px;
+  top: 46px;
+  width: 46px;
+  height: 46px;
+  background: #23232e;
+  pointer-events: none;
+}
+
+.d-center::after {
+  content: '';
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+  background: #1a1a24;
+  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.7);
+}
+
+/* A/B 键：GameBoy 品红圆钮，B 左下 / A 右上，沿倾斜轴排列 */
+.ab-group {
   display: flex;
+  gap: 22px;
   align-items: center;
-  gap: 16px;
+  transform: rotate(-18deg);
+  padding: 10px 14px 16px;
 }
 
-.pause-btn {
-  width: 44px;
-  height: 44px;
+.ab-unit {
+  position: relative;
+}
+
+.ab-btn {
+  display: block;
+  width: 58px;
+  height: 58px;
+  padding: 0;
   border-radius: 50%;
-  background: #4a4a58;
-  color: #fff;
+  background: #A4344F;
+  border: 3px solid #000;
+  box-shadow: 0 5px 0 #000, inset 2px 3px 4px rgba(255, 255, 255, 0.28);
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ab-btn:active {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 #000, inset 2px 3px 4px rgba(255, 255, 255, 0.28);
+}
+
+/* 字母丝印在机身（黄色壳）上，不在键面上 */
+.ab-label {
+  position: absolute;
+  right: -2px;
+  bottom: -16px;
   font-size: 13px;
-  border: 4px solid #000;
-  box-shadow: 0 4px 0 #000;
-  cursor: pointer;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  padding: 0;
-}
-
-.pause-btn:active {
-  transform: translateY(3px);
-  box-shadow: 0 1px 0 #000;
-}
-
-.rotate-btn {
-  width: 88px;
-  height: 88px;
-  border-radius: 50%;
-  background: #E63946;
-  color: #fff;
-  font-size: 36px;
   font-weight: 900;
-  border: 5px solid #000;
-  box-shadow: 0 7px 0 #000;
-  cursor: pointer;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  padding: 0;
-  line-height: 1;
-}
-
-.rotate-btn:active {
-  transform: translateY(5px);
-  box-shadow: 0 2px 0 #000;
+  color: #7a4c00;
 }
 
 .console-bottom {
@@ -953,16 +991,31 @@ onUnmounted(() => {
     width: 104px;
   }
 
-  .pad-btn {
-    width: 50px;
-    height: 50px;
-    font-size: 16px;
+  .dpad {
+    width: 120px;
+    height: 120px;
   }
 
-  .rotate-btn {
-    width: 78px;
-    height: 78px;
-    font-size: 32px;
+  .d-btn,
+  .d-center {
+    width: 40px;
+    height: 40px;
+  }
+
+  .d-up    { left: 40px; }
+  .d-down  { left: 40px; top: 80px; }
+  .d-left  { top: 40px; }
+  .d-right { left: 80px; top: 40px; }
+  .d-center { left: 40px; top: 40px; }
+
+  .ab-group {
+    gap: 16px;
+    padding: 6px 10px 12px;
+  }
+
+  .ab-btn {
+    width: 50px;
+    height: 50px;
   }
 
   .start-box h1 {

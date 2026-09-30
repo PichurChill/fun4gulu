@@ -37,7 +37,7 @@ const messages = {
       tetrisView: {
         title: '俄罗斯方块',
         description: '经典掌机俄罗斯方块！移动、旋转方块，消除整行得分！',
-        startButton: '🎮 开始游戏',
+        startButton: '开始游戏',
         back: '返回',
         score: '得分',
         level: '等级',
@@ -49,7 +49,7 @@ const messages = {
         clickToResume: '点击继续',
         gameOver: '游戏结束',
         finalScore: '最终得分',
-        restartButton: '🔄 再来一局',
+        restartButton: '再来一局',
         instructions: '← → 移动 · ↓ 加速下落 · ↑ 旋转 · P 暂停（触屏用下方按键）'
       },
       jumpCatView: {
@@ -117,7 +117,7 @@ const messages = {
       tetrisView: {
         title: 'Tetris',
         description: 'Classic handheld Tetris! Move and rotate blocks, clear full lines to score!',
-        startButton: '🎮 Start Game',
+        startButton: 'Start Game',
         back: 'BACK',
         score: 'SCORE',
         level: 'LEVEL',
@@ -129,7 +129,7 @@ const messages = {
         clickToResume: 'Click to resume',
         gameOver: 'GAME OVER',
         finalScore: 'FINAL SCORE',
-        restartButton: '🔄 Play Again',
+        restartButton: 'Play Again',
         instructions: '← → move · ↓ soft drop · ↑ rotate · P pause (or touch buttons below)'
       },
       jumpCatView: {
@@ -197,7 +197,7 @@ const messages = {
       tetrisView: {
         title: 'テトリス',
         description: 'クラシックな携帯型テトリス！ブロックを移動・回転してラインを消そう！',
-        startButton: '🎮 ゲームスタート',
+        startButton: 'ゲームスタート',
         back: '戻る',
         score: 'スコア',
         level: 'レベル',
@@ -209,7 +209,7 @@ const messages = {
         clickToResume: 'クリックで再開',
         gameOver: 'ゲームオーバー',
         finalScore: '最終スコア',
-        restartButton: '🔄 もう一度',
+        restartButton: 'もう一度',
         instructions: '← → 移動 · ↓ 高速落下 · ↑ 回転 · P 一時停止（画面下のボタンもOK）'
       },
       jumpCatView: {
@@ -277,7 +277,7 @@ const messages = {
       tetrisView: {
         title: '테트리스',
         description: '클래식 휴대용 테트리스! 블록을 이동하고 회전하여 라인을 지우세요!',
-        startButton: '🎮 게임 시작',
+        startButton: '게임 시작',
         back: '뒤로',
         score: '점수',
         level: '레벨',
@@ -289,7 +289,7 @@ const messages = {
         clickToResume: '클릭하여 계속',
         gameOver: '게임 오버',
         finalScore: '최종 점수',
-        restartButton: '🔄 다시 하기',
+        restartButton: '다시 하기',
         instructions: '← → 이동 · ↓ 빠른 낙하 · ↑ 회전 · P 일시정지 (하단 버튼 사용 가능)'
       },
       jumpCatView: {
@@ -357,7 +357,7 @@ const messages = {
       tetrisView: {
         title: 'Tetris',
         description: 'Tetris classique de console portable ! Déplacez et faites pivoter les pièces, effacez des lignes !',
-        startButton: '🎮 Démarrer',
+        startButton: 'Démarrer',
         back: 'Retour',
         score: 'Score',
         level: 'Niveau',
@@ -369,7 +369,7 @@ const messages = {
         clickToResume: 'Cliquez pour reprendre',
         gameOver: 'Game Over',
         finalScore: 'Score final',
-        restartButton: '🔄 Rejouer',
+        restartButton: 'Rejouer',
         instructions: '← → déplacer · ↓ chute rapide · ↑ pivoter · P pause (ou boutons tactiles ci-dessous)'
       },
       jumpCatView: {
