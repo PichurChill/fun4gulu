@@ -50,7 +50,7 @@
         </section>
     <footer class="site-footer">
       <span>© {{ new Date().getFullYear() }} FUN4GULU</span>
-      <span class="version-tag">v0.0.14</span>
+      <span class="version-tag">v0.0.15</span>
     </footer>
   </div>
 </template>
@@ -64,6 +64,7 @@ const games = [
   { id: 'jump-cat', external: true },
   { id: 'hurdle-cat', external: true },
   { id: 'tetris', external: true },
+  { id: 'retro', external: true },
   { id: 'demo1' },
   { id: 'demo2' }
 ]
@@ -78,6 +79,18 @@ function getIcon(id: string) {
       '<rect x="16" y="1" width="13" height="13" fill="#FFD200" stroke="#000" stroke-width="2"/>' +
       '<rect x="1" y="16" width="13" height="13" fill="#E63946" stroke="#000" stroke-width="2"/>' +
       '<rect x="16" y="16" width="13" height="13" fill="#4A90E2" stroke="#000" stroke-width="2"/>' +
+      '</svg>'
+    )
+  }
+  if (id === 'retro') {
+    // 复古卡带图标（内联 SVG）
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+      '<rect x="3" y="2" width="26" height="28" fill="#23232E" stroke="#000" stroke-width="2"/>' +
+      '<rect x="6" y="5" width="20" height="8" fill="#4FB033" stroke="#000" stroke-width="1.5"/>' +
+      '<rect x="10" y="16" width="12" height="10" fill="#FFC53D" stroke="#000" stroke-width="1.5"/>' +
+      '<rect x="12" y="19" width="8" height="2" fill="#23232E"/>' +
+      '<rect x="12" y="23" width="8" height="2" fill="#23232E"/>' +
       '</svg>'
     )
   }

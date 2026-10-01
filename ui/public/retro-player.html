@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Retro Player</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0d1a; overflow: hidden; }
+    #game { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="game"></div>
+  <script>
+    const q = new URLSearchParams(location.search)
+    window.EJS_player = '#game'
+    window.EJS_core = q.get('core') || 'nes'
+    window.EJS_gameUrl = q.get('rom') || ''
+    window.EJS_gameName = q.get('title') || ''
+    window.EJS_startOnLoaded = true
+    window.EJS_backgroundColor = '#0d0d1a'
+    window.EJS_color = '#FFC53D'
+    window.EJS_pathtodata = '/emulatorjs/'
+  </script>
+  <script src="/emulatorjs/loader.js"></script>
+</body>
+</html>

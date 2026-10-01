@@ -25,6 +25,10 @@ const messages = {
           title: '俄罗斯方块',
           desc: '经典掌机俄罗斯方块！移动、旋转、消行，冲击最高分！'
         },
+        retro: {
+          title: '复古游戏机',
+          desc: '复古卡带合集！GB / GBC / GBA / NES 模拟器，7 款自制经典即点即玩！'
+        },
         demo1: {
           title: '示例小游戏 1',
           desc: '一个简单的网页小游戏Demo。'
@@ -51,6 +55,13 @@ const messages = {
         finalScore: '最终得分',
         restartButton: '再来一局',
         instructions: '← → 移动 · ↓ 加速下落 · ↑ 旋转 · P 暂停（触屏用下方按键）'
+      },
+      retroView: {
+        title: '复古卡带',
+        hint: '点击卡带插入即玩（触屏自动显示虚拟手柄）',
+        back: '返回',
+        eject: '退出卡带',
+        license: '全部为可自由分发的 homebrew（自制）游戏'
       },
       jumpCatView: {
         title: '跳跳猫',
@@ -105,6 +116,10 @@ const messages = {
           title: 'Tetris',
           desc: 'Classic handheld Tetris! Move, rotate and clear lines for the high score!'
         },
+        retro: {
+          title: 'Retro Console',
+          desc: 'Retro cartridge collection! GB/GBC/GBA/NES emulator with 7 homebrew classics, tap to play!'
+        },
         demo1: {
           title: 'Demo Game 1',
           desc: 'A simple web game demo.'
@@ -131,6 +146,13 @@ const messages = {
         finalScore: 'FINAL SCORE',
         restartButton: 'Play Again',
         instructions: '← → move · ↓ soft drop · ↑ rotate · P pause (or touch buttons below)'
+      },
+      retroView: {
+        title: 'Retro Cartridges',
+        hint: 'Tap a cartridge to insert and play (virtual gamepad on touch)',
+        back: 'BACK',
+        eject: 'EJECT',
+        license: 'All games are freely distributable homebrew'
       },
       jumpCatView: {
         title: 'Jump Cat',
@@ -185,6 +207,10 @@ const messages = {
           title: 'テトリス',
           desc: 'クラシックな携帯型テトリス！移動・回転・ライン消去でハイスコアを狙え！'
         },
+        retro: {
+          title: 'レトロゲーム機',
+          desc: 'レトロカートリッジ集！GB/GBC/GBA/NES エミュレータで自作名作7本をすぐプレイ！'
+        },
         demo1: {
           title: 'デモゲーム 1',
           desc: '簡単なWebゲームのデモ。'
@@ -211,6 +237,13 @@ const messages = {
         finalScore: '最終スコア',
         restartButton: 'もう一度',
         instructions: '← → 移動 · ↓ 高速落下 · ↑ 回転 · P 一時停止（画面下のボタンもOK）'
+      },
+      retroView: {
+        title: 'レトロカートリッジ',
+        hint: 'カートリッジをタップして挿入、すぐプレイ（タッチは仮想パッド）',
+        back: '戻る',
+        eject: 'イジェクト',
+        license: 'すべて自由配布可能なホームブルー作品です'
       },
       jumpCatView: {
         title: 'ジャンプ猫',
@@ -265,6 +298,10 @@ const messages = {
           title: '테트리스',
           desc: '클래식 휴대용 테트리스! 이동, 회전, 라인 클리어로 최고 점수에 도전!'
         },
+        retro: {
+          title: '레트로 게임기',
+          desc: '레트로 카트리지 컬렉션! GB/GBC/GBA/NES 에뮬레이터로 홈브류 명작 7종을 바로 플레이!'
+        },
         demo1: {
           title: '데모 게임 1',
           desc: '간단한 웹 게임 데모.'
@@ -291,6 +328,13 @@ const messages = {
         finalScore: '최종 점수',
         restartButton: '다시 하기',
         instructions: '← → 이동 · ↓ 빠른 낙하 · ↑ 회전 · P 일시정지 (하단 버튼 사용 가능)'
+      },
+      retroView: {
+        title: '레트로 카트리지',
+        hint: '카트리지를 눌러 끼우고 바로 즐기세요(터치는 가상 패드)',
+        back: '돌아가기',
+        eject: '카트리지 빼기',
+        license: '모두 자유 배포 가능한 홈브류 게임입니다'
       },
       jumpCatView: {
         title: '점프 고양이',
@@ -345,6 +389,10 @@ const messages = {
           title: 'Tetris',
           desc: 'Tetris classique de console portable ! Déplacez, pivotez et effacez des lignes !'
         },
+        retro: {
+          title: 'Console Rétro',
+          desc: 'Collection de cartouches rétro ! Émulateur GB/GBC/GBA/NES et 7 classiques homebrew.'
+        },
         demo1: {
           title: 'Jeu de Démo 1',
           desc: 'Une simple démo de jeu web.'
@@ -371,6 +419,13 @@ const messages = {
         finalScore: 'Score final',
         restartButton: 'Rejouer',
         instructions: '← → déplacer · ↓ chute rapide · ↑ pivoter · P pause (ou boutons tactiles ci-dessous)'
+      },
+      retroView: {
+        title: 'Cartouches Rétro',
+        hint: 'Insérez une cartouche et jouez (manette virtuelle sur tactile)',
+        back: 'RETOUR',
+        eject: 'ÉJECTER',
+        license: 'Tous les jeux sont des homebrew librement diffusables'
       },
       jumpCatView: {
         title: 'Chat Sauteur',

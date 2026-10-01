@@ -4,6 +4,7 @@ import GameView from '../views/GameView.vue'
 import JumpCatView from '../views/JumpCatView.vue'
 import HurdleCatView from '../views/HurdleCatView.vue'
 import TetrisView from '../views/TetrisView.vue'
+import RetroView from '../views/RetroView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -32,6 +33,11 @@ const router = createRouter({
       path: '/tetris',
       name: 'tetris',
       component: TetrisView
+    },
+    {
+      path: '/retro',
+      name: 'retro',
+      component: RetroView
     }
   ]
 })
