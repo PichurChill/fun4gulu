@@ -38,6 +38,11 @@ const router = createRouter({
       path: '/retro',
       name: 'retro',
       component: RetroView
+    },
+    {
+      path: '/ultraman',
+      name: 'ultraman',
+      component: () => import('../views/UltramanView.vue')
     }
   ]
 })

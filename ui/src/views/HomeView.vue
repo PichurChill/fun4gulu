@@ -50,7 +50,7 @@
         </section>
     <footer class="site-footer">
       <span>© {{ new Date().getFullYear() }} FUN4GULU</span>
-      <span class="version-tag">v0.0.15</span>
+      <span class="version-tag">v0.0.16</span>
     </footer>
   </div>
 </template>
@@ -61,6 +61,7 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const games = [
+  { id: 'ultraman', external: true },
   { id: 'jump-cat', external: true },
   { id: 'hurdle-cat', external: true },
   { id: 'tetris', external: true },
@@ -69,6 +70,20 @@ const games = [
   { id: 'demo2' }
 ]
 function getIcon(id: string) {
+  if (id === 'ultraman') {
+    // 迪迦奥特曼经典像素风头徽（内联 SVG，固定 48x48 与其它游戏卡片图标保持一致）
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 32 32">' +
+      '<rect x="2" y="2" width="28" height="28" rx="4" fill="#1D4ED8" stroke="#000" stroke-width="2"/>' +
+      '<path d="M16 4 L23 11 L22 25 L16 28 L10 25 L9 11 Z" fill="#E2E8F0" stroke="#000" stroke-width="2"/>' +
+      '<path d="M16 4 L18 10 L14 10 Z" fill="#DC2626"/>' +
+      '<rect x="15" y="9" width="2" height="4" fill="#38BDF8"/>' +
+      '<ellipse cx="12.5" cy="16" rx="2.6" ry="2" fill="#FEF08A" stroke="#000" stroke-width="1"/>' +
+      '<ellipse cx="19.5" cy="16" rx="2.6" ry="2" fill="#FEF08A" stroke="#000" stroke-width="1"/>' +
+      '<path d="M9 22 L16 26 L23 22" fill="none" stroke="#FACC15" stroke-width="2"/>' +
+      '</svg>'
+    )
+  }
   if (id === 'jump-cat') return 'https://win98icons.alexmeub.com/icons/png/object_cat-4.png'
   if (id === 'hurdle-cat') return 'https://win98icons.alexmeub.com/icons/png/msagent2-4.png'
   if (id === 'tetris') {

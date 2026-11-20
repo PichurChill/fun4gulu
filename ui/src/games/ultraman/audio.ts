@@ -1,0 +1,312 @@
+/**
+ * 特摄战斗合成音效引擎（纯 WebAudio，零外部音频依赖）
+ */
+export class UltraAudio {
+  private ctx: AudioContext | null = null
+  public muted = false
+  private alarmTimer: number | null = null
+
+  private ensureContext(): AudioContext | null {
+    if (this.muted) return null
+    try {
+      if (!this.ctx) {
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+        this.ctx = new AudioCtx()
+      }
+      if (this.ctx.state === 'suspended') {
+        void this.ctx.resume()
+      }
+      return this.ctx
+    } catch {
+      return null
+    }
+  }
+
+  public unlock() {
+    this.ensureContext()
+  }
+
+  /** 变身闪光音效 */
+  public playTransform() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const freqs = [261.63, 392.0, 523.25, 783.99, 1046.5]
+    freqs.forEach((f, idx) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = idx % 2 === 0 ? 'triangle' : 'sine'
+      osc.frequency.setValueAtTime(f * 0.75, now + idx * 0.06)
+      osc.frequency.exponentialRampToValueAtTime(f * 1.4, now + 0.55 + idx * 0.05)
+      gain.gain.setValueAtTime(0.001, now + idx * 0.06)
+      gain.gain.linearRampToValueAtTime(0.09, now + 0.15 + idx * 0.06)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.95)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now + idx * 0.06)
+      osc.stop(now + 1.0)
+    })
+  }
+
+  /** 出拳呼啸与命中重击 */
+  public playPunch(hit = true) {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+
+    // 拳风低频冲击
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(hit ? 220 : 320, now)
+    osc.frequency.exponentialRampToValueAtTime(48, now + 0.16)
+    gain.gain.setValueAtTime(hit ? 0.28 : 0.14, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.19)
+
+    if (hit) {
+      this.playNoiseBurst(0.12, 0.22, 950)
+    }
+  }
+
+  /** 八分光轮嗡鸣飞斩 */
+  public playDisc() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const lfo = ctx.createOscillator()
+    const lfoGain = ctx.createGain()
+    const gain = ctx.createGain()
+
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(620, now)
+    osc.frequency.exponentialRampToValueAtTime(1180, now + 0.25)
+    osc.frequency.exponentialRampToValueAtTime(460, now + 0.6)
+
+    lfo.frequency.value = 34
+    lfoGain.gain.value = 90
+    lfo.connect(lfoGain)
+    lfoGain.connect(osc.frequency)
+
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = 1400
+    filter.Q.value = 2.4
+
+    gain.gain.setValueAtTime(0.18, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.62)
+
+    osc.connect(filter)
+    filter.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    lfo.start(now)
+    osc.stop(now + 0.64)
+    lfo.stop(now + 0.64)
+  }
+
+  /** 哉佩利敖光线发射轰鸣 */
+  public playBeam(isSuper = false) {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const dur = isSuper ? 1.85 : 1.35
+
+    // 高频共鸣光束声
+    const osc1 = ctx.createOscillator()
+    const osc2 = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc1.type = 'sawtooth'
+    osc2.type = 'sine'
+    osc1.frequency.setValueAtTime(340, now)
+    osc1.frequency.exponentialRampToValueAtTime(isSuper ? 960 : 720, now + 0.22)
+    osc1.frequency.linearRampToValueAtTime(520, now + dur)
+
+    osc2.frequency.setValueAtTime(680, now)
+    osc2.frequency.exponentialRampToValueAtTime(isSuper ? 1560 : 1180, now + 0.24)
+    osc2.frequency.linearRampToValueAtTime(880, now + dur)
+
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(2800, now)
+    filter.frequency.linearRampToValueAtTime(1200, now + dur)
+
+    gain.gain.setValueAtTime(0.01, now)
+    gain.gain.linearRampToValueAtTime(isSuper ? 0.24 : 0.18, now + 0.12)
+    gain.gain.setValueAtTime(isSuper ? 0.22 : 0.16, now + dur - 0.35)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + dur)
+
+    osc1.connect(filter)
+    osc2.connect(filter)
+    filter.connect(gain)
+    gain.connect(ctx.destination)
+    osc1.start(now)
+    osc2.start(now)
+    osc1.stop(now + dur + 0.05)
+    osc2.stop(now + dur + 0.05)
+
+    this.playNoiseBurst(dur * 0.7, isSuper ? 0.18 : 0.12, 650)
+  }
+
+  /** 奥特屏障格挡成功 */
+  public playGuardBlock() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(540, now)
+    osc.frequency.exponentialRampToValueAtTime(1320, now + 0.16)
+    gain.gain.setValueAtTime(0.22, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.28)
+  }
+
+  /** 英雄受击沉闷冲击 */
+  public playHeroHurt() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(160, now)
+    osc.frequency.exponentialRampToValueAtTime(42, now + 0.28)
+    gain.gain.setValueAtTime(0.26, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.32)
+    this.playNoiseBurst(0.22, 0.25, 420)
+  }
+
+  /** 怪兽攻击预警提示音 */
+  public playWarning() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    for (let i = 0; i < 2; i++) {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'square'
+      osc.frequency.setValueAtTime(580, now + i * 0.14)
+      osc.frequency.linearRampToValueAtTime(440, now + i * 0.14 + 0.1)
+      gain.gain.setValueAtTime(0.09, now + i * 0.14)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.14 + 0.11)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now + i * 0.14)
+      osc.stop(now + i * 0.14 + 0.12)
+    }
+  }
+
+  /** 怪兽被击败大爆炸 */
+  public playExplosion() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(120, now)
+    osc.frequency.exponentialRampToValueAtTime(24, now + 0.75)
+    gain.gain.setValueAtTime(0.32, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.82)
+    this.playNoiseBurst(0.75, 0.34, 380)
+  }
+
+  /** 胜利凯旋音阶 */
+  public playVictory() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const notes = [523.25, 659.25, 783.99, 1046.5]
+    notes.forEach((n, i) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'triangle'
+      osc.frequency.setValueAtTime(n, now + i * 0.12)
+      gain.gain.setValueAtTime(0.16, now + i * 0.12)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.45)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now + i * 0.12)
+      osc.stop(now + i * 0.12 + 0.48)
+    })
+  }
+
+  /** 经典彩色计时器红灯“叮咚”闪烁警报 */
+  public setDangerAlarm(active: boolean) {
+    if (!active) {
+      if (this.alarmTimer !== null) {
+        window.clearInterval(this.alarmTimer)
+        this.alarmTimer = null
+      }
+      return
+    }
+    if (this.alarmTimer !== null) return
+    const ping = () => {
+      const ctx = this.ensureContext()
+      if (!ctx) return
+      const now = ctx.currentTime
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(988, now)
+      gain.gain.setValueAtTime(0.08, now)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now)
+      osc.stop(now + 0.2)
+    }
+    ping()
+    this.alarmTimer = window.setInterval(ping, 720)
+  }
+
+  private playNoiseBurst(duration: number, volume: number, cutoffHz: number) {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const sampleCount = Math.floor(ctx.sampleRate * duration)
+    const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < sampleCount; i++) {
+      data[i] = (Math.random() * 2 - 1) * (1 - i / sampleCount)
+    }
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = cutoffHz
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(volume, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration)
+    source.connect(filter)
+    filter.connect(gain)
+    gain.connect(ctx.destination)
+    source.start()
+  }
+
+  public dispose() {
+    this.setDangerAlarm(false)
+    if (this.ctx) {
+      void this.ctx.close()
+      this.ctx = null
+    }
+  }
+}
