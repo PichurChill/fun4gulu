@@ -2,17 +2,19 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { UltraAudio } from './audio'
 import { BattleEffects } from './effects'
-import { HarborArena } from './environment'
+import { ArenaManager } from './environment'
 import { UltraGestureRecognizer } from './gesture'
 import { TigaHeroController } from './hero'
 import { KaijuController, MONSTER_WAVES } from './monsters'
 import type {
   BattleHudState,
+  ConcreteSceneTheme,
   ControlMode,
   FloatingDamageEvent,
   GamePhase,
   MonsterAttackKind,
   PoseLandmark,
+  SceneTheme,
 } from './types'
 
 export interface EngineCallbacks {
@@ -21,7 +23,7 @@ export interface EngineCallbacks {
 }
 
 /**
- * 迪迦奥特曼体感 3D 战斗主引擎
+ * 迪迦奥特曼 3D 全身体感战斗主引擎
  */
 export class UltramanGameEngine {
   private readonly container: HTMLElement
@@ -33,7 +35,7 @@ export class UltramanGameEngine {
 
   public readonly audio = new UltraAudio()
   public readonly gesture = new UltraGestureRecognizer()
-  private readonly arena: HarborArena
+  private readonly arena: ArenaManager
   private readonly hero: TigaHeroController
   private readonly kaiju: KaijuController
   private readonly effects: BattleEffects
@@ -47,6 +49,7 @@ export class UltramanGameEngine {
   // 游戏状态机
   private phase: GamePhase = 'menu'
   private controlMode: ControlMode = 'camera'
+  private preferredTheme: SceneTheme = 'auto'
   private loadingProgress = 0
   private waveIndex = 0
   private monsterHp = 320
@@ -68,7 +71,7 @@ export class UltramanGameEngine {
   private attackResolved = false
   private waveTransitionTimer = 0
 
-  // 英雄招式与连段状态
+  // 英雄招式与动捕状态
   private beamDamageTicksRemaining = 0
   private beamTickTimer = 0
   private beamDamagePerTick = 25
@@ -79,8 +82,10 @@ export class UltramanGameEngine {
   private gestureLean = 0
   private gestureGuard = false
   private gestureTracking = false
+  private gestureCoverage: 'none' | 'upper' | 'full' = 'none'
   private gestureHintKey = 'hintReady'
   private gestureBeamCharge = 0
+  private gestureBeamArmSide: 'left' | 'right' = 'right'
   private gestureDiscCharge = 0
   private gestureDiscSide: 'left' | 'right' | null = null
 
@@ -103,7 +108,7 @@ export class UltramanGameEngine {
     const w = Math.max(1, container.clientWidth || window.innerWidth)
     const h = Math.max(1, container.clientHeight || window.innerHeight)
 
-    this.camera = new THREE.PerspectiveCamera(46, w / h, 0.5, 420)
+    this.camera = new THREE.PerspectiveCamera(46, w / h, 0.5, 450)
     this.camera.position.copy(this.baseCamPos)
     this.camera.lookAt(this.camLookAt)
 
@@ -122,7 +127,7 @@ export class UltramanGameEngine {
 
     container.appendChild(this.renderer.domElement)
 
-    this.arena = new HarborArena(this.scene)
+    this.arena = new ArenaManager(this.scene)
     this.hero = new TigaHeroController(this.scene)
     this.kaiju = new KaijuController(this.scene)
     this.effects = new BattleEffects(this.scene)
@@ -143,7 +148,20 @@ export class UltramanGameEngine {
     this.renderer.setSize(w, h)
   }
 
-  /** 预加载迪迦模型、城市建筑与第 1 关怪兽，让首页背景也能即时展示 3D 战场 */
+  /** 实时切换战场主题（菜单里点选即可立刻预览 3D 场景变化） */
+  public setSceneTheme(theme: SceneTheme, previewWaveIndex?: number) {
+    this.preferredTheme = theme
+    const concrete = this.resolveThemeForWave(previewWaveIndex ?? this.waveIndex)
+    this.arena.setTheme(concrete)
+    this.emitHud()
+  }
+
+  private resolveThemeForWave(waveIdx: number): ConcreteSceneTheme {
+    if (this.preferredTheme !== 'auto') return this.preferredTheme
+    return MONSTER_WAVES[waveIdx]?.defaultTheme ?? 'seaside'
+  }
+
+  /** 预加载迪迦模型、城市建筑与第 1 关怪兽 */
   public async preloadBaseAssets(): Promise<void> {
     if (this.assetsReady) return
     this.loadingProgress = 15
@@ -163,8 +181,13 @@ export class UltramanGameEngine {
     this.emitHud()
   }
 
-  public async startGame(mode: ControlMode, startWaveIndex = 0): Promise<void> {
+  public async startGame(
+    mode: ControlMode,
+    startWaveIndex = 0,
+    theme: SceneTheme = this.preferredTheme,
+  ): Promise<void> {
     this.controlMode = mode
+    this.preferredTheme = theme
     this.audio.unlock()
     this.gesture.reset()
     this.effects.clearAllDynamic()
@@ -211,6 +234,9 @@ export class UltramanGameEngine {
     this.beamDamageTicksRemaining = 0
     this.effects.clearAllDynamic()
 
+    // 自动切换或保持指定场景主题
+    this.arena.setTheme(this.resolveThemeForWave(index))
+
     this.phase = 'loading'
     this.loadingProgress = 75
     this.emitHud()
@@ -238,22 +264,31 @@ export class UltramanGameEngine {
     if (muted) this.audio.setDangerAlarm(false)
   }
 
-  /** 喂入 MediaPipe Pose 骨骼帧 */
+  /**
+   * 喂入 MediaPipe Pose 2D + 3D 世界骨骼帧：
+   * 实时把全身动作重定向给迪迦（头、脊柱、双臂、双手、双腿、下蹲与起跳），同时识别招式特效
+   */
   public feedPoseLandmarks(
     landmarks: PoseLandmark[] | null,
+    worldLandmarks: PoseLandmark[] | null,
     now: number,
     width: number,
     height: number,
   ) {
     if (this.controlMode !== 'camera') return
-    const snap = this.gesture.update(landmarks, now, width, height)
+    const snap = this.gesture.update(landmarks, now, width, height, worldLandmarks)
     this.gestureTracking = snap.tracking
+    this.gestureCoverage = snap.coverage
     this.gestureLean = snap.lean
     this.gestureGuard = snap.guard
     this.gestureBeamCharge = snap.beamCharge
+    this.gestureBeamArmSide = snap.beamArmSide
     this.gestureDiscCharge = snap.discCharge
     this.gestureDiscSide = snap.discSide
     this.gestureHintKey = snap.hintKey
+
+    // 实时驱动迪迦全身肢体同步玩家！
+    this.hero.setLiveBodyPose(snap.livePose, now)
 
     if (this.phase !== 'fighting') return
 
@@ -261,6 +296,8 @@ export class UltramanGameEngine {
       this.executeBeam()
     } else if (snap.discTrigger) {
       this.executeDisc(snap.discTrigger)
+    } else if (snap.kick) {
+      this.executeKick(snap.kick)
     } else if (snap.punch) {
       this.executePunch(snap.punch)
     }
@@ -281,6 +318,11 @@ export class UltramanGameEngine {
     this.executePunch(side)
   }
 
+  public triggerManualKick(side: 'left' | 'right' = 'right') {
+    if (this.phase !== 'fighting') return
+    this.executeKick(side)
+  }
+
   public triggerManualDisc(side: 'left' | 'right' = 'right') {
     if (this.phase !== 'fighting') return
     this.executeDisc(side)
@@ -291,7 +333,7 @@ export class UltramanGameEngine {
     this.executeBeam()
   }
 
-  // ---- 核心招式执行 ----
+  // ---- 核心招式执行（体感模式下特效严格跟随真实手脚发射，不强行覆盖肢体姿态） ----
 
   private executePunch(side: 'left' | 'right') {
     if (this.effects.isHeroBeamActive()) return
@@ -299,7 +341,19 @@ export class UltramanGameEngine {
     const origin = this.hero.getFistOrigin(side)
     const target = this.kaiju.getTargetCenter()
     this.effects.spawnPunchWave(origin, target, 28)
+    this.effects.spawnBurst(origin, 0x67e8f9, 6, 12, 0.55)
     this.audio.playPunch(false)
+  }
+
+  private executeKick(side: 'left' | 'right') {
+    if (this.effects.isHeroBeamActive()) return
+    this.hero.triggerAction(side === 'left' ? 'kick-left' : 'kick-right', 0.36)
+    const origin = this.hero.getFootOrigin(side)
+    const target = this.kaiju.getTargetCenter()
+    this.effects.spawnKickWave(origin, target, 46)
+    this.effects.spawnBurst(origin, 0xf97316, 10, 16, 0.8)
+    this.audio.playPunch(false)
+    this.showBanner('bannerKick', 0.85)
   }
 
   private executeDisc(side: 'left' | 'right') {
@@ -372,7 +426,6 @@ export class UltramanGameEngine {
       isCritical ? 1.3 : 1.0,
     )
 
-    // 怪兽被击败 -> 大爆炸 + 切波次或通关
     if (this.monsterHp <= 0) {
       this.onMonsterDefeated()
     }
@@ -409,7 +462,6 @@ export class UltramanGameEngine {
   private applyAttackOnHero(damage: number, canDodgeByLean: boolean, attackX: number) {
     if (this.phase !== 'fighting') return
 
-    // 正在释放必杀光线时拥有无敌霸体对波！
     if (this.effects.isHeroBeamActive()) {
       this.effects.spawnBurst(
         new THREE.Vector3(this.hero.currentX, 9.5, this.hero.baseZ - 2.5),
@@ -420,7 +472,6 @@ export class UltramanGameEngine {
       return
     }
 
-    // 1. 闪避判定（火球可通过左右闪避躲开）
     if (canDodgeByLean && Math.abs(this.hero.currentX - attackX) > 3.1) {
       this.energy = Math.min(100, this.energy + 12)
       this.score += 200
@@ -434,7 +485,6 @@ export class UltramanGameEngine {
       return
     }
 
-    // 2. 胸前交叉奥特屏障防御判定
     const isGuarding = this.isHeroGuarding()
     if (isGuarding) {
       this.perfectGuards += 1
@@ -461,7 +511,6 @@ export class UltramanGameEngine {
       return
     }
 
-    // 3. 迪迦受击扣血
     this.heroHp = Math.max(0, this.heroHp - damage)
     this.combo = 0
     this.hero.triggerAction('hit', 0.42)
@@ -519,12 +568,11 @@ export class UltramanGameEngine {
     this.lastTimestamp = now
     this.elapsedTime += dt
 
-    this.stepSimulation(dt)
+    this.stepSimulation(dt, now)
     this.renderer.render(this.scene, this.camera)
   }
 
-  private stepSimulation(dt: number) {
-    // 冷却与计时器衰减
+  private stepSimulation(dt: number, nowMs: number) {
     if (this.beamCooldown > 0) this.beamCooldown = Math.max(0, this.beamCooldown - dt)
     if (this.discCooldown > 0) this.discCooldown = Math.max(0, this.discCooldown - dt)
     if (this.skillBannerTimer > 0) {
@@ -536,25 +584,26 @@ export class UltramanGameEngine {
       if (this.comboResetTimer <= 0) this.combo = 0
     }
 
-    // 合并体感与键盘控制信号
     const combinedLean =
       this.manualLean !== 0 ? this.manualLean : this.controlMode === 'camera' ? this.gestureLean : 0
     const guarding = this.isHeroGuarding()
 
     this.hero.setLean(combinedLean)
     this.hero.setGuard(guarding)
-    this.hero.setBeamCharge(this.controlMode === 'camera' ? this.gestureBeamCharge : 0)
+    this.hero.setBeamCharge(
+      this.controlMode === 'camera' ? this.gestureBeamCharge : 0,
+      this.gestureBeamArmSide,
+    )
     this.hero.setDiscCharge(
       this.controlMode === 'camera' ? this.gestureDiscCharge : 0,
       this.gestureDiscSide,
     )
 
     const dangerTimer = this.phase === 'fighting' && this.heroHp <= this.heroMaxHp * 0.3
-    this.hero.update(dt, this.elapsedTime, dangerTimer)
+    this.hero.update(dt, this.elapsedTime, dangerTimer, nowMs)
     this.kaiju.update(dt, this.elapsedTime)
     this.arena.update(dt, this.elapsedTime)
 
-    // 波次入场与过关衔接
     if (this.phase === 'intro') {
       this.waveTransitionTimer -= dt
       if (this.waveTransitionTimer <= 0) {
@@ -564,7 +613,6 @@ export class UltramanGameEngine {
     } else if (this.phase === 'wave-clear') {
       this.waveTransitionTimer -= dt
       if (this.waveTransitionTimer <= 0) {
-        // 过关回复 35% 血量并进入下一只怪兽
         this.heroHp = Math.min(this.heroMaxHp, this.heroHp + 35)
         if (this.heroHp > this.heroMaxHp * 0.3) {
           this.audio.setDangerAlarm(false)
@@ -575,7 +623,6 @@ export class UltramanGameEngine {
       this.stepCombat(dt)
     }
 
-    // 更新 3D 特效（光线、抛射物、护盾、预警环）
     const beamSeg = this.hero.getBeamOriginSegment()
     const kaijuTarget = this.kaiju.getTargetCenter()
     const kaijuEmit = this.kaiju.getAttackEmitOrigin()
@@ -601,7 +648,6 @@ export class UltramanGameEngine {
 
     this.updateCamera(dt)
 
-    // 限频同步 HUD，避免每帧触发 Vue 重渲染
     this.hudSyncAccumulator += dt
     if (this.hudSyncAccumulator >= 0.08) {
       this.hudSyncAccumulator = 0
@@ -612,7 +658,6 @@ export class UltramanGameEngine {
   private stepCombat(dt: number) {
     const spec = MONSTER_WAVES[this.waveIndex]!
 
-    // 1. 必杀光线多段伤害结算
     if (this.beamDamageTicksRemaining > 0) {
       this.beamTickTimer -= dt
       if (this.beamTickTimer <= 0) {
@@ -622,7 +667,6 @@ export class UltramanGameEngine {
       }
     }
 
-    // 2. 抛射物命中检测（拳风、八分光轮、怪兽火球）
     const kaijuCenter = this.kaiju.getTargetCenter()
     for (let i = this.effects.projectiles.length - 1; i >= 0; i--) {
       const proj = this.effects.projectiles[i]!
@@ -635,10 +679,13 @@ export class UltramanGameEngine {
             this.energy = Math.min(100, this.energy + 12)
             this.audio.playPunch(true)
             this.applyDamageToMonster(proj.damage, '#fde047', false)
+          } else if (proj.kind === 'kick-wave') {
+            this.energy = Math.min(100, this.energy + 16)
+            this.audio.playPunch(true)
+            this.applyDamageToMonster(proj.damage, '#fb923c', true)
           } else if (proj.kind === 'ultra-disc') {
             this.energy = Math.min(100, this.energy + 18)
             this.audio.playPunch(true)
-            // 八分光轮可打断正在蓄力的怪兽！
             if (this.monsterWindupTimer > 0) {
               this.monsterWindupTimer = 0
               this.monsterAttackCooldown = spec.attackInterval * 0.85
@@ -649,7 +696,6 @@ export class UltramanGameEngine {
           }
         }
       } else {
-        // 怪兽火球飞抵迪迦 Z 平面
         if (proj.pos.z >= this.hero.baseZ - 2.6) {
           proj.hitTriggered = true
           this.applyAttackOnHero(proj.damage, true, proj.pos.x)
@@ -657,7 +703,6 @@ export class UltramanGameEngine {
       }
     }
 
-    // 3. 怪兽 AI 攻击节奏（风骚走位 + 清晰蓄力预警 + 出招）
     if (this.monsterHp <= 0 || this.kaiju.state === 'entering' || this.kaiju.state === 'dying') {
       return
     }
@@ -665,7 +710,6 @@ export class UltramanGameEngine {
     if (this.monsterWindupTimer > 0) {
       this.monsterWindupTimer -= dt
       if (this.monsterWindupTimer <= 0) {
-        // 释放攻击
         this.kaiju.setState('attack', this.pendingAttack)
         this.attackResolved = false
         if (this.pendingAttack === 'fireball') {
@@ -680,8 +724,11 @@ export class UltramanGameEngine {
         }
         this.monsterAttackCooldown = spec.attackInterval
       }
-    } else if (this.kaiju.state === 'attack' && this.pendingAttack === 'melee' && !this.attackResolved) {
-      // 近身突进到中点时触发伤害判定
+    } else if (
+      this.kaiju.state === 'attack' &&
+      this.pendingAttack === 'melee' &&
+      !this.attackResolved
+    ) {
       if (this.kaiju.stateTime >= 0.28) {
         this.attackResolved = true
         this.applyAttackOnHero(spec.attackDamage, false, this.hero.currentX)
@@ -704,15 +751,13 @@ export class UltramanGameEngine {
     const targetLook = this.camLookAt.clone()
 
     if (this.phase === 'victory') {
-      // 胜利时镜头低仰视追随迪迦升空
       targetCam.set(3.5, 9.5, 36)
       targetLook.copy(this.hero.root.position).add(new THREE.Vector3(0, 7, 0))
     } else if (this.effects.isHeroBeamActive()) {
-      // 必杀光线发动时切至右斜后方电影特写机位，清晰展示迪迦 L 字姿势与横贯画面的巨型光柱！
-      targetCam.set(this.hero.currentX * 0.4 + 10.5, 11.4, 27.5)
+      const sideSign = this.gestureBeamArmSide === 'left' ? -1 : 1
+      targetCam.set(this.hero.currentX * 0.4 + sideSign * 10.5, 11.4, 27.5)
       targetLook.set(this.kaiju.currentX * 0.4, 9.6, 4.5)
     } else {
-      // 第三人称经典微俯视过肩视角：迪迦背影位于左下居中，前方怪兽完整霸气无遮挡
       targetCam.set(this.hero.currentX * 0.45 + 3.6, 13.8, 35.6)
       targetLook.set(this.hero.currentX * 0.18 + this.kaiju.currentX * 0.25 - 0.3, 8.6, -5)
     }
@@ -758,6 +803,7 @@ export class UltramanGameEngine {
       loadingProgress: this.loadingProgress,
       waveIndex: this.waveIndex,
       totalWaves: MONSTER_WAVES.length,
+      activeTheme: this.arena.getTheme(),
       monsterId: spec.id,
       monsterHp: Math.round(this.monsterHp),
       monsterMaxHp: this.monsterMaxHp,
@@ -771,11 +817,14 @@ export class UltramanGameEngine {
       defeatedCount: this.defeatedCount,
       warningTextKey,
       warningUrgency:
-        this.monsterWindupTimer > 0 ? THREE.MathUtils.clamp(1 - this.monsterWindupTimer / 1.35, 0, 1) : 0,
+        this.monsterWindupTimer > 0
+          ? THREE.MathUtils.clamp(1 - this.monsterWindupTimer / 1.35, 0, 1)
+          : 0,
       chargeKind,
       chargeProgress,
       activeSkillBannerKey: this.skillBannerKey,
       tracking: this.gestureTracking,
+      bodyCoverage: this.gestureCoverage,
       poseHintKey: this.gestureHintKey,
       timerDanger: this.phase === 'fighting' && this.heroHp <= this.heroMaxHp * 0.3,
     }

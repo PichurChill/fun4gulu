@@ -100,6 +100,17 @@ const messages = {
         cameraMode: '体感模式（摄像头）',
         keyboardMode: '键盘 / 触屏模式',
         selectStage: '选择挑战关卡',
+        selectArena: '选择战斗场景',
+        arenas: {
+          auto: '闯关自动切换',
+          seaside: '阳光海边',
+          city: '繁华都市',
+          mountain: '翠绿山区',
+          volcano: '火山遗迹'
+        },
+        bodySyncFull: '全身实时同步中',
+        bodySyncUpper: '上半身实时同步中',
+        bodySyncNone: '寻找身体中...',
         startButton: '变身出击！',
         loadingModel: '光之能量汇聚中...',
         back: '返回',
@@ -137,10 +148,11 @@ const messages = {
           gatanothor: '邪神·加坦杰厄'
         },
         hints: {
-          hintStandCenter: '请站在摄像头中间，露出双臂',
-          hintShowArms: '退后半步露出双臂即可释放必杀',
-          hintReady: '挥拳出击！摆 L 或 十字 放光线',
+          hintStandCenter: '请站在摄像头中间，迪迦会同步你的动作',
+          hintShowArms: '退后半步露出全身，动作同步更完整',
+          hintReady: '全身同步中！挥拳、踢腿、摆 L/十字 放光线',
           hintPunch: '重拳出击！',
+          hintKick: '奥特飞踢！',
           hintGuardPrep: '双臂交叉准备防御…',
           hintGuardActive: '奥特屏障已展开！',
           hintBeamCharge: '保持 L / 十字 凝聚哉佩利敖光线…',
@@ -156,6 +168,7 @@ const messages = {
         },
         banners: {
           bannerWaveStart: '怪兽出现！战斗开始！',
+          bannerKick: '奥特飞踢！',
           bannerBeam: '哉佩利敖光线！',
           bannerSuperBeam: '终极闪耀·哉佩利敖光线！',
           bannerDisc: '八分光轮！',
@@ -171,9 +184,10 @@ const messages = {
           guard: '防御',
           punchL: '左拳',
           punchR: '右拳',
+          kick: '飞踢',
           disc: '光轮',
           beam: '光线',
-          keyboardHint: 'A/D 闪避 · S 防御 · J/K 出拳 · U 光轮 · 空格 哉佩利敖光线'
+          keyboardHint: 'A/D 闪避 · S 防御 · J/K 出拳 · I 飞踢 · U 光轮 · 空格 哉佩利敖光线'
         },
         result: {
           victoryTitle: '光之巨人 · 全关制霸！',
@@ -287,6 +301,17 @@ const messages = {
         cameraMode: 'Motion Camera',
         keyboardMode: 'Keyboard / Touch',
         selectStage: 'Select Wave',
+        selectArena: 'Select Arena',
+        arenas: {
+          auto: 'Auto Rotate',
+          seaside: 'Sunny Seaside',
+          city: 'Sunset City',
+          mountain: 'Mountain Valley',
+          volcano: 'Volcano Ruins'
+        },
+        bodySyncFull: 'Full-Body Live Sync',
+        bodySyncUpper: 'Upper-Body Live Sync',
+        bodySyncNone: 'Tracking...',
         startButton: 'TRANSFORM!',
         loadingModel: 'Gathering Light Energy...',
         back: 'BACK',
@@ -324,10 +349,11 @@ const messages = {
           gatanothor: 'Gatanothor'
         },
         hints: {
-          hintStandCenter: 'Stand in front of the camera with arms visible',
-          hintShowArms: 'Step back slightly so both arms are visible',
-          hintReady: 'Punch! Or make L / + pose for Zepellion Ray',
+          hintStandCenter: 'Stand in front of the camera — Tiga mirrors your body!',
+          hintShowArms: 'Step back slightly for full-body live sync',
+          hintReady: 'Live Sync! Punch, kick, or make L/+ pose for Ray',
           hintPunch: 'Ultra Punch!',
+          hintKick: 'Ultra Kick!',
           hintGuardPrep: 'Crossing arms to guard...',
           hintGuardActive: 'Ultra Barrier Active!',
           hintBeamCharge: 'Hold L / + pose to charge beam...',
@@ -343,6 +369,7 @@ const messages = {
         },
         banners: {
           bannerWaveStart: 'KAIJU ALERT! BATTLE START!',
+          bannerKick: 'ULTRA KICK!',
           bannerBeam: 'ZEPELLION RAY!',
           bannerSuperBeam: 'GLITTER ZEPELLION RAY!',
           bannerDisc: 'ULTRA SLASH!',
@@ -358,9 +385,10 @@ const messages = {
           guard: 'GUARD',
           punchL: 'L-PUNCH',
           punchR: 'R-PUNCH',
+          kick: 'KICK',
           disc: 'SLASH',
           beam: 'RAY',
-          keyboardHint: 'A/D Dodge · S Guard · J/K Punch · U Ultra Slash · Space Zepellion Ray'
+          keyboardHint: 'A/D Dodge · S Guard · J/K Punch · I Kick · U Slash · Space Zepellion Ray'
         },
         result: {
           victoryTitle: 'GIANT OF LIGHT · VICTORY!',
@@ -474,6 +502,17 @@ const messages = {
         cameraMode: '体感カメラモード',
         keyboardMode: 'キーボード / タッチ',
         selectStage: 'ステージ選択',
+        selectArena: 'バトルステージ',
+        arenas: {
+          auto: 'ステージ連動',
+          seaside: '海辺の港',
+          city: '夕暮れの都市',
+          mountain: '山岳渓谷',
+          volcano: '火山遺跡'
+        },
+        bodySyncFull: '全身リアルタイム連動',
+        bodySyncUpper: '上半身リアルタイム連動',
+        bodySyncNone: '体を検出中...',
         startButton: '変身スタート！',
         loadingModel: '光のエネルギー集結中...',
         back: '戻る',
@@ -511,10 +550,11 @@ const messages = {
           gatanothor: '邪神ガタノゾーア'
         },
         hints: {
-          hintStandCenter: 'カメラの中央に立ち、両腕を見せてください',
-          hintShowArms: '少し下がって両腕を映してください',
-          hintReady: 'パンチで攻撃！L字/十字で光線発射！',
+          hintStandCenter: 'カメラの中央に立つとティガが全身連動します',
+          hintShowArms: '少し下がって全身を映してください',
+          hintReady: '全身連動中！パンチ・キック・L字/十字で光線！',
           hintPunch: 'ウルトラパンチ！',
+          hintKick: 'ウルトラキック！',
           hintGuardPrep: '両腕交差でガード準備…',
           hintGuardActive: 'ウルトラバリア展開！',
           hintBeamCharge: 'L字/十字をキープして光線チャージ…',
@@ -530,6 +570,7 @@ const messages = {
         },
         banners: {
           bannerWaveStart: '怪獣出現！バトル開始！',
+          bannerKick: 'ウルトラキック！',
           bannerBeam: 'ゼペリオン光線！',
           bannerSuperBeam: 'グリッター・ゼペリオン光線！',
           bannerDisc: '八つ裂き光輪！',
@@ -545,9 +586,10 @@ const messages = {
           guard: '防御',
           punchL: '左拳',
           punchR: '右拳',
+          kick: 'キック',
           disc: '光輪',
           beam: '光線',
-          keyboardHint: 'A/D 回避 · S 防御 · J/K パンチ · U 光輪 · Space ゼペリオン光線'
+          keyboardHint: 'A/D 回避 · S 防御 · J/K パンチ · I キック · U 光輪 · Space ゼペリオン光線'
         },
         result: {
           victoryTitle: '光の巨人・全ステージ制覇！',
@@ -661,6 +703,17 @@ const messages = {
         cameraMode: '체감 카메라 모드',
         keyboardMode: '키보드 / 터치 모드',
         selectStage: '스테이지 선택',
+        selectArena: '전투 배경 선택',
+        arenas: {
+          auto: '자동 전환',
+          seaside: '햇살 해변',
+          city: '노을 도시',
+          mountain: '산악 협곡',
+          volcano: '화산 유적'
+        },
+        bodySyncFull: '전신 실시간 동기화',
+        bodySyncUpper: '상반신 실시간 동기화',
+        bodySyncNone: '신체 감지 중...',
         startButton: '변신 출격!',
         loadingModel: '빛의 에너지 충전 중...',
         back: '뒤로',
@@ -698,10 +751,11 @@ const messages = {
           gatanothor: '사신 가타노조아'
         },
         hints: {
-          hintStandCenter: '카메라 중앙에 서서 양팔이 보이게 하세요',
-          hintShowArms: '조금 뒤로 물러서 양팔을 보여주세요',
-          hintReady: '펀치 공격! L 또는 + 포즈로 광선 발사!',
+          hintStandCenter: '카메라 중앙에 서면 티가가 전신 동작을 따라합니다',
+          hintShowArms: '조금 뒤로 물러서 전신을 보여주세요',
+          hintReady: '실시간 연동! 펀치, 킥, L/+ 포즈로 광선 발사!',
           hintPunch: '울트라 펀치!',
+          hintKick: '울트라 킥!',
           hintGuardPrep: '양팔을 교차해 방어 준비…',
           hintGuardActive: '울트라 배리어 발동!',
           hintBeamCharge: 'L / + 포즈를 유지해 광선 충전 중…',
@@ -717,6 +771,7 @@ const messages = {
         },
         banners: {
           bannerWaveStart: '괴수 출현! 전투 시작!',
+          bannerKick: '울트라 킥!',
           bannerBeam: '제페리온 광선!',
           bannerSuperBeam: '글리터 제페리온 광선!',
           bannerDisc: '울트라 슬래시!',
@@ -732,9 +787,10 @@ const messages = {
           guard: '방어',
           punchL: '왼펀치',
           punchR: '오른펀치',
+          kick: '킥',
           disc: '광륜',
           beam: '광선',
-          keyboardHint: 'A/D 회피 · S 방어 · J/K 펀치 · U 광륜 · Space 제페리온 광선'
+          keyboardHint: 'A/D 회피 · S 방어 · J/K 펀치 · I 킥 · U 광륜 · Space 제페리온 광선'
         },
         result: {
           victoryTitle: '빛의 거인 · 올 클리어!',
@@ -848,6 +904,17 @@ const messages = {
         cameraMode: 'Mode Caméra Motion',
         keyboardMode: 'Clavier / Tactile',
         selectStage: 'Choisir la vague',
+        selectArena: 'Choisir l’arène',
+        arenas: {
+          auto: 'Rotation auto',
+          seaside: 'Bord de mer',
+          city: 'Ville au crépuscule',
+          mountain: 'Montagnes',
+          volcano: 'Ruines volcaniques'
+        },
+        bodySyncFull: 'Synchro corps entier',
+        bodySyncUpper: 'Synchro haut du corps',
+        bodySyncNone: 'Détection...',
         startButton: 'TRANSFORMATION !',
         loadingModel: 'Concentration de la lumière...',
         back: 'RETOUR',
@@ -885,10 +952,11 @@ const messages = {
           gatanothor: 'Gatanothor'
         },
         hints: {
-          hintStandCenter: 'Tenez-vous au centre, bras visibles',
-          hintShowArms: 'Reculez un peu pour montrer vos deux bras',
-          hintReady: 'Frappez ! Ou faites L / + pour le rayon',
+          hintStandCenter: 'Tenez-vous au centre : Tiga imite vos mouvements !',
+          hintShowArms: 'Reculez un peu pour la synchro corps entier',
+          hintReady: 'Synchro active ! Poing, pied ou pose L / +',
           hintPunch: 'Ultra Punch !',
+          hintKick: 'Ultra Kick !',
           hintGuardPrep: 'Croisez les bras pour parer…',
           hintGuardActive: 'Barrière Ultra active !',
           hintBeamCharge: 'Maintenez la pose L / +…',
@@ -904,6 +972,7 @@ const messages = {
         },
         banners: {
           bannerWaveStart: 'ALERTE KAIJU ! COMBAT !',
+          bannerKick: 'ULTRA KICK !',
           bannerBeam: 'RAYON ZEPELLION !',
           bannerSuperBeam: 'SUPER RAYON ZEPELLION !',
           bannerDisc: 'ULTRA SLASH !',
@@ -919,9 +988,10 @@ const messages = {
           guard: 'GARDE',
           punchL: 'POING G',
           punchR: 'POING D',
+          kick: 'PIED',
           disc: 'DISQUE',
           beam: 'RAYON',
-          keyboardHint: 'A/D Esquive · S Garde · J/K Poing · U Disque · Espace Rayon'
+          keyboardHint: 'A/D Esquive · S Garde · J/K Poing · I Pied · U Disque · Espace Rayon'
         },
         result: {
           victoryTitle: 'GÉANT DE LUMIÈRE · VICTOIRE !',

@@ -6,14 +6,18 @@ import { UltramanGameEngine } from '@/games/ultraman/engine'
 import { MONSTER_WAVES } from '@/games/ultraman/monsters'
 import type {
   BattleHudState,
+  ConcreteSceneTheme,
   ControlMode,
   FloatingDamageEvent,
   PoseLandmark,
+  SceneTheme,
 } from '@/games/ultraman/types'
 
 interface MediaPipePoseInstance {
   setOptions(opts: Record<string, unknown>): void
-  onResults(cb: (res: { poseLandmarks?: PoseLandmark[] }) => void): void
+  onResults(
+    cb: (res: { poseLandmarks?: PoseLandmark[]; poseWorldLandmarks?: PoseLandmark[] }) => void,
+  ): void
   send(input: { image: HTMLVideoElement }): Promise<void>
   close?: () => Promise<void>
 }
@@ -34,6 +38,9 @@ const poseCanvasRef = ref<HTMLCanvasElement | null>(null)
 // ---- 交互与配置状态 ----
 const selectedMode = ref<ControlMode>('camera')
 const selectedWave = ref(0)
+const selectedTheme = ref<SceneTheme>('auto')
+const SCENE_THEMES: SceneTheme[] = ['auto', 'seaside', 'city', 'mountain', 'volcano']
+const CONCRETE_THEMES: ConcreteSceneTheme[] = ['seaside', 'city', 'mountain', 'volcano']
 const muted = ref(false)
 const showSkeleton = ref(true)
 const cameraError = ref<string | null>(null)
@@ -45,6 +52,7 @@ const hud = reactive<BattleHudState>({
   loadingProgress: 0,
   waveIndex: 0,
   totalWaves: MONSTER_WAVES.length,
+  activeTheme: 'seaside',
   monsterId: MONSTER_WAVES[0]!.id,
   monsterHp: MONSTER_WAVES[0]!.maxHp,
   monsterMaxHp: MONSTER_WAVES[0]!.maxHp,
@@ -62,6 +70,7 @@ const hud = reactive<BattleHudState>({
   chargeProgress: 0,
   activeSkillBannerKey: null,
   tracking: false,
+  bodyCoverage: 'none',
   poseHintKey: 'hintStandCenter',
   timerDanger: false,
 })
@@ -197,8 +206,9 @@ async function startCameraTracking(): Promise<void> {
   })
   poseInstance.onResults((results) => {
     const lms = results.poseLandmarks ?? null
+    const worldLms = results.poseWorldLandmarks ?? null
     drawMiniSkeleton(lms ?? undefined)
-    engine?.feedPoseLandmarks(lms, performance.now(), 480, 360)
+    engine?.feedPoseLandmarks(lms, worldLms, performance.now(), 480, 360)
   })
 
   cameraInstance = new win.Camera(videoRef.value, {
@@ -240,6 +250,25 @@ function stopCameraTracking() {
   }
 }
 
+function selectWave(idx: number) {
+  selectedWave.value = idx
+  if (selectedTheme.value === 'auto') {
+    engine?.setSceneTheme('auto', idx)
+  }
+}
+
+function selectSceneTheme(theme: SceneTheme) {
+  selectedTheme.value = theme
+  engine?.setSceneTheme(theme, selectedWave.value)
+}
+
+function cycleActiveArena() {
+  const curIdx = CONCRETE_THEMES.indexOf(hud.activeTheme)
+  const next = CONCRETE_THEMES[(curIdx + 1) % CONCRETE_THEMES.length]!
+  selectedTheme.value = next
+  engine?.setSceneTheme(next, hud.waveIndex)
+}
+
 // ---- 游戏流程控制 ----
 async function handleStartBattle(overrideMode?: ControlMode) {
   if (!engine) return
@@ -261,7 +290,7 @@ async function handleStartBattle(overrideMode?: ControlMode) {
     startingCamera.value = false
   }
 
-  await engine.startGame(selectedMode.value, selectedWave.value)
+  await engine.startGame(selectedMode.value, selectedWave.value, selectedTheme.value)
 }
 
 function handleExitToMenu() {
@@ -310,6 +339,8 @@ function onKeyDown(e: KeyboardEvent) {
     engine.triggerManualPunch('left')
   } else if (e.code === 'KeyK' || e.code === 'KeyX') {
     engine.triggerManualPunch('right')
+  } else if (e.code === 'KeyI') {
+    engine.triggerManualKick('right')
   } else if (e.code === 'KeyU' || e.code === 'KeyC') {
     engine.triggerManualDisc('right')
   } else if (e.code === 'Space' || e.code === 'KeyL') {
@@ -345,6 +376,9 @@ function onTouchGuard(active: boolean) {
 }
 function onTouchPunch(side: 'left' | 'right') {
   engine?.triggerManualPunch(side)
+}
+function onTouchKick() {
+  engine?.triggerManualKick('right')
 }
 function onTouchDisc() {
   engine?.triggerManualDisc('right')
@@ -422,6 +456,15 @@ onUnmounted(() => {
     >
       <video ref="videoRef" autoplay playsinline muted class="pip-video" />
       <canvas ref="poseCanvasRef" width="240" height="180" class="pip-skeleton" />
+      <div class="pip-sync-badge" :class="hud.bodyCoverage">
+        {{
+          hud.bodyCoverage === 'full'
+            ? t('message.ultramanView.bodySyncFull')
+            : hud.bodyCoverage === 'upper'
+              ? t('message.ultramanView.bodySyncUpper')
+              : t('message.ultramanView.bodySyncNone')
+        }}
+      </div>
       <div class="pip-status" :class="{ tracked: hud.tracking }">
         <span class="pip-dot" />
         <span>{{ t(`message.ultramanView.hints.${hud.poseHintKey}`) }}</span>
@@ -475,10 +518,26 @@ onUnmounted(() => {
               :key="m.id"
               class="stage-chip"
               :class="{ active: selectedWave === idx }"
-              @click="selectedWave = idx"
+              @click="selectWave(idx)"
             >
               <span class="chip-num">#{{ idx + 1 }}</span>
               <span>{{ t(`message.ultramanView.monsters.${m.id}`) }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 选择战斗场景（点击即时切换背后 3D 场景预览） -->
+        <div class="stage-picker">
+          <div class="picker-label">{{ t('message.ultramanView.selectArena') }}</div>
+          <div class="stage-pills">
+            <button
+              v-for="theme in SCENE_THEMES"
+              :key="theme"
+              class="stage-chip arena-chip"
+              :class="{ active: selectedTheme === theme }"
+              @click="selectSceneTheme(theme)"
+            >
+              <span>{{ t(`message.ultramanView.arenas.${theme}`) }}</span>
             </button>
           </div>
         </div>
@@ -599,6 +658,9 @@ onUnmounted(() => {
         </div>
 
         <div class="hud-top-right">
+          <button class="arcade-btn arena-switch-btn" @click="cycleActiveArena">
+            {{ t(`message.ultramanView.arenas.${hud.activeTheme}`) }}
+          </button>
           <button class="arcade-btn" @click="toggleMute">
             {{ muted ? t('message.ultramanView.mute') : t('message.ultramanView.unmute') }}
           </button>
@@ -719,6 +781,9 @@ onUnmounted(() => {
             </button>
             <button class="pad-btn punch" @click="onTouchPunch('right')">
               {{ t('message.ultramanView.controls.punchR') }}
+            </button>
+            <button class="pad-btn kick" @click="onTouchKick">
+              {{ t('message.ultramanView.controls.kick') }}
             </button>
             <button class="pad-btn disc" @click="onTouchDisc">
               {{ t('message.ultramanView.controls.disc') }}
@@ -875,6 +940,29 @@ onUnmounted(() => {
   width: 224px;
   height: 168px;
   pointer-events: none;
+}
+
+.pip-sync-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  color: #cbd5e1;
+}
+
+.pip-sync-badge.full {
+  border-color: #4ade80;
+  color: #86efac;
+}
+
+.pip-sync-badge.upper {
+  border-color: #38e8ff;
+  color: #7dd3fc;
 }
 
 .pip-status {
@@ -1621,6 +1709,22 @@ onUnmounted(() => {
 .pad-btn.punch {
   border-color: #fb923c;
   background: rgba(154, 52, 18, 0.8);
+}
+
+.pad-btn.kick {
+  border-color: #facc15;
+  background: rgba(180, 83, 9, 0.86);
+}
+
+.arena-chip.active {
+  border-color: #38e8ff;
+  background: rgba(56, 232, 255, 0.2);
+  color: #bae6fd;
+}
+
+.arena-switch-btn {
+  border-color: rgba(56, 232, 255, 0.7);
+  color: #bae6fd;
 }
 
 .pad-btn.disc {

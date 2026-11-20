@@ -13,6 +13,7 @@ export const MONSTER_WAVES: MonsterSpec[] = [
     attacks: ['fireball', 'melee'],
     attackDamage: 14,
     attackInterval: 4.2,
+    defaultTheme: 'seaside',
     facingOffsetY: 0,
   },
   {
@@ -25,6 +26,7 @@ export const MONSTER_WAVES: MonsterSpec[] = [
     attacks: ['fireball', 'dark-beam'],
     attackDamage: 16,
     attackInterval: 4.0,
+    defaultTheme: 'city',
     isStaticMesh: true,
     facingOffsetY: 0,
   },
@@ -38,6 +40,7 @@ export const MONSTER_WAVES: MonsterSpec[] = [
     attacks: ['fireball', 'melee', 'fireball'],
     attackDamage: 18,
     attackInterval: 3.6,
+    defaultTheme: 'mountain',
     facingOffsetY: 0,
   },
   {
@@ -50,6 +53,7 @@ export const MONSTER_WAVES: MonsterSpec[] = [
     attacks: ['melee', 'dark-beam', 'fireball'],
     attackDamage: 20,
     attackInterval: 3.4,
+    defaultTheme: 'city',
     facingOffsetY: 0,
   },
   {
@@ -62,6 +66,7 @@ export const MONSTER_WAVES: MonsterSpec[] = [
     attacks: ['dark-beam', 'fireball', 'melee'],
     attackDamage: 22,
     attackInterval: 3.2,
+    defaultTheme: 'volcano',
     facingOffsetY: 0,
   },
 ]

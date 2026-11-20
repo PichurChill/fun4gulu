@@ -12,7 +12,7 @@ interface Particle {
 }
 
 interface Projectile {
-  kind: 'punch-wave' | 'ultra-disc' | 'kaiju-fireball'
+  kind: 'punch-wave' | 'kick-wave' | 'ultra-disc' | 'kaiju-fireball'
   mesh: THREE.Object3D
   pos: THREE.Vector3
   vel: THREE.Vector3
@@ -318,6 +318,49 @@ export class BattleEffects {
     })
   }
 
+  /** 发射奥特飞踢金红旋风冲击波 */
+  public spawnKickWave(origin: THREE.Vector3, target: THREE.Vector3, damage: number) {
+    const grp = new THREE.Group()
+    const outer = new THREE.Mesh(
+      new THREE.TorusGeometry(1.65, 0.3, 8, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0xf97316,
+        transparent: true,
+        opacity: 0.94,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    )
+    const inner = new THREE.Mesh(
+      new THREE.TorusGeometry(1.05, 0.22, 8, 18),
+      new THREE.MeshBasicMaterial({
+        color: 0xfef08a,
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    )
+    grp.add(outer, inner)
+    grp.position.copy(origin)
+    grp.lookAt(target)
+    this.group.add(grp)
+
+    const vel = target.clone().sub(origin).normalize().multiplyScalar(78)
+    this.projectiles.push({
+      kind: 'kick-wave',
+      mesh: grp,
+      pos: origin.clone(),
+      vel,
+      radius: 3.2,
+      damage,
+      age: 0,
+      maxAge: 0.75,
+      fromHero: true,
+      hitTriggered: false,
+    })
+  }
+
   /** 发射八分光轮 */
   public spawnUltraDisc(origin: THREE.Vector3, target: THREE.Vector3, damage: number) {
     const disc = this.createSawDiscMesh(2.5)
@@ -556,8 +599,9 @@ export class BattleEffects {
 
       if (proj.kind === 'ultra-disc') {
         proj.mesh.rotation.y += dt * 26
-      } else if (proj.kind === 'punch-wave') {
-        proj.mesh.scale.addScalar(dt * 3.5)
+      } else if (proj.kind === 'punch-wave' || proj.kind === 'kick-wave') {
+        proj.mesh.scale.addScalar(dt * 3.8)
+        if (proj.kind === 'kick-wave') proj.mesh.rotation.z += dt * 16
       } else if (proj.kind === 'kaiju-fireball') {
         proj.mesh.rotation.x += dt * 8
         proj.mesh.rotation.y += dt * 6
