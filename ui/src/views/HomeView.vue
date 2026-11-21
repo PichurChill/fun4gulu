@@ -50,7 +50,7 @@
         </section>
     <footer class="site-footer">
       <span>© {{ new Date().getFullYear() }} FUN4GULU</span>
-      <span class="version-tag">v0.0.20</span>
+      <span class="version-tag">v0.0.21</span>
     </footer>
   </div>
 </template>
@@ -62,6 +62,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 const games = [
   { id: 'ultraman', external: true },
+  { id: 'ultraman-duel', external: true },
   { id: 'jump-cat', external: true },
   { id: 'hurdle-cat', external: true },
   { id: 'tetris', external: true },
@@ -70,6 +71,20 @@ const games = [
   { id: 'demo2' }
 ]
 function getIcon(id: string) {
+  if (id === 'ultraman-duel') {
+    // 光之格斗图标：迪迦青 VS 赛罗橙 双头对峙（内联 SVG，固定 48x48）
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 32 32">' +
+      '<rect x="1" y="1" width="30" height="30" rx="4" fill="#0B1B3A" stroke="#000" stroke-width="2"/>' +
+      '<path d="M8 5 L13.5 9 L13 22 L8 26 L3.5 21 L4.5 9 Z" fill="#38E8FF" stroke="#000" stroke-width="1.5"/>' +
+      '<path d="M24 5 L28.5 9 L27.5 21 L24 26 L18.5 22 L18 9 Z" fill="#FB923C" stroke="#000" stroke-width="1.5"/>' +
+      '<ellipse cx="8.5" cy="12" rx="2.4" ry="1.6" fill="#FEF08A"/>' +
+      '<ellipse cx="23.5" cy="12" rx="2.4" ry="1.6" fill="#FEF08A"/>' +
+      '<text x="16" y="18" font-family="monospace" font-size="8" font-weight="bold" fill="#FDE047" text-anchor="middle">VS</text>' +
+      '<path d="M5 27 L16 29.5 L27 27" fill="none" stroke="#FACC15" stroke-width="1.6"/>' +
+      '</svg>'
+    )
+  }
   if (id === 'ultraman') {
     // 迪迦奥特曼经典像素风头徽（内联 SVG，固定 48x48 与其它游戏卡片图标保持一致）
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(

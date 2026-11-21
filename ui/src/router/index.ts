@@ -43,6 +43,11 @@ const router = createRouter({
       path: '/ultraman',
       name: 'ultraman',
       component: () => import('../views/UltramanView.vue')
+    },
+    {
+      path: '/ultraman-duel',
+      name: 'ultraman-duel',
+      component: () => import('../views/UltramanDuelView.vue')
     }
   ]
 })
