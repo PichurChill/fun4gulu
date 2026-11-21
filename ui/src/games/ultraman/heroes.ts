@@ -91,6 +91,8 @@ export interface HeroProfile {
   forms?: HeroFormSpec[]
   /** 形态染色用的身体材质名匹配器 */
   formBodyMaterials?: { silver: string[]; multiType: string[] }
+  /** 加载后重建的骨骼父子关系（[父, 子]）：修复被导出器拍平的肢体链，让旋转沿链传播 */
+  relinkBones?: [string, string][]
 }
 
 export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
@@ -224,6 +226,19 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
       },
     },
     facingYaw: 0,
+    // 该导出骨架的主骨（UpperArm/Forearm/Thigh/Calf）被删除，Twist 骨以兄弟关系平挂在
+    // Clavicle/Pelvis 下：重建父子链（上臂→前臂→手，大腿→小腿→脚）让旋转沿肢体传播，
+    // 否则蒙皮各段独立旋转会在肘/膝处撕裂扭曲
+    relinkBones: [
+      ['Bip001_LUpArmTwist', 'Bip001_L_ForeTwist'],
+      ['Bip001_L_ForeTwist', 'Bip001_L_Hand'],
+      ['Bip001_RUpArmTwist', 'Bip001_R_ForeTwist'],
+      ['Bip001_R_ForeTwist', 'Bip001_R_Hand'],
+      ['Bip001_LThighTwist', 'Bip001_LCalfTwist'],
+      ['Bip001_LCalfTwist', 'Bip001_L_Foot'],
+      ['Bip001_RThighTwist', 'Bip001_RCalfTwist'],
+      ['Bip001_RCalfTwist', 'Bip001_R_Foot'],
+    ],
     // 赛罗导出为单一贴图材质，没有独立计时器/眼睛材质：命中时整体泛光脉冲
     timerMaterialNames: [],
     eyeMaterialNames: [],

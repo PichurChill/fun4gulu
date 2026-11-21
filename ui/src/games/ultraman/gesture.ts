@@ -234,14 +234,14 @@ export class UltraGestureRecognizer {
     }
     const scale = Math.max(shoulderWidth, height * 0.07)
 
-    // 1. 站位水平与垂直基准追踪（用于迪迦左右移动 + 起跳/下蹲同步）
+    // 1. 站位水平与垂直基准（用于迪迦左右移动 + 起跳/下蹲同步）
+    // 基准只在首次锁定与手动"校准站位"时更新，不再缓慢自动漂移——
+    // 自动漂移会让基准被慢慢拉走，人物在画面里越来越偏、始终不居中
     const midX = (lsRaw.x + rsRaw.x) * 0.5
     const midY = (lsRaw.y + rsRaw.y) * 0.5
 
     if (this.centerX === null) {
       this.centerX = midX
-    } else if (Math.abs(midX - this.centerX) < scale * 0.25) {
-      this.centerX += (midX - this.centerX) * 0.012
     }
     const rawLean = clamp((-(midX - this.centerX) / scale) * 1.45, -1, 1)
     this.smoothLean += (rawLean - this.smoothLean) * 0.35
@@ -249,9 +249,6 @@ export class UltraGestureRecognizer {
 
     if (this.baseShoulderY === null) {
       this.baseShoulderY = midY
-    } else if (Math.abs(midY - this.baseShoulderY) < scale * 0.14) {
-      // 站稳时缓慢跟踪基准高度
-      this.baseShoulderY += (midY - this.baseShoulderY) * 0.012
     }
     const deltaY = (this.baseShoulderY - midY) / scale // > 0 表示跳起，< 0 表示下蹲
     // 体感优化：降低起跳/下蹲触发门槛并放缓增益斜率，小朋友小幅动作也能稳定触发、不会过度位移

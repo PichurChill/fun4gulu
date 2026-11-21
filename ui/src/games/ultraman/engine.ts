@@ -102,8 +102,9 @@ export class UltramanGameEngine {
   private skillBannerTimer = 0
   private floatingIdCounter = 1
   private hudSyncAccumulator = 0
-  private readonly baseCamPos = new THREE.Vector3(3.6, 13.8, 35.6)
-  private readonly camLookAt = new THREE.Vector3(-0.3, 8.6, -5)
+  // 相机基础机位与视线锚点：水平偏置经过补偿，让英雄在画面中居中而非偏左
+  private readonly baseCamPos = new THREE.Vector3(2.4, 13.8, 35.6)
+  private readonly camLookAt = new THREE.Vector3(-1.9, 8.6, -5)
 
   private readonly resizeObserver: ResizeObserver
 
@@ -903,8 +904,13 @@ export class UltramanGameEngine {
       targetCam.set(this.hero.currentX * 0.4 + sideSign * 10.5, 11.4, 27.5)
       targetLook.set(this.kaiju.currentX * 0.4, 9.6, 4.5)
     } else {
-      targetCam.set(this.hero.currentX * 0.45 + 3.6, 13.8, 35.6)
-      targetLook.set(this.hero.currentX * 0.18 + this.kaiju.currentX * 0.25 - 0.3, 8.6, -5)
+      // 战斗机位：相机与视线以相同权重跟随英雄水平位移（0.45），英雄稳居画面中带
+      targetCam.set(this.hero.currentX * 0.45 + 2.4, 13.8, 35.6)
+      targetLook.set(
+        this.hero.currentX * 0.45 + this.kaiju.currentX * 0.15 - 1.9,
+        8.6,
+        -5,
+      )
     }
 
     this.camera.position.lerp(targetCam, Math.min(1, dt * 6.5))

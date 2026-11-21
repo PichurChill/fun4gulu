@@ -160,6 +160,20 @@ export class HeroController {
       }
     })
 
+    // 重建被导出器拍平的肢体骨骼链（attach 保持世界姿势不变，仅恢复旋转传播路径），
+    // 并同步更新受影响骨骼的静息记录
+    if (profile.relinkBones) {
+      for (const [parentName, childName] of profile.relinkBones) {
+        const parent = this.bones.get(parentName)
+        const child = this.bones.get(childName)
+        if (!parent || !child || child.parent === parent) continue
+        parent.attach(child)
+        this.restQuats.set(child, child.quaternion.clone())
+        this.restPositions.set(child, child.position.clone())
+      }
+      this.root.updateMatrixWorld(true)
+    }
+
     // 单材质模型（如赛罗）：没有独立计时器材质，用首个身体材质承载危险能量脉冲
     if (this.timerMaterials.length === 0 && fallbackGlowMaterial) {
       this.timerMaterials.push(fallbackGlowMaterial)
