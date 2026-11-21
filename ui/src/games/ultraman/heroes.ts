@@ -1,5 +1,34 @@
 export type HeroId = 'tiga' | 'zero'
 
+/** 迪迦形态 id：复合 → 强力 → 空中 循环切换 */
+export type TigaFormId = 'multi' | 'power' | 'sky'
+
+/** 身体材质 RGB 染色（与贴图相乘，[1,1,1] 即还原原色） */
+export type BodyTints = {
+  silver: [number, number, number]
+  multiType: [number, number, number]
+}
+
+/**
+ * 迪迦三形态档案：复合均衡 / 强力高伤低速 / 空中高速低伤
+ */
+export interface HeroFormSpec {
+  id: TigaFormId
+  /** 形态播报 banner key 后缀 */
+  bannerKey: string
+  bodyTints: BodyTints
+  /** 伤害倍率 */
+  damageMul: number
+  /** 横向移动速度倍率 */
+  moveMul: number
+  /** 形态主题配色（蓄力光球 / 光线 / 光轮 / 粒子） */
+  accentColor: number
+  beamColor: number
+  beamSuperColor: number
+  discColor: number
+  burstColor: number
+}
+
 /** 手指骨链（从指根到指尖，2~3 节） */
 export type FingerChain = readonly string[]
 
@@ -58,6 +87,10 @@ export interface HeroProfile {
   timerTheme: 'tiga' | 'zero'
   /** 招式播报文案后缀（i18n banner key 拼接用） */
   bannerKey: string
+  /** 形态系统（迪迦三形态；缺失表示该英雄无形态切换） */
+  forms?: HeroFormSpec[]
+  /** 形态染色用的身体材质名匹配器 */
+  formBodyMaterials?: { silver: string[]; multiType: string[] }
 }
 
 export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
@@ -109,6 +142,45 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
     burstColor: 0x67e8f9,
     timerTheme: 'tiga',
     bannerKey: 'Tiga',
+    formBodyMaterials: { silver: ['Tiga body silver'], multiType: ['Tiga body Multi-Type'] },
+    forms: [
+      {
+        id: 'multi',
+        bannerKey: 'Multi',
+        bodyTints: { silver: [1, 1, 1], multiType: [1, 1, 1] },
+        damageMul: 1.0,
+        moveMul: 1.0,
+        accentColor: 0x38e8ff,
+        beamColor: 0x38d9ff,
+        beamSuperColor: 0xfacc15,
+        discColor: 0x38e8ff,
+        burstColor: 0x67e8f9,
+      },
+      {
+        id: 'power',
+        bannerKey: 'Power',
+        bodyTints: { silver: [1.0, 0.52, 0.46], multiType: [0.98, 0.3, 0.26] },
+        damageMul: 1.45,
+        moveMul: 0.82,
+        accentColor: 0xff5a3c,
+        beamColor: 0xff5a3c,
+        beamSuperColor: 0xffb020,
+        discColor: 0xff8a5c,
+        burstColor: 0xff7a5c,
+      },
+      {
+        id: 'sky',
+        bannerKey: 'Sky',
+        bodyTints: { silver: [0.84, 0.88, 1.0], multiType: [0.62, 0.4, 0.95] },
+        damageMul: 0.78,
+        moveMul: 1.35,
+        accentColor: 0xb388ff,
+        beamColor: 0xb388ff,
+        beamSuperColor: 0xe0c3ff,
+        discColor: 0xc9a7ff,
+        burstColor: 0xc9a7ff,
+      },
+    ],
   },
   zero: {
     id: 'zero',

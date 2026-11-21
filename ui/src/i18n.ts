@@ -107,6 +107,11 @@ const messages = {
           zero: '赛罗'
         },
         heroHpSuffix: '生命',
+        forms: {
+          multi: '复合型',
+          power: '强力型',
+          sky: '空中型'
+        },
         arenas: {
           auto: '闯关自动切换',
           seaside: '阳光海边',
@@ -142,6 +147,8 @@ const messages = {
           guardDesc: '奥特屏障格挡',
           disc: '举手下挥',
           discDesc: '光轮斩打断',
+          form: '交叉手举头顶',
+          formDesc: '保持3秒切形态(迪迦)',
           beam: '摆 L / 十字',
           beamDesc: '究极光线'
         },
@@ -164,7 +171,9 @@ const messages = {
           hintBeamFire: '奥特光线发射！',
           hintDiscCharge: '单手高举凝聚光轮…',
           hintDiscThrow: '光轮就绪，向下挥出！',
-          hintDiscFire: '光轮斩！'
+          hintDiscFire: '光轮斩！',
+          hintTypeCharge: '双手交叉举过头顶，保持 3 秒切换形态…',
+          hintTypeSwitch: '形态切换！'
         },
         warnings: {
           warningFireball: '危险！怪兽发射火球 — 交叉防御或左右躲避！',
@@ -180,6 +189,9 @@ const messages = {
           bannerBeamZero: '集束射线！',
           bannerSuperBeamZero: '满充能量·集束射线！',
           bannerDiscZero: '奥特零光轮！',
+          bannerFormMulti: '复合型 · 攻守均衡！',
+          bannerFormPower: '强力型 · 怪力爆发！',
+          bannerFormSky: '空中型 · 神速翔空！',
           bannerPerfectGuard: '完美防御！能量飙升！',
           bannerInterrupt: '成功打断怪兽蓄力！',
           bannerWaveClear: '怪兽击败！能量恢复！',
@@ -195,7 +207,8 @@ const messages = {
           kick: '飞踢',
           disc: '光轮',
           beam: '光线',
-          keyboardHint: 'A/D 闪避 · S 防御 · J/K 出拳 · I 飞踢 · U 光轮 · 空格 奥特光线'
+          form: '形态',
+          keyboardHint: 'A/D 闪避 · S 防御 · J/K 出拳 · I 飞踢 · U 光轮 · 空格 奥特光线 · T 形态'
         },
         result: {
           victoryTitle: '光之巨人 · 全关制霸！',
@@ -316,6 +329,11 @@ const messages = {
           zero: 'Zero'
         },
         heroHpSuffix: 'HP',
+        forms: {
+          multi: 'Multi Type',
+          power: 'Power Type',
+          sky: 'Sky Type'
+        },
         arenas: {
           auto: 'Auto Rotate',
           seaside: 'Sunny Seaside',
@@ -351,6 +369,8 @@ const messages = {
           guardDesc: 'Ultra Shield guard',
           disc: 'Raise & Chop',
           discDesc: 'Ultra Slash interrupt',
+          form: 'Cross Hands Up',
+          formDesc: 'Hold 3s: switch form (Tiga)',
           beam: 'L / + Pose',
           beamDesc: 'Ultimate ray!'
         },
@@ -373,7 +393,9 @@ const messages = {
           hintBeamFire: 'ULTIMATE RAY!',
           hintDiscCharge: 'Raise hand high to form Ultra Slash...',
           hintDiscThrow: 'Slash ready! Swing down!',
-          hintDiscFire: 'ULTRA SLASH!'
+          hintDiscFire: 'ULTRA SLASH!',
+          hintTypeCharge: 'Hold crossed hands above your head for 3s...',
+          hintTypeSwitch: 'TYPE SWITCH!'
         },
         warnings: {
           warningFireball: 'DANGER! Fireball incoming — Cross Guard or Dodge!',
@@ -389,6 +411,9 @@ const messages = {
           bannerBeamZero: 'WIDE ZERO SHOT!',
           bannerSuperBeamZero: 'FULL-POWER WIDE ZERO SHOT!',
           bannerDiscZero: 'PLASMA SLASH!',
+          bannerFormMulti: 'MULTI TYPE · BALANCED!',
+          bannerFormPower: 'POWER TYPE · MIGHT UNLEASHED!',
+          bannerFormSky: 'SKY TYPE · LIGHTNING SPEED!',
           bannerPerfectGuard: 'PERFECT GUARD! +ENERGY!',
           bannerInterrupt: 'CHARGE INTERRUPTED!',
           bannerWaveClear: 'KAIJU DEFEATED!',
@@ -404,7 +429,8 @@ const messages = {
           kick: 'KICK',
           disc: 'SLASH',
           beam: 'RAY',
-          keyboardHint: 'A/D Dodge · S Guard · J/K Punch · I Kick · U Slash · Space Ultra Ray'
+          form: 'FORM',
+          keyboardHint: 'A/D Dodge · S Guard · J/K Punch · I Kick · U Slash · Space Ultra Ray · T Form'
         },
         result: {
           victoryTitle: 'GIANT OF LIGHT · VICTORY!',
@@ -525,6 +551,11 @@ const messages = {
           zero: 'ゼロ'
         },
         heroHpSuffix: '体力',
+        forms: {
+          multi: 'マルチタイプ',
+          power: 'パワータイプ',
+          sky: 'スカイタイプ'
+        },
         arenas: {
           auto: 'ステージ連動',
           seaside: '海辺の港',
@@ -560,6 +591,8 @@ const messages = {
           guardDesc: 'ウルトラバリア防御',
           disc: '頭上から振り下ろす',
           discDesc: '光輪斬',
+          form: '頭上で手を交差',
+          formDesc: '3秒キープでチェンジ(ティガ)',
           beam: 'L字 / 十字',
           beamDesc: '究極光線'
         },
@@ -582,7 +615,9 @@ const messages = {
           hintBeamFire: '究極光線発射！',
           hintDiscCharge: '片手を高く上げて光輪チャージ…',
           hintDiscThrow: '準備完了！振り下ろせ！',
-          hintDiscFire: '八つ裂き光輪！'
+          hintDiscFire: '八つ裂き光輪！',
+          hintTypeCharge: '頭上で両手を交差して3秒キープ…',
+          hintTypeSwitch: 'タイプチェンジ！'
         },
         warnings: {
           warningFireball: '危険！怪獣の火球！ガードか左右回避！',
@@ -598,6 +633,9 @@ const messages = {
           bannerBeamZero: 'ワイドゼロショット！',
           bannerSuperBeamZero: 'フルパワー・ワイドゼロショット！',
           bannerDiscZero: 'プラズマスラッシュ！',
+          bannerFormMulti: 'マルチタイプ・攻守均衡！',
+          bannerFormPower: 'パワータイプ・怪力爆発！',
+          bannerFormSky: 'スカイタイプ・神速翔空！',
           bannerPerfectGuard: 'パーフェクトガード！',
           bannerInterrupt: 'チャージ阻止成功！',
           bannerWaveClear: '怪獣撃破！体力回復！',
@@ -613,7 +651,8 @@ const messages = {
           kick: 'キック',
           disc: '光輪',
           beam: '光線',
-          keyboardHint: 'A/D 回避 · S 防御 · J/K パンチ · I キック · U 光輪 · Space ウルトラ光線'
+          form: 'タイプ',
+          keyboardHint: 'A/D 回避 · S 防御 · J/K パンチ · I キック · U 光輪 · Space ウルトラ光線 · T タイプ'
         },
         result: {
           victoryTitle: '光の巨人・全ステージ制覇！',
@@ -734,6 +773,11 @@ const messages = {
           zero: '제로'
         },
         heroHpSuffix: '체력',
+        forms: {
+          multi: '멀티 타입',
+          power: '파워 타입',
+          sky: '스카이 타입'
+        },
         arenas: {
           auto: '자동 전환',
           seaside: '햇살 해변',
@@ -769,6 +813,8 @@ const messages = {
           guardDesc: '울트라 배리어 방어',
           disc: '손 들어 내려치기',
           discDesc: '울트라 슬래시',
+          form: '머리 위 손 교차',
+          formDesc: '3초 유지 시 폼 전환(티가)',
           beam: 'L / + 포즈',
           beamDesc: '궁극 광선'
         },
@@ -791,7 +837,9 @@ const messages = {
           hintBeamFire: '궁극 광선 발사!',
           hintDiscCharge: '한 손을 높이 들어 광륜 충전 중…',
           hintDiscThrow: '준비 완료! 아래로 휘두르세요!',
-          hintDiscFire: '울트라 슬래시!'
+          hintDiscFire: '울트라 슬래시!',
+          hintTypeCharge: '머리 위에서 양손을 교차한 채 3초 유지…',
+          hintTypeSwitch: '폼 전환!'
         },
         warnings: {
           warningFireball: '위험! 화염구 접근 — 가드 또는 좌우 회피!',
@@ -807,6 +855,9 @@ const messages = {
           bannerBeamZero: '와이드 제로 샷!',
           bannerSuperBeamZero: '풀파워 와이드 제로 샷!',
           bannerDiscZero: '플라즈마 슬래시!',
+          bannerFormMulti: '멀티 타입 · 공수 밸런스!',
+          bannerFormPower: '파워 타입 · 괴력 폭발!',
+          bannerFormSky: '스카이 타입 · 신속 강습!',
           bannerPerfectGuard: '퍼펙트 가드!',
           bannerInterrupt: '괴수 충전 차단!',
           bannerWaveClear: '괴수 격파! 체력 회복!',
@@ -822,7 +873,8 @@ const messages = {
           kick: '킥',
           disc: '광륜',
           beam: '광선',
-          keyboardHint: 'A/D 회피 · S 방어 · J/K 펀치 · I 킥 · U 광륜 · Space 울트라 광선'
+          form: '폼',
+          keyboardHint: 'A/D 회피 · S 방어 · J/K 펀치 · I 킥 · U 광륜 · Space 울트라 광선 · T 폼'
         },
         result: {
           victoryTitle: '빛의 거인 · 올 클리어!',
@@ -943,6 +995,11 @@ const messages = {
           zero: 'Zero'
         },
         heroHpSuffix: 'PV',
+        forms: {
+          multi: 'Type Multi',
+          power: 'Type Puissance',
+          sky: 'Type Ciel'
+        },
         arenas: {
           auto: 'Rotation auto',
           seaside: 'Bord de mer',
@@ -978,6 +1035,8 @@ const messages = {
           guardDesc: 'Bouclier Ultra',
           disc: 'Lever et trancher',
           discDesc: 'Disque Ultra Slash',
+          form: 'Mains croisées en haut',
+          formDesc: '3 s : change de forme (Tiga)',
           beam: 'Pose L / +',
           beamDesc: 'Rayon ultime'
         },
@@ -1000,7 +1059,9 @@ const messages = {
           hintBeamFire: 'RAYON ULTIME !',
           hintDiscCharge: 'Levez une main pour charger le disque…',
           hintDiscThrow: 'Prêt ! Abaissez le bras !',
-          hintDiscFire: 'ULTRA SLASH !'
+          hintDiscFire: 'ULTRA SLASH !',
+          hintTypeCharge: 'Mains croisées au-dessus de la tête pendant 3 s…',
+          hintTypeSwitch: 'CHANGEMENT DE FORME !'
         },
         warnings: {
           warningFireball: 'DANGER ! Boule de feu — Parez ou esquivez !',
@@ -1016,6 +1077,9 @@ const messages = {
           bannerBeamZero: 'TIR LARGE DE ZERO !',
           bannerSuperBeamZero: 'TIR LARGE ULTIME DE ZERO !',
           bannerDiscZero: 'PLASMA SLASH !',
+          bannerFormMulti: 'TYPE MULTI · ÉQUILIBRE !',
+          bannerFormPower: 'TYPE PUISSANCE · FORCE BRUTE !',
+          bannerFormSky: 'TYPE CIEL · VITESSE ÉCLAIR !',
           bannerPerfectGuard: 'PARADE PARFAITE !',
           bannerInterrupt: 'CHARGE INTERROMPUE !',
           bannerWaveClear: 'KAIJU VAINCU !',
@@ -1031,7 +1095,8 @@ const messages = {
           kick: 'PIED',
           disc: 'DISQUE',
           beam: 'RAYON',
-          keyboardHint: 'A/D Esquive · S Garde · J/K Poing · I Pied · U Disque · Espace Rayon Ultra'
+          form: 'FORME',
+          keyboardHint: 'A/D Esquive · S Garde · J/K Poing · I Pied · U Disque · Espace Rayon Ultra · T Forme'
         },
         result: {
           victoryTitle: 'GÉANT DE LUMIÈRE · VICTOIRE !',

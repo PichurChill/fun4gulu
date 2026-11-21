@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import type { FingerChain, HeroProfile } from './heroes'
+import type { FingerChain, HeroFormSpec, HeroProfile } from './heroes'
 import type { HeroAction, LiveBodyPose, Vec3Like } from './types'
 
 const tmpV1 = new THREE.Vector3()
@@ -41,6 +41,10 @@ export class HeroController {
   private boneTips = new Map<THREE.Bone, THREE.Vector3>()
   private timerMaterials: THREE.MeshStandardMaterial[] = []
   private eyeMaterials: THREE.MeshStandardMaterial[] = []
+  /** 形态染色目标：银色身体 / 形态纹路（如迪迦 Multi-Type 紫）两组材质 */
+  private formSilverMaterials: THREE.MeshStandardMaterial[] = []
+  private formMultiMaterials: THREE.MeshStandardMaterial[] = []
+  private currentForm: HeroFormSpec | null = null
   /** 静止站立时脚踝骨距地面的初始高度，用于动捕时自动脚底贴地校正 */
   private restAnkleY = 0.85
 
@@ -110,6 +114,9 @@ export class HeroController {
 
     this.timerMaterials = []
     this.eyeMaterials = []
+    this.formSilverMaterials = []
+    this.formMultiMaterials = []
+    this.currentForm = null
     let fallbackGlowMaterial: THREE.MeshStandardMaterial | null = null
 
     model.traverse((node) => {
@@ -129,7 +136,11 @@ export class HeroController {
           if (m instanceof THREE.MeshStandardMaterial) {
             const matches = (names: string[]) =>
               names.some((n) => m.name.includes(n) || mesh.name.includes(n))
-            if (profile.timerMaterialNames.length > 0 && matches(profile.timerMaterialNames)) {
+            if (profile.formBodyMaterials && matches(profile.formBodyMaterials.silver)) {
+              this.formSilverMaterials.push(m)
+            } else if (profile.formBodyMaterials && matches(profile.formBodyMaterials.multiType)) {
+              this.formMultiMaterials.push(m)
+            } else if (profile.timerMaterialNames.length > 0 && matches(profile.timerMaterialNames)) {
               if (!mesh.name.includes('Container')) {
                 this.timerMaterials.push(m)
                 m.emissive = new THREE.Color(profile.accentColor)
@@ -245,10 +256,25 @@ export class HeroController {
     this.boneTips.clear()
     this.timerMaterials = []
     this.eyeMaterials = []
+    this.formSilverMaterials = []
+    this.formMultiMaterials = []
+    this.currentForm = null
   }
 
   public setLean(lean: number) {
-    this.targetX = THREE.MathUtils.clamp(lean, -1, 1) * 5.6
+    this.targetX = THREE.MathUtils.clamp(lean, -1, 1) * 5.6 * (this.currentForm?.moveMul ?? 1)
+  }
+
+  /** 切换形态：身体材质染色 + 移动速度倍率（无形态英雄传 null 还原默认） */
+  public setForm(form: HeroFormSpec | null) {
+    this.currentForm = form
+    if (!form) {
+      for (const m of this.formSilverMaterials) m.color.setRGB(1, 1, 1)
+      for (const m of this.formMultiMaterials) m.color.setRGB(1, 1, 1)
+      return
+    }
+    for (const m of this.formSilverMaterials) m.color.setRGB(...form.bodyTints.silver)
+    for (const m of this.formMultiMaterials) m.color.setRGB(...form.bodyTints.multiType)
   }
 
   public setGuard(active: boolean) {

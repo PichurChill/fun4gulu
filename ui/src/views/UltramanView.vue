@@ -54,6 +54,7 @@ const hud = reactive<BattleHudState>({
   phase: 'menu',
   loadingProgress: 0,
   heroId: 'tiga',
+  heroForm: 'multi',
   waveIndex: 0,
   totalWaves: MONSTER_WAVES.length,
   activeTheme: 'seaside',
@@ -359,6 +360,8 @@ function onKeyDown(e: KeyboardEvent) {
     engine.triggerManualDisc('right')
   } else if (e.code === 'Space' || e.code === 'KeyL') {
     engine.triggerManualBeam()
+  } else if (e.code === 'KeyT') {
+    engine.triggerManualTypeSwitch()
   }
 }
 
@@ -399,6 +402,9 @@ function onTouchDisc() {
 }
 function onTouchBeam() {
   engine?.triggerManualBeam()
+}
+function onTouchTypeSwitch() {
+  engine?.triggerManualTypeSwitch()
 }
 
 // ---- 生命周期 ----
@@ -617,6 +623,16 @@ onUnmounted(() => {
             <div class="move-desc">{{ t('message.ultramanView.moves.discDesc') }}</div>
           </div>
 
+          <div class="move-card">
+            <svg class="pose-svg" viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="20" r="6" stroke="#c084fc" stroke-width="3" />
+              <path d="M32 26v14m0 0-8 16m8-16 8 16" stroke="#e2e8f0" stroke-width="3" stroke-linecap="round" />
+              <path d="M24 34 40 12M40 34 24 12" stroke="#c084fc" stroke-width="3.5" stroke-linecap="round" />
+            </svg>
+            <div class="move-name">{{ t('message.ultramanView.moves.form') }}</div>
+            <div class="move-desc">{{ t('message.ultramanView.moves.formDesc') }}</div>
+          </div>
+
           <div class="move-card highlight">
             <svg class="pose-svg" viewBox="0 0 64 64" fill="none">
               <circle cx="30" cy="14" r="6" stroke="#facc15" stroke-width="3" />
@@ -743,7 +759,16 @@ onUnmounted(() => {
         </div>
         <div class="hero-bars">
           <div class="bar-row">
-            <span class="bar-label">{{ heroHpLabel }}</span>
+            <span class="bar-label">
+              {{ heroHpLabel }}
+              <span
+                v-if="hud.heroId === 'tiga'"
+                class="form-chip"
+                :class="hud.heroForm"
+              >
+                {{ t(`message.ultramanView.forms.${hud.heroForm}`) }}
+              </span>
+            </span>
             <span class="bar-num">{{ hud.heroHp }} / {{ hud.heroMaxHp }}</span>
           </div>
           <div class="hero-hp-track">
@@ -818,6 +843,14 @@ onUnmounted(() => {
             </button>
             <button class="pad-btn disc" @click="onTouchDisc">
               {{ t('message.ultramanView.controls.disc') }}
+            </button>
+            <button
+              v-if="hud.heroId === 'tiga'"
+              class="pad-btn form"
+              :class="hud.heroForm"
+              @click="onTouchTypeSwitch"
+            >
+              {{ t('message.ultramanView.controls.form') }}
             </button>
             <button
               class="pad-btn beam"
@@ -1042,6 +1075,53 @@ onUnmounted(() => {
   background: #38bdf8;
 }
 
+.pip-charge-fill.type {
+  background: linear-gradient(90deg, #7c3aed, #c084fc, #f0abfc);
+}
+
+/* 迪迦形态徽章 */
+.form-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  vertical-align: 1px;
+  background: rgba(56, 232, 255, 0.16);
+  border: 1px solid rgba(56, 232, 255, 0.6);
+  color: #7dd3fc;
+}
+
+.form-chip.power {
+  background: rgba(255, 90, 60, 0.2);
+  border-color: rgba(255, 122, 92, 0.85);
+  color: #fda38a;
+}
+
+.form-chip.sky {
+  background: rgba(179, 136, 255, 0.2);
+  border-color: rgba(192, 132, 252, 0.85);
+  color: #d8b4fe;
+}
+
+/* 触屏形态切换按钮 */
+.pad-btn.form {
+  border-color: #c084fc;
+  background: linear-gradient(135deg, #6d28d9, #9333ea);
+}
+
+.pad-btn.form.power {
+  border-color: #fb923c;
+  background: linear-gradient(135deg, #b91c1c, #ea580c);
+}
+
+.pad-btn.form.sky {
+  border-color: #d8b4fe;
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+}
+
 /* ---- 开始菜单遮罩 ---- */
 .menu-overlay {
   position: fixed;
@@ -1208,7 +1288,7 @@ onUnmounted(() => {
 
 .moves-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }

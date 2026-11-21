@@ -79,6 +79,8 @@ export class BattleEffects {
   // 蓄力手部光球（光线蓄力 & 光轮蓄力预览）
   private readonly chargeOrb: THREE.Mesh
   private readonly chargeDiscPreview: THREE.Group
+  // 形态切换蓄力头顶光球
+  private readonly typeChargeOrb: THREE.Mesh
 
   // 怪兽攻击地面危险预警圈
   private readonly warningRing: THREE.Mesh
@@ -236,6 +238,19 @@ export class BattleEffects {
     this.chargeDiscPreview = this.createSawDiscMesh(1.8)
     this.chargeDiscPreview.visible = false
     this.group.add(this.chargeDiscPreview)
+
+    this.typeChargeOrb = new THREE.Mesh(
+      orbGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0xb388ff,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    )
+    this.typeChargeOrb.visible = false
+    this.group.add(this.typeChargeOrb)
 
     // 5. 怪兽攻击地面危险预警光环
     const ringGeo = new THREE.RingGeometry(4.6, 6.2, 32)
@@ -580,6 +595,24 @@ export class BattleEffects {
     }
   }
 
+  /** 形态切换蓄力：头顶凝聚脉动光球，随蓄力进度胀大 */
+  public updateTypeCharge(
+    charge: number,
+    pos: THREE.Vector3,
+    colorHex: number,
+    elapsed: number,
+  ) {
+    if (charge > 0.03) {
+      this.typeChargeOrb.visible = true
+      this.typeChargeOrb.position.copy(pos)
+      const s = 0.7 + charge * 2.4 + Math.sin(elapsed * 20) * 0.22 * charge
+      this.typeChargeOrb.scale.setScalar(s)
+      ;(this.typeChargeOrb.material as THREE.MeshBasicMaterial).color.setHex(colorHex)
+    } else {
+      this.typeChargeOrb.visible = false
+    }
+  }
+
   public updateWarningRing(visible: boolean, heroX: number, urgency: number, elapsed: number) {
     this.warningRing.visible = visible
     if (!visible) return
@@ -786,6 +819,7 @@ export class BattleEffects {
     this.shieldMesh.visible = false
     this.chargeOrb.visible = false
     this.chargeDiscPreview.visible = false
+    this.typeChargeOrb.visible = false
     this.warningRing.visible = false
   }
 }

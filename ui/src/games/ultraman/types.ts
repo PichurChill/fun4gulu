@@ -118,6 +118,10 @@ export interface GestureSnapshot {
   discSide: 'left' | 'right' | null
   /** 本帧触发的八分光轮 */
   discTrigger: 'left' | 'right' | null
+  /** 双手交叉举过头顶的形态切换蓄力进度 [0, 1] */
+  typeCharge: number
+  /** 本帧触发的形态切换 */
+  typeTrigger: boolean
   /** 十字/L字光线蓄力进度 [0, 1] */
   beamCharge: number
   /** 本帧触发的哉佩利敖光线 */
@@ -144,6 +148,8 @@ export interface BattleHudState {
   phase: GamePhase
   loadingProgress: number
   heroId: HeroId
+  /** 当前形态（迪迦 multi/power/sky；无形态英雄为 'base'） */
+  heroForm: string
   waveIndex: number
   totalWaves: number
   activeTheme: ConcreteSceneTheme
@@ -160,7 +166,7 @@ export interface BattleHudState {
   defeatedCount: number
   warningTextKey: string | null
   warningUrgency: number
-  chargeKind: 'beam' | 'disc' | 'guard' | null
+  chargeKind: 'beam' | 'disc' | 'guard' | 'type' | null
   chargeProgress: number
   activeSkillBannerKey: string | null
   tracking: boolean

@@ -134,6 +134,8 @@ export class UltraGestureRecognizer {
   private punchLast: [number, number] = [-Infinity, -Infinity]
   private kickLast: [number, number] = [-Infinity, -Infinity]
   private kickWasHigh: [boolean, boolean] = [false, false]
+  private typeHold = new SmoothHold(250)
+  private typeFired = false
   private smoothLean = 0
 
   public reset() {
@@ -149,6 +151,8 @@ export class UltraGestureRecognizer {
     this.punchLast = [-Infinity, -Infinity]
     this.kickLast = [-Infinity, -Infinity]
     this.kickWasHigh = [false, false]
+    this.typeHold.reset()
+    this.typeFired = false
     this.smoothLean = 0
   }
 
@@ -174,6 +178,8 @@ export class UltraGestureRecognizer {
       discCharge: 0,
       discSide: null,
       discTrigger: null,
+      typeCharge: 0,
+      typeTrigger: false,
       beamCharge: 0,
       beamTrigger: false,
       beamArmSide: 'right',
@@ -337,6 +343,39 @@ export class UltraGestureRecognizer {
     }
     this.guardSince = null
 
+    // 招式 A2：双手交叉举过头顶持续 3 秒 → 切换形态（复合 → 强力 → 空中 循环）
+    const nose = pts[0]
+    const headTopY =
+      isVisible(nose, 0.3) && nose.y < centerY - scale * 0.18
+        ? nose.y - scale * 0.38
+        : centerY - scale * 0.65
+    const elbowsHigh = le.y < centerY - scale * 0.3 && re.y < centerY - scale * 0.3
+    const wristsAboveHead = lw.y < headTopY && rw.y < headTopY
+    const wristsCrossedOverhead = (lw.x - rw.x) * (ls.x - rs.x) < 0
+    const isTypePose = elbowsHigh && wristsAboveHead && wristsCrossedOverhead
+
+    const typeElapsed = this.typeHold.update(isTypePose, now)
+    if (isTypePose || this.typeHold.isRecent(now)) {
+      out.typeCharge = clamp(typeElapsed / 3000, 0, 1)
+      out.hintKey = 'hintTypeCharge'
+      if (out.typeCharge >= 1 && !this.typeFired) {
+        out.typeTrigger = true
+        this.typeFired = true
+        out.hintKey = 'hintTypeSwitch'
+      }
+      if (isTypePose) {
+        // 头顶交叉蓄力期间压制出拳 / 光轮 / 光线识别，避免举手动作误触其它招式
+        this.punchReady = [null, null]
+        this.discRaiseStart = [null, null]
+        this.discArmed = [null, null]
+        this.beamHold.reset()
+        return out
+      }
+      return out
+    }
+    // 双手离开头顶后复位触发锁存，允许下一次蓄力再切
+    this.typeFired = false
+
     // 招式 B：哉佩利敖光线（经典 L 字或十字 + 姿势，一横一竖）
     const forearmGap =
       Math.min(
@@ -382,12 +421,6 @@ export class UltraGestureRecognizer {
     }
 
     // 招式 C：八分光轮（单手高举过头顶蓄力 → 向下或向前甩出）
-    const nose = pts[0]
-    const headTopY =
-      isVisible(nose, 0.3) && nose.y < centerY - scale * 0.18
-        ? nose.y - scale * 0.38
-        : centerY - scale * 0.65
-
     for (let side = 0; side < 2; side++) {
       const wrist = side === 0 ? lw : rw
       const shoulder = side === 0 ? ls : rs

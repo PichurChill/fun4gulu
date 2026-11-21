@@ -6,7 +6,7 @@ import { ArenaManager } from './environment'
 import { UltraGestureRecognizer } from './gesture'
 import { HERO_PROFILES } from './heroes'
 import { HeroController } from './hero'
-import type { HeroId, HeroProfile } from './heroes'
+import type { HeroFormSpec, HeroId, HeroProfile } from './heroes'
 import { KaijuController, MONSTER_WAVES } from './monsters'
 import type {
   BattleHudState,
@@ -51,6 +51,8 @@ export class UltramanGameEngine {
   // 游戏状态机
   private phase: GamePhase = 'menu'
   private heroProfile: HeroProfile = HERO_PROFILES.tiga
+  /** 迪迦形态索引（复合 → 强力 → 空中 循环；无形态英雄恒 0） */
+  private heroFormIndex = 0
   private controlMode: ControlMode = 'camera'
   private preferredTheme: SceneTheme = 'auto'
   private loadingProgress = 0
@@ -91,6 +93,7 @@ export class UltramanGameEngine {
   private gestureBeamArmSide: 'left' | 'right' = 'right'
   private gestureDiscCharge = 0
   private gestureDiscSide: 'left' | 'right' | null = null
+  private gestureTypeCharge = 0
 
   // 镜头与提示动效（打击感：命中顿帧 + trauma² 多频镜头震动）
   private hitStopTimer = 0
@@ -191,7 +194,8 @@ export class UltramanGameEngine {
     const profile = HERO_PROFILES[heroId]
     if (profile.id === this.heroProfile.id) return
     this.heroProfile = profile
-    this.effects.setHeroTheme(profile)
+    this.heroFormIndex = 0
+    this.applyHeroForm()
     this.emitHud()
     if (this.phase !== 'menu' || !this.assetsReady) return
     this.loadingProgress = 40
@@ -200,6 +204,57 @@ export class UltramanGameEngine {
     this.hero.resetPose()
     this.loadingProgress = 100
     this.emitHud()
+  }
+
+  // ---- 迪迦形态系统（复合 → 强力 → 空中 循环切换） ----
+
+  private get activeForm(): HeroFormSpec | null {
+    return this.heroProfile.forms?.[this.heroFormIndex] ?? null
+  }
+
+  /** 当前形态的伤害倍率（无形态英雄为 1） */
+  private get formDamageMul(): number {
+    return this.activeForm?.damageMul ?? 1
+  }
+
+  /** 应用当前形态：模型染色 + 移动速度 + 特效主题色 */
+  private applyHeroForm() {
+    const form = this.activeForm
+    this.hero.setForm(form)
+    this.effects.setHeroTheme(
+      form
+        ? {
+            ...this.heroProfile,
+            accentColor: form.accentColor,
+            beamColor: form.beamColor,
+            beamSuperColor: form.beamSuperColor,
+            discColor: form.discColor,
+            burstColor: form.burstColor,
+          }
+        : this.heroProfile,
+    )
+  }
+
+  /** 切换到下一个形态并播放变身反馈（体感手势 / 键盘 T / 触屏按钮共用入口） */
+  private switchHeroForm() {
+    if (!this.heroProfile.forms) return
+    this.heroFormIndex = (this.heroFormIndex + 1) % this.heroProfile.forms.length
+    const form = this.activeForm!
+    this.applyHeroForm()
+
+    const pos = this.hero.root.position.clone().add(new THREE.Vector3(0, 9.5, 0))
+    this.effects.spawnBurst(pos, form.accentColor, 30, 26, 1.6)
+    this.effects.spawnHitFlash(pos, form.accentColor, 2.2)
+    this.effects.spawnImpactRing(pos, form.accentColor, 9)
+    this.audio.playTransform()
+    this.addTrauma(0.35)
+    this.showBanner(`bannerForm${form.bannerKey}`, 1.4)
+    this.emitHud()
+  }
+
+  public triggerManualTypeSwitch() {
+    if (this.phase !== 'fighting') return
+    this.switchHeroForm()
   }
 
   public async startGame(
@@ -237,6 +292,8 @@ export class UltramanGameEngine {
     this.gestureDiscCharge = 0
     this.beamCooldown = 0
     this.discCooldown = 0
+    this.heroFormIndex = 0
+    this.applyHeroForm()
     this.hero.resetPose()
     this.audio.setDangerAlarm(false)
     this.audio.playTransform()
@@ -306,6 +363,7 @@ export class UltramanGameEngine {
     this.gestureBeamArmSide = snap.beamArmSide
     this.gestureDiscCharge = snap.discCharge
     this.gestureDiscSide = snap.discSide
+    this.gestureTypeCharge = snap.typeCharge
     this.gestureHintKey = snap.hintKey
 
     // 实时驱动迪迦全身肢体同步玩家！
@@ -313,7 +371,9 @@ export class UltramanGameEngine {
 
     if (this.phase !== 'fighting') return
 
-    if (snap.beamTrigger) {
+    if (snap.typeTrigger) {
+      this.switchHeroForm()
+    } else if (snap.beamTrigger) {
       this.executeBeam()
     } else if (snap.discTrigger) {
       this.executeDisc(snap.discTrigger)
@@ -361,7 +421,7 @@ export class UltramanGameEngine {
     this.hero.triggerAction(side === 'left' ? 'punch-left' : 'punch-right', 0.28)
     const origin = this.hero.getFistOrigin(side)
     const target = this.kaiju.getTargetCenter()
-    this.effects.spawnPunchWave(origin, target, 28)
+    this.effects.spawnPunchWave(origin, target, Math.round(28 * this.formDamageMul))
     this.effects.spawnBurst(origin, this.heroProfile.burstColor, 6, 12, 0.55)
     this.audio.playPunch(false)
   }
@@ -371,7 +431,7 @@ export class UltramanGameEngine {
     this.hero.triggerAction(side === 'left' ? 'kick-left' : 'kick-right', 0.36)
     const origin = this.hero.getFootOrigin(side)
     const target = this.kaiju.getTargetCenter()
-    this.effects.spawnKickWave(origin, target, 46)
+    this.effects.spawnKickWave(origin, target, Math.round(46 * this.formDamageMul))
     this.effects.spawnBurst(origin, 0xf97316, 10, 16, 0.8)
     this.audio.playPunch(false)
     this.showBanner('bannerKick', 0.85)
@@ -384,7 +444,7 @@ export class UltramanGameEngine {
     this.hero.triggerAction('disc', 0.42)
     const origin = this.hero.getDiscOrigin(side)
     const target = this.kaiju.getTargetCenter()
-    this.effects.spawnUltraDisc(origin, target, 76)
+    this.effects.spawnUltraDisc(origin, target, Math.round(76 * this.formDamageMul))
     this.audio.playDisc()
     this.showBanner(`bannerDisc${this.heroProfile.bannerKey}`, 1.0)
   }
@@ -409,7 +469,7 @@ export class UltramanGameEngine {
     this.audio.playBeam(isSuper)
     this.addTrauma(isSuper ? 0.7 : 0.45)
     this.beamDamageTicksRemaining = isSuper ? 5 : 4
-    this.beamDamagePerTick = isSuper ? 48 : 32
+    this.beamDamagePerTick = Math.round((isSuper ? 48 : 32) * this.formDamageMul)
     this.beamTickTimer = 0.16
     this.showBanner(
       isSuper ? `bannerSuperBeam${this.heroProfile.bannerKey}` : `bannerBeam${this.heroProfile.bannerKey}`,
@@ -716,6 +776,12 @@ export class UltramanGameEngine {
       this.hero.getDiscOrigin(this.gestureDiscSide ?? 'right'),
       this.elapsedTime,
     )
+    this.effects.updateTypeCharge(
+      this.controlMode === 'camera' && this.heroProfile.forms ? this.gestureTypeCharge : 0,
+      new THREE.Vector3(this.hero.currentX, 15.5, this.hero.baseZ + 0.5),
+      this.activeForm?.accentColor ?? 0xb388ff,
+      this.elapsedTime,
+    )
 
     const isWarning = this.phase === 'fighting' && this.monsterWindupTimer > 0
     this.effects.updateWarningRing(
@@ -871,7 +937,7 @@ export class UltramanGameEngine {
             : 'warningMelee'
     }
 
-    let chargeKind: 'beam' | 'disc' | 'guard' | null = null
+    let chargeKind: 'beam' | 'disc' | 'guard' | 'type' | null = null
     let chargeProgress = 0
     if (this.isHeroGuarding()) {
       chargeKind = 'guard'
@@ -882,12 +948,16 @@ export class UltramanGameEngine {
     } else if (this.gestureDiscCharge > 0.05) {
       chargeKind = 'disc'
       chargeProgress = this.gestureDiscCharge
+    } else if (this.gestureTypeCharge > 0.05) {
+      chargeKind = 'type'
+      chargeProgress = this.gestureTypeCharge
     }
 
     return {
       phase: this.phase,
       loadingProgress: this.loadingProgress,
       heroId: this.heroProfile.id,
+      heroForm: this.activeForm?.id ?? 'base',
       waveIndex: this.waveIndex,
       totalWaves: MONSTER_WAVES.length,
       activeTheme: this.arena.getTheme(),
