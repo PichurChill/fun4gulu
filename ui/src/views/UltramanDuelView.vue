@@ -653,35 +653,12 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 中央：回合与倒计时 -->
+        <!-- 中央：回合与倒计时（紧凑单行，不侵入擂台画面） -->
         <div class="hud-center">
-          <div class="round-label">{{ t('message.ultramanDuelView.roundLabel') }} {{ hud.round }}</div>
-          <div class="round-timer" :class="{ danger: timerDanger }">
+          <span class="round-label">{{ t('message.ultramanDuelView.roundLabel') }} {{ hud.round }}</span>
+          <span class="round-timer" :class="{ danger: timerDanger }">
             {{ String(hud.roundTimeLeft).padStart(2, '0') }}
-          </div>
-          <div class="hud-tools">
-            <button class="arcade-btn" @click="toggleMute">
-              {{ muted ? t('message.ultramanDuelView.mute') : t('message.ultramanDuelView.unmute') }}
-            </button>
-            <button
-              v-if="isCameraMode"
-              class="arcade-btn"
-              @click="recenterBoth"
-            >
-              {{ t('message.ultramanDuelView.recenter') }}
-            </button>
-            <button
-              v-if="isCameraMode"
-              class="arcade-btn"
-              :class="{ active: showSkeleton }"
-              @click="showSkeleton = !showSkeleton"
-            >
-              {{ t('message.ultramanDuelView.skeleton') }}
-            </button>
-            <button class="arcade-btn danger" @click="handleExitToMenu">
-              {{ t('message.ultramanDuelView.stop') }}
-            </button>
-          </div>
+          </span>
         </div>
 
         <!-- P2 状态区（右对齐镜像） -->
@@ -714,9 +691,30 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 招式播报大字 -->
+      <!-- 招式播报大字（贴顶栏下沿，不遮挡角色上身） -->
       <div v-if="hud.activeBannerKey" :key="hud.activeBannerKey" class="skill-banner">
         {{ bannerText }}
+      </div>
+
+      <!-- 工具按钮：右上角固定，不占中央擂台画面 -->
+      <div v-if="isPlaying" class="hud-tools-fixed">
+        <button class="arcade-btn" @click="toggleMute">
+          {{ muted ? t('message.ultramanDuelView.mute') : t('message.ultramanDuelView.unmute') }}
+        </button>
+        <button v-if="isCameraMode" class="arcade-btn" @click="recenterBoth">
+          {{ t('message.ultramanDuelView.recenter') }}
+        </button>
+        <button
+          v-if="isCameraMode"
+          class="arcade-btn"
+          :class="{ active: showSkeleton }"
+          @click="showSkeleton = !showSkeleton"
+        >
+          {{ t('message.ultramanDuelView.skeleton') }}
+        </button>
+        <button class="arcade-btn danger" @click="handleExitToMenu">
+          {{ t('message.ultramanDuelView.stop') }}
+        </button>
       </div>
 
       <!-- 键盘/触屏双操作区 -->
@@ -1392,7 +1390,7 @@ onUnmounted(() => {
 
 .hud-top {
   display: grid;
-  grid-template-columns: minmax(240px, 1.2fr) minmax(180px, 0.9fr) minmax(240px, 1.2fr);
+  grid-template-columns: minmax(240px, 1.35fr) minmax(120px, auto) minmax(240px, 1.35fr);
   gap: 14px;
   align-items: start;
 }
@@ -1554,10 +1552,15 @@ onUnmounted(() => {
 
 .hud-center {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  pointer-events: auto;
+  justify-content: center;
+  gap: 10px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: rgba(10, 18, 34, 0.82);
+  border: 1.5px solid rgba(250, 204, 21, 0.45);
+  align-self: start;
+  margin: 0 auto;
 }
 
 .round-label {
@@ -1565,56 +1568,59 @@ onUnmounted(() => {
   font-weight: 800;
   letter-spacing: 1px;
   color: #94a3b8;
+  white-space: nowrap;
 }
 
 .round-timer {
-  min-width: 84px;
-  text-align: center;
-  padding: 4px 14px;
-  border-radius: 10px;
-  font-size: 30px;
+  font-size: 22px;
   font-weight: 900;
+  line-height: 1;
   color: #fef08a;
-  background: rgba(10, 18, 34, 0.88);
-  border: 2px solid rgba(250, 204, 21, 0.65);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 
 .round-timer.danger {
   color: #fca5a5;
-  border-color: rgba(239, 68, 68, 0.9);
   animation: timerBlink 0.5s ease-in-out infinite alternate;
 }
 
 @keyframes timerBlink {
   from {
     opacity: 1;
-    transform: scale(1.05);
   }
   to {
-    opacity: 0.5;
-    transform: scale(0.97);
+    opacity: 0.45;
   }
 }
 
-.hud-tools {
+/* 工具按钮：右侧边缘纵排小按钮，不占中央擂台画面 */
+.hud-tools-fixed {
+  position: fixed;
+  top: 118px;
+  right: 14px;
   display: flex;
+  flex-direction: column;
   gap: 6px;
-  flex-wrap: wrap;
-  justify-content: center;
+  z-index: 32;
+  pointer-events: auto;
 }
 
-/* 招式播报大字 */
+.hud-tools-fixed .arcade-btn {
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+/* 招式播报大字（贴顶栏下沿展示，不遮挡角色上身） */
 .skill-banner {
   position: fixed;
-  top: 132px;
+  top: 64px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 8px 24px;
+  padding: 6px 20px;
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(14, 116, 144, 0.88), rgba(37, 99, 235, 0.88));
   border: 2px solid #fef08a;
-  font-size: clamp(18px, 2.5vw, 26px);
+  font-size: clamp(15px, 2vw, 21px);
   font-weight: 900;
   letter-spacing: 2px;
   color: #fef9c3;
@@ -1831,11 +1837,28 @@ onUnmounted(() => {
   .mode-grid {
     grid-template-columns: 1fr;
   }
+  /* 窄屏：双方血条并排一行，计时器独占下一行居中，中央不再堆叠大块 */
   .hud-top {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .fighter-panel.p1 {
+    order: 1;
+  }
+  .fighter-panel.p2 {
+    order: 2;
+  }
+  .hud-center {
+    order: 3;
+    grid-column: 1 / -1;
+    margin-top: 2px;
   }
   .fighter-panel.p2 .fighter-name-row {
     justify-content: flex-start;
+  }
+  .hud-tools-fixed {
+    top: 168px;
+    right: 8px;
   }
   .dual-pads {
     flex-direction: column;
@@ -1851,7 +1874,7 @@ onUnmounted(() => {
   .camera-pip {
     width: 156px;
     bottom: auto;
-    top: 150px;
+    top: 216px;
   }
   .pip-video,
   .pip-skeleton {
@@ -1859,7 +1882,9 @@ onUnmounted(() => {
     height: 117px;
   }
   .skill-banner {
-    top: 108px;
+    top: 58px;
+    font-size: 15px;
+    padding: 5px 14px;
   }
 }
 </style>
