@@ -3,12 +3,14 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { UltramanGameEngine } from '@/games/ultraman/engine'
+import { HERO_IDS } from '@/games/ultraman/heroes'
 import { MONSTER_WAVES } from '@/games/ultraman/monsters'
 import type {
   BattleHudState,
   ConcreteSceneTheme,
   ControlMode,
   FloatingDamageEvent,
+  HeroId,
   PoseLandmark,
   SceneTheme,
 } from '@/games/ultraman/types'
@@ -37,6 +39,7 @@ const poseCanvasRef = ref<HTMLCanvasElement | null>(null)
 
 // ---- 交互与配置状态 ----
 const selectedMode = ref<ControlMode>('camera')
+const selectedHero = ref<HeroId>('tiga')
 const selectedWave = ref(0)
 const selectedTheme = ref<SceneTheme>('auto')
 const SCENE_THEMES: SceneTheme[] = ['auto', 'seaside', 'city', 'mountain', 'volcano']
@@ -50,6 +53,7 @@ const floatingEvents = ref<FloatingDamageEvent[]>([])
 const hud = reactive<BattleHudState>({
   phase: 'menu',
   loadingProgress: 0,
+  heroId: 'tiga',
   waveIndex: 0,
   totalWaves: MONSTER_WAVES.length,
   activeTheme: 'seaside',
@@ -82,6 +86,10 @@ const heroHpPercent = computed(() =>
   hud.heroMaxHp > 0 ? Math.max(0, Math.min(100, (hud.heroHp / hud.heroMaxHp) * 100)) : 0,
 )
 const currentMonsterName = computed(() => t(`message.ultramanView.monsters.${hud.monsterId}`))
+const heroHpLabel = computed(
+  () => `${t(`message.ultramanView.heroNames.${hud.heroId}`)} ${t('message.ultramanView.heroHpSuffix')}`,
+)
+const heroBadge = computed(() => (hud.heroId === 'tiga' ? '3D MOTION · TIGA' : '3D MOTION · ZERO'))
 const isPlaying = computed(
   () =>
     hud.phase === 'intro' ||
@@ -248,6 +256,12 @@ function stopCameraTracking() {
   if (poseCtx && poseCanvasRef.value) {
     poseCtx.clearRect(0, 0, poseCanvasRef.value.width, poseCanvasRef.value.height)
   }
+}
+
+function selectHero(id: HeroId) {
+  if (selectedHero.value === id) return
+  selectedHero.value = id
+  void engine?.setHero(id)
 }
 
 function selectWave(idx: number) {
@@ -485,11 +499,28 @@ onUnmounted(() => {
           <button class="arcade-btn ghost" @click="handleGoHome">
             &lt; {{ t('message.ultramanView.back') }}
           </button>
-          <span class="arcade-badge">3D MOTION · TIGA</span>
+          <span class="arcade-badge">{{ heroBadge }}</span>
         </div>
 
         <h1 class="menu-title">{{ t('message.ultramanView.title') }}</h1>
         <p class="menu-subtitle">{{ t('message.ultramanView.subtitle') }}</p>
+
+        <!-- 光之战士选择（迪迦 / 赛罗，点选即时换人预览） -->
+        <div class="stage-picker hero-picker">
+          <div class="picker-label">{{ t('message.ultramanView.selectHero') }}</div>
+          <div class="stage-pills">
+            <button
+              v-for="id in HERO_IDS"
+              :key="id"
+              class="stage-chip hero-chip"
+              :class="[id, { active: selectedHero === id }]"
+              @click="selectHero(id)"
+            >
+              <span class="hero-dot" />
+              <span>{{ t(`message.ultramanView.heroNames.${id}`) }}</span>
+            </button>
+          </div>
+        </div>
 
         <!-- 控制模式切换 -->
         <div class="mode-switch">
@@ -705,14 +736,14 @@ onUnmounted(() => {
         {{ t(`message.ultramanView.banners.${hud.activeSkillBannerKey}`) }}
       </div>
 
-      <!-- 左下角：迪迦彩色计时器 + 血量条 + 必杀光线能量槽 -->
+      <!-- 左下角：彩色计时器 + 血量条 + 必杀光线能量槽 -->
       <div class="hero-status-panel">
-        <div class="color-timer" :class="{ danger: hud.timerDanger }">
+        <div class="color-timer" :class="[hud.heroId, { danger: hud.timerDanger }]">
           <div class="color-timer-core" />
         </div>
         <div class="hero-bars">
           <div class="bar-row">
-            <span class="bar-label">{{ t('message.ultramanView.heroHp') }}</span>
+            <span class="bar-label">{{ heroHpLabel }}</span>
             <span class="bar-num">{{ hud.heroHp }} / {{ hud.heroMaxHp }}</span>
           </div>
           <div class="hero-hp-track">
@@ -1100,6 +1131,38 @@ onUnmounted(() => {
 
 .stage-picker {
   margin-bottom: 16px;
+}
+
+/* 光之战士选择条 */
+.hero-picker .stage-pills {
+  gap: 10px;
+}
+
+.hero-chip {
+  padding: 8px 18px;
+  font-size: 13px;
+}
+
+.hero-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #38e8ff;
+  box-shadow: 0 0 6px rgba(56, 232, 255, 0.9);
+}
+
+.hero-chip.zero .hero-dot {
+  background: #7df9ff;
+  box-shadow:
+    0 0 6px rgba(125, 249, 255, 0.9),
+    inset 0 0 3px #fff;
+}
+
+.hero-chip.zero.active {
+  border-color: #7df9ff;
+  background: rgba(125, 249, 255, 0.18);
+  color: #bae6fd;
 }
 
 .picker-label {
@@ -1576,6 +1639,20 @@ onUnmounted(() => {
     opacity: 0.45;
     transform: scale(0.95);
   }
+}
+
+/* 赛罗主题彩色计时器：冰蓝白辉光 */
+.color-timer.zero {
+  background: radial-gradient(circle, #e0fbff 0%, #67e8f9 45%, #0e7490 70%, #082f49 100%);
+  border-color: #f0fdff;
+  box-shadow:
+    0 0 20px rgba(125, 249, 255, 0.95),
+    inset 0 0 10px rgba(255, 255, 255, 0.55);
+}
+
+.color-timer.zero .color-timer-core {
+  background: #f0feff;
+  box-shadow: 0 0 14px #7df9ff;
 }
 
 .hero-bars {

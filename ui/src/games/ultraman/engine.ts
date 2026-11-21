@@ -4,7 +4,9 @@ import { UltraAudio } from './audio'
 import { BattleEffects } from './effects'
 import { ArenaManager } from './environment'
 import { UltraGestureRecognizer } from './gesture'
-import { TigaHeroController } from './hero'
+import { HERO_PROFILES } from './heroes'
+import { HeroController } from './hero'
+import type { HeroId, HeroProfile } from './heroes'
 import { KaijuController, MONSTER_WAVES } from './monsters'
 import type {
   BattleHudState,
@@ -23,7 +25,7 @@ export interface EngineCallbacks {
 }
 
 /**
- * 迪迦奥特曼 3D 全身体感战斗主引擎
+ * 奥特曼 3D 全身体感战斗主引擎（迪迦 / 赛罗双英雄）
  */
 export class UltramanGameEngine {
   private readonly container: HTMLElement
@@ -36,7 +38,7 @@ export class UltramanGameEngine {
   public readonly audio = new UltraAudio()
   public readonly gesture = new UltraGestureRecognizer()
   private readonly arena: ArenaManager
-  private readonly hero: TigaHeroController
+  private readonly hero: HeroController
   private readonly kaiju: KaijuController
   private readonly effects: BattleEffects
 
@@ -48,6 +50,7 @@ export class UltramanGameEngine {
 
   // 游戏状态机
   private phase: GamePhase = 'menu'
+  private heroProfile: HeroProfile = HERO_PROFILES.tiga
   private controlMode: ControlMode = 'camera'
   private preferredTheme: SceneTheme = 'auto'
   private loadingProgress = 0
@@ -89,8 +92,9 @@ export class UltramanGameEngine {
   private gestureDiscCharge = 0
   private gestureDiscSide: 'left' | 'right' | null = null
 
-  // 镜头与提示动效
-  private shakeIntensity = 0
+  // 镜头与提示动效（打击感：命中顿帧 + trauma² 多频镜头震动）
+  private hitStopTimer = 0
+  private shakeTrauma = 0
   private skillBannerKey: string | null = null
   private skillBannerTimer = 0
   private floatingIdCounter = 1
@@ -128,7 +132,7 @@ export class UltramanGameEngine {
     container.appendChild(this.renderer.domElement)
 
     this.arena = new ArenaManager(this.scene)
-    this.hero = new TigaHeroController(this.scene)
+    this.hero = new HeroController(this.scene)
     this.kaiju = new KaijuController(this.scene)
     this.effects = new BattleEffects(this.scene)
 
@@ -161,13 +165,13 @@ export class UltramanGameEngine {
     return MONSTER_WAVES[waveIdx]?.defaultTheme ?? 'seaside'
   }
 
-  /** 预加载迪迦模型、城市建筑与第 1 关怪兽 */
+  /** 预加载当前英雄模型、城市建筑与第 1 关怪兽 */
   public async preloadBaseAssets(): Promise<void> {
     if (this.assetsReady) return
     this.loadingProgress = 15
     this.emitHud()
 
-    await this.hero.load(this.loader, '/models/ultraman/tiga.glb')
+    await this.hero.load(this.loader, this.heroProfile)
     this.loadingProgress = 55
     this.emitHud()
 
@@ -176,8 +180,25 @@ export class UltramanGameEngine {
       this.kaiju.spawn(this.loader, MONSTER_WAVES[0]!),
     ])
     this.kaiju.setState('idle')
+    this.effects.setHeroTheme(this.heroProfile)
     this.loadingProgress = 100
     this.assetsReady = true
+    this.emitHud()
+  }
+
+  /** 菜单里实时切换光之战士（迪迦 / 赛罗），3D 舞台立即换人预览 */
+  public async setHero(heroId: HeroId): Promise<void> {
+    const profile = HERO_PROFILES[heroId]
+    if (profile.id === this.heroProfile.id) return
+    this.heroProfile = profile
+    this.effects.setHeroTheme(profile)
+    this.emitHud()
+    if (this.phase !== 'menu' || !this.assetsReady) return
+    this.loadingProgress = 40
+    this.emitHud()
+    await this.hero.load(this.loader, profile)
+    this.hero.resetPose()
+    this.loadingProgress = 100
     this.emitHud()
   }
 
@@ -245,7 +266,7 @@ export class UltramanGameEngine {
     this.loadingProgress = 100
     this.phase = 'intro'
     this.waveTransitionTimer = 1.25
-    this.shakeIntensity = 0.55
+    this.addTrauma(0.4)
     this.showBanner('bannerWaveStart', 1.4)
     this.emitHud()
   }
@@ -341,7 +362,7 @@ export class UltramanGameEngine {
     const origin = this.hero.getFistOrigin(side)
     const target = this.kaiju.getTargetCenter()
     this.effects.spawnPunchWave(origin, target, 28)
-    this.effects.spawnBurst(origin, 0x67e8f9, 6, 12, 0.55)
+    this.effects.spawnBurst(origin, this.heroProfile.burstColor, 6, 12, 0.55)
     this.audio.playPunch(false)
   }
 
@@ -365,7 +386,7 @@ export class UltramanGameEngine {
     const target = this.kaiju.getTargetCenter()
     this.effects.spawnUltraDisc(origin, target, 76)
     this.audio.playDisc()
-    this.showBanner('bannerDisc', 1.0)
+    this.showBanner(`bannerDisc${this.heroProfile.bannerKey}`, 1.0)
   }
 
   private executeBeam() {
@@ -386,11 +407,14 @@ export class UltramanGameEngine {
     this.hero.triggerAction('beam', dur)
     this.effects.startHeroBeam(isSuper)
     this.audio.playBeam(isSuper)
-    this.shakeIntensity = isSuper ? 0.9 : 0.55
+    this.addTrauma(isSuper ? 0.7 : 0.45)
     this.beamDamageTicksRemaining = isSuper ? 5 : 4
     this.beamDamagePerTick = isSuper ? 48 : 32
     this.beamTickTimer = 0.16
-    this.showBanner(isSuper ? 'bannerSuperBeam' : 'bannerBeam', dur)
+    this.showBanner(
+      isSuper ? `bannerSuperBeam${this.heroProfile.bannerKey}` : `bannerBeam${this.heroProfile.bannerKey}`,
+      dur,
+    )
     this.emitHud()
   }
 
@@ -399,7 +423,22 @@ export class UltramanGameEngine {
     this.skillBannerTimer = duration
   }
 
-  private applyDamageToMonster(amount: number, color: string, isCritical = false) {
+  /** 叠加镜头 trauma（打击感：trauma² 多频震动，命中/受击/爆炸分级注入） */
+  private addTrauma(amount: number) {
+    this.shakeTrauma = Math.min(1.15, this.shakeTrauma + amount)
+  }
+
+  /** 命中顿帧：短时间内把世界时间压缩到 12%，让每一记命中都有"砸实"的定格瞬间 */
+  private addHitStop(seconds: number) {
+    this.hitStopTimer = Math.max(this.hitStopTimer, seconds)
+  }
+
+  private applyDamageToMonster(
+    amount: number,
+    color: string,
+    isCritical = false,
+    impact: 'light' | 'heavy' | 'beam' = 'light',
+  ) {
     if (this.phase !== 'fighting' || this.monsterHp <= 0) return
 
     this.monsterHp = Math.max(0, this.monsterHp - amount)
@@ -412,12 +451,26 @@ export class UltramanGameEngine {
     this.kaiju.triggerHitFlash(isCritical ? 1 : 0.72)
     this.effects.spawnBurst(
       hitPos,
-      isCritical ? 0xfacc15 : 0x38d9ff,
+      isCritical ? 0xfacc15 : this.heroProfile.beamColor,
       isCritical ? 22 : 12,
       isCritical ? 26 : 18,
       isCritical ? 1.25 : 0.9,
     )
-    this.shakeIntensity = Math.max(this.shakeIntensity, isCritical ? 0.6 : 0.25)
+
+    if (impact === 'heavy') {
+      this.addHitStop(0.085)
+      this.addTrauma(0.42)
+      this.effects.spawnImpactRing(hitPos, 0xffffff, 8.5)
+      this.effects.spawnHitFlash(hitPos, isCritical ? 0xfef08a : 0xffffff, 1.35)
+    } else if (impact === 'light') {
+      this.addHitStop(0.05)
+      this.addTrauma(0.26)
+      this.effects.spawnImpactRing(hitPos, 0xffffff, 5.5)
+      this.effects.spawnHitFlash(hitPos, 0xffffff, 1.0)
+    } else {
+      this.addTrauma(0.12)
+      this.effects.spawnHitFlash(hitPos, this.heroProfile.beamColor, 0.9)
+    }
 
     this.spawnFloatingAtWorld(
       hitPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 4, 2.5, 0)),
@@ -439,9 +492,11 @@ export class UltramanGameEngine {
     this.beamDamageTicksRemaining = 0
     this.kaiju.setState('dying')
     this.audio.playExplosion()
-    this.shakeIntensity = 1.25
+    this.addHitStop(0.12)
+    this.addTrauma(0.95)
 
     const center = this.kaiju.getTargetCenter()
+    this.effects.spawnImpactRing(center, 0xffd28a, 14)
     this.effects.spawnBurst(center, 0xff6b2b, 38, 34, 1.8)
     this.effects.spawnBurst(center.clone().add(new THREE.Vector3(0, 3, 1)), 0xfacc15, 28, 28, 1.5)
 
@@ -499,7 +554,13 @@ export class UltramanGameEngine {
         22,
         1.1,
       )
-      this.shakeIntensity = Math.max(this.shakeIntensity, 0.35)
+      this.effects.spawnImpactRing(
+        new THREE.Vector3(this.hero.currentX, 9.0, this.hero.baseZ - 3.0),
+        0xbae6fd,
+        6.5,
+      )
+      this.addHitStop(0.045)
+      this.addTrauma(0.32)
       this.spawnFloatingAtWorld(
         new THREE.Vector3(this.hero.currentX, 14.8, this.hero.baseZ),
         'PERFECT GUARD!',
@@ -515,12 +576,23 @@ export class UltramanGameEngine {
     this.combo = 0
     this.hero.triggerAction('hit', 0.42)
     this.audio.playHeroHurt()
-    this.shakeIntensity = Math.max(this.shakeIntensity, 0.85)
+    this.addHitStop(0.075)
+    this.addTrauma(0.58)
     this.effects.spawnBurst(
       new THREE.Vector3(this.hero.currentX, 9.5, this.hero.baseZ - 1.2),
       0xff4444,
       18,
       20,
+      1.1,
+    )
+    this.effects.spawnImpactRing(
+      new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ - 1.4),
+      0xffb3b3,
+      6,
+    )
+    this.effects.spawnHitFlash(
+      new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ - 1.4),
+      0xff8888,
       1.1,
     )
     this.spawnFloatingAtWorld(
@@ -564,15 +636,22 @@ export class UltramanGameEngine {
     if (this.disposed) return
     this.rafId = requestAnimationFrame(this.loop)
 
-    const dt = Math.min(0.05, Math.max(0.001, (now - this.lastTimestamp) / 1000))
+    const rawDt = Math.min(0.05, Math.max(0.001, (now - this.lastTimestamp) / 1000))
     this.lastTimestamp = now
-    this.elapsedTime += dt
+    this.elapsedTime += rawDt
 
-    this.stepSimulation(dt, now)
+    // 命中顿帧：世界时间压缩，镜头平滑与震动衰减仍走真实时间
+    let dt = rawDt
+    if (this.hitStopTimer > 0) {
+      this.hitStopTimer -= rawDt
+      dt = rawDt * 0.12
+    }
+
+    this.stepSimulation(dt, rawDt, now)
     this.renderer.render(this.scene, this.camera)
   }
 
-  private stepSimulation(dt: number, nowMs: number) {
+  private stepSimulation(dt: number, rawDt: number, nowMs: number) {
     if (this.beamCooldown > 0) this.beamCooldown = Math.max(0, this.beamCooldown - dt)
     if (this.discCooldown > 0) this.discCooldown = Math.max(0, this.discCooldown - dt)
     if (this.skillBannerTimer > 0) {
@@ -646,7 +725,7 @@ export class UltramanGameEngine {
       this.elapsedTime,
     )
 
-    this.updateCamera(dt)
+    this.updateCamera(rawDt)
 
     this.hudSyncAccumulator += dt
     if (this.hudSyncAccumulator >= 0.08) {
@@ -663,7 +742,7 @@ export class UltramanGameEngine {
       if (this.beamTickTimer <= 0) {
         this.beamTickTimer = 0.24
         this.beamDamageTicksRemaining -= 1
-        this.applyDamageToMonster(this.beamDamagePerTick, '#38e8ff', true)
+        this.applyDamageToMonster(this.beamDamagePerTick, '#38e8ff', true, 'beam')
       }
     }
 
@@ -678,21 +757,21 @@ export class UltramanGameEngine {
           if (proj.kind === 'punch-wave') {
             this.energy = Math.min(100, this.energy + 12)
             this.audio.playPunch(true)
-            this.applyDamageToMonster(proj.damage, '#fde047', false)
+            this.applyDamageToMonster(proj.damage, '#fde047', false, 'light')
           } else if (proj.kind === 'kick-wave') {
             this.energy = Math.min(100, this.energy + 16)
-            this.audio.playPunch(true)
-            this.applyDamageToMonster(proj.damage, '#fb923c', true)
+            this.audio.playHeavyImpact()
+            this.applyDamageToMonster(proj.damage, '#fb923c', true, 'heavy')
           } else if (proj.kind === 'ultra-disc') {
             this.energy = Math.min(100, this.energy + 18)
-            this.audio.playPunch(true)
+            this.audio.playHeavyImpact()
             if (this.monsterWindupTimer > 0) {
               this.monsterWindupTimer = 0
               this.monsterAttackCooldown = spec.attackInterval * 0.85
               this.kaiju.setState('hit')
               this.showBanner('bannerInterrupt', 1.0)
             }
-            this.applyDamageToMonster(proj.damage, '#67e8f9', true)
+            this.applyDamageToMonster(proj.damage, '#67e8f9', true, 'heavy')
           }
         }
       } else {
@@ -764,13 +843,20 @@ export class UltramanGameEngine {
 
     this.camera.position.lerp(targetCam, Math.min(1, dt * 6.5))
 
-    if (this.shakeIntensity > 0.01) {
-      this.camera.position.x += (Math.random() - 0.5) * this.shakeIntensity
-      this.camera.position.y += (Math.random() - 0.5) * this.shakeIntensity
-      this.shakeIntensity = Math.max(0, this.shakeIntensity - dt * 2.4)
+    // trauma² 多频正弦镜头震动：幅度随 trauma 平方衰减，比随机抖动更"重"更有特摄冲击感
+    this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 1.7)
+    const shakeAmount = this.shakeTrauma * this.shakeTrauma * 1.5
+    if (shakeAmount > 0.001) {
+      const t = this.elapsedTime
+      this.camera.position.x += (Math.sin(t * 47.3) * 0.62 + Math.sin(t * 31.7) * 0.38) * shakeAmount
+      this.camera.position.y += (Math.sin(t * 39.1) * 0.62 + Math.sin(t * 27.3) * 0.38) * shakeAmount
+      this.camera.position.z += Math.sin(t * 23.9) * 0.3 * shakeAmount
     }
 
     this.camera.lookAt(targetLook)
+    if (shakeAmount > 0.001) {
+      this.camera.rotation.z += Math.sin(this.elapsedTime * 35.7) * 0.035 * shakeAmount
+    }
   }
 
   public getHudSnapshot(): BattleHudState {
@@ -801,6 +887,7 @@ export class UltramanGameEngine {
     return {
       phase: this.phase,
       loadingProgress: this.loadingProgress,
+      heroId: this.heroProfile.id,
       waveIndex: this.waveIndex,
       totalWaves: MONSTER_WAVES.length,
       activeTheme: this.arena.getTheme(),

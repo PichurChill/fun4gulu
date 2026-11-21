@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import type { HeroProfile } from './heroes'
 
 interface Particle {
   mesh: THREE.Mesh
@@ -8,6 +9,20 @@ interface Particle {
   life: number
   maxLife: number
   gravity: number
+  startScale: number
+}
+
+interface ImpactRing {
+  mesh: THREE.Mesh
+  life: number
+  maxLife: number
+  maxRadius: number
+}
+
+interface HitFlash {
+  mesh: THREE.Mesh
+  life: number
+  maxLife: number
   startScale: number
 }
 
@@ -30,6 +45,8 @@ interface Projectile {
 export class BattleEffects {
   private readonly group = new THREE.Group()
   private particles: Particle[] = []
+  private impactRings: ImpactRing[] = []
+  private hitFlashes: HitFlash[] = []
   public projectiles: Projectile[] = []
 
   // 共享几何，降低 GC 抖动
@@ -44,6 +61,7 @@ export class BattleEffects {
   private readonly heroBeamImpactOrb: THREE.Mesh
   private heroBeamActive = false
   private heroBeamSuper = false
+  private heroBeamColorHex = 0x38d9ff
   private heroBeamTime = 0
   private heroBeamDuration = 1.4
 
@@ -66,6 +84,26 @@ export class BattleEffects {
   private readonly warningRing: THREE.Mesh
 
   private readonly upAxis = new THREE.Vector3(0, 1, 0)
+
+  // 当前英雄主题配色（迪迦青蓝 / 赛罗冰蓝等，由 engine 切换英雄时注入）
+  private themeBeamColor = 0x38d9ff
+  private themeBeamSuperColor = 0xfacc15
+  private themeDiscColor = 0x38e8ff
+  private themeBurstColor = 0x67e8f9
+
+  public setHeroTheme(profile: HeroProfile) {
+    this.themeBeamColor = profile.beamColor
+    this.themeBeamSuperColor = profile.beamSuperColor
+    this.themeDiscColor = profile.discColor
+    this.themeBurstColor = profile.burstColor
+    ;(this.chargeOrb.material as THREE.MeshBasicMaterial).color.setHex(profile.accentColor)
+    this.chargeDiscPreview.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const mat = (node as THREE.Mesh).material
+        if (mat instanceof THREE.MeshBasicMaterial) mat.color.setHex(profile.discColor)
+      }
+    })
+  }
 
   constructor(scene: THREE.Scene) {
     this.group.name = 'BattleEffects'
@@ -221,7 +259,7 @@ export class BattleEffects {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(radius * 0.35, radius, 24),
       new THREE.MeshBasicMaterial({
-        color: 0x38e8ff,
+        color: this.themeDiscColor,
         transparent: true,
         opacity: 0.9,
         side: THREE.DoubleSide,
@@ -272,8 +310,9 @@ export class BattleEffects {
     this.heroBeamGroup.visible = true
     const outerMat = this.heroBeamOuter.material as THREE.MeshBasicMaterial
     const impactMat = this.heroBeamImpactOrb.material as THREE.MeshBasicMaterial
-    outerMat.color.setHex(isSuper ? 0xfacc15 : 0x38d9ff)
-    impactMat.color.setHex(isSuper ? 0xfef08a : 0x7dd3fc)
+    outerMat.color.setHex(isSuper ? this.themeBeamSuperColor : this.themeBeamColor)
+    impactMat.color.setHex(isSuper ? 0xfef08a : this.themeBeamColor)
+    this.heroBeamColorHex = isSuper ? this.themeBeamSuperColor : this.themeBeamColor
   }
 
   public isHeroBeamActive(): boolean {
@@ -292,7 +331,7 @@ export class BattleEffects {
     const wave = new THREE.Mesh(
       new THREE.TorusGeometry(1.15, 0.24, 8, 18),
       new THREE.MeshBasicMaterial({
-        color: 0x67e8f9,
+        color: this.themeBurstColor,
         transparent: true,
         opacity: 0.92,
         blending: THREE.AdditiveBlending,
@@ -466,6 +505,43 @@ export class BattleEffects {
     this.shieldFlash = 1
   }
 
+  /** 命中冲击环：从命中点快速扩张的能量环（朝向镜头的 XY 平面），强化打击的力量反馈 */
+  public spawnImpactRing(pos: THREE.Vector3, colorHex: number, maxRadius = 7) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 1, 28),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    )
+    ring.position.copy(pos)
+    ring.scale.setScalar(0.4)
+    this.group.add(ring)
+    this.impactRings.push({ mesh: ring, life: 0, maxLife: 0.3, maxRadius })
+  }
+
+  /** 命中白热爆闪：命中瞬间短暂胀大的炽白光球，赋予打击沉甸甸的份量感 */
+  public spawnHitFlash(pos: THREE.Vector3, colorHex: number, scale = 1) {
+    const flash = new THREE.Mesh(
+      this.sparkGeo,
+      new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 1,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    )
+    flash.position.copy(pos)
+    flash.scale.setScalar(0.5 * scale)
+    this.group.add(flash)
+    this.hitFlashes.push({ mesh: flash, life: 0, maxLife: 0.16, startScale: scale })
+  }
+
   public updateShield(active: boolean, heroX: number, heroZ: number, dt: number, elapsed: number) {
     this.shieldFlash = Math.max(0, this.shieldFlash - dt * 3.2)
     this.shieldMesh.visible = active || this.shieldFlash > 0.05
@@ -567,7 +643,7 @@ export class BattleEffects {
         if (reveal > 0.85 && Math.random() < 0.75) {
           this.spawnBurst(
             end,
-            this.heroBeamSuper ? 0xfacc15 : 0x38d9ff,
+            this.heroBeamColorHex,
             3,
             24,
             this.heroBeamSuper ? 1.2 : 0.85,
@@ -633,6 +709,39 @@ export class BattleEffects {
       p.mesh.scale.setScalar(p.startScale * ratio)
       ;(p.mesh.material as THREE.MeshBasicMaterial).opacity = ratio
     }
+
+    // 5. 更新命中冲击环（先急速扩张后减速淡出）
+    for (let i = this.impactRings.length - 1; i >= 0; i--) {
+      const r = this.impactRings[i]!
+      r.life += dt
+      if (r.life >= r.maxLife) {
+        this.group.remove(r.mesh)
+        r.mesh.geometry.dispose()
+        ;(r.mesh.material as THREE.Material).dispose()
+        this.impactRings.splice(i, 1)
+        continue
+      }
+      const t = r.life / r.maxLife
+      const ease = 1 - Math.pow(1 - t, 3)
+      r.mesh.scale.setScalar(0.4 + ease * r.maxRadius)
+      ;(r.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - t) * 0.95
+    }
+
+    // 6. 更新命中白热爆闪（瞬间胀大后急速熄灭）
+    for (let i = this.hitFlashes.length - 1; i >= 0; i--) {
+      const f = this.hitFlashes[i]!
+      f.life += dt
+      if (f.life >= f.maxLife) {
+        this.group.remove(f.mesh)
+        ;(f.mesh.material as THREE.Material).dispose()
+        this.hitFlashes.splice(i, 1)
+        continue
+      }
+      const t = f.life / f.maxLife
+      const grow = t < 0.3 ? t / 0.3 : 1
+      f.mesh.scale.setScalar((0.5 + grow * 2.6) * f.startScale)
+      ;(f.mesh.material as THREE.MeshBasicMaterial).opacity = Math.pow(1 - t, 2)
+    }
   }
 
   public removeProjectileAt(index: number) {
@@ -659,6 +768,17 @@ export class BattleEffects {
       ;(p.mesh.material as THREE.Material).dispose()
     }
     this.particles = []
+    for (const r of this.impactRings) {
+      this.group.remove(r.mesh)
+      r.mesh.geometry.dispose()
+      ;(r.mesh.material as THREE.Material).dispose()
+    }
+    this.impactRings = []
+    for (const f of this.hitFlashes) {
+      this.group.remove(f.mesh)
+      ;(f.mesh.material as THREE.Material).dispose()
+    }
+    this.hitFlashes = []
     this.heroBeamActive = false
     this.heroBeamGroup.visible = false
     this.kaijuBeamTime = 0

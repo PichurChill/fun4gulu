@@ -30,8 +30,8 @@ const messages = {
           desc: '复古卡带合集！GB / GBC / GBA / NES 模拟器，7 款自制经典即点即玩！'
         },
         ultraman: {
-          title: '迪迦奥特曼体感',
-          desc: '第三人称 3D 奥特曼体感超激斗！挥拳、格挡、发射哉佩利敖光线击败五大经典怪兽！'
+          title: '奥特曼体感超激斗',
+          desc: '第三人称 3D 奥特曼体感超激斗！化身迪迦或赛罗，挥拳、格挡、释放究极光线击败五大经典怪兽！'
         },
         demo1: {
           title: '示例小游戏 1',
@@ -95,12 +95,18 @@ const messages = {
         instructionsHand: '抬起左手/右手切换车道，双手上抬跳跃'
       },
       ultramanView: {
-        title: '迪迦奥特曼 · 体感超激斗',
+        title: '光之战士 · 体感超激斗',
         subtitle: '化身光之巨人，在海港城市迎战五大宇宙怪兽！',
         cameraMode: '体感模式（摄像头）',
         keyboardMode: '键盘 / 触屏模式',
         selectStage: '选择挑战关卡',
         selectArena: '选择战斗场景',
+        selectHero: '选择光之战士',
+        heroNames: {
+          tiga: '迪迦',
+          zero: '赛罗'
+        },
+        heroHpSuffix: '生命',
         arenas: {
           auto: '闯关自动切换',
           seaside: '阳光海边',
@@ -119,9 +125,8 @@ const messages = {
         combo: '连击',
         wave: '第 {current}/{total} 波',
         energy: '光之能量',
-        energyReady: '可发射哉佩利敖光线！',
+        energyReady: '究极光线就绪！',
         energyFull: '满能！摆出 L / 十字 释放终极光线！',
-        heroHp: '迪迦生命',
         mute: '静音',
         unmute: '有声',
         recenter: '校准站位',
@@ -136,9 +141,9 @@ const messages = {
           guard: '胸前 X 交叉',
           guardDesc: '奥特屏障格挡',
           disc: '举手下挥',
-          discDesc: '八分光轮打断',
+          discDesc: '光轮斩打断',
           beam: '摆 L / 十字',
-          beamDesc: '哉佩利敖光线'
+          beamDesc: '究极光线'
         },
         monsters: {
           baltan: '巴尔坦星人',
@@ -148,18 +153,18 @@ const messages = {
           gatanothor: '邪神·加坦杰厄'
         },
         hints: {
-          hintStandCenter: '请站在摄像头中间，迪迦会同步你的动作',
+          hintStandCenter: '请站在摄像头中间，奥特曼会同步你的动作',
           hintShowArms: '退后半步露出全身，动作同步更完整',
           hintReady: '全身同步中！挥拳、踢腿、摆 L/十字 放光线',
           hintPunch: '重拳出击！',
           hintKick: '奥特飞踢！',
           hintGuardPrep: '双臂交叉准备防御…',
           hintGuardActive: '奥特屏障已展开！',
-          hintBeamCharge: '保持 L / 十字 凝聚哉佩利敖光线…',
-          hintBeamFire: '哉佩利敖光线发射！',
-          hintDiscCharge: '单手高举凝聚八分光轮…',
+          hintBeamCharge: '保持 L / 十字 凝聚奥特光线…',
+          hintBeamFire: '奥特光线发射！',
+          hintDiscCharge: '单手高举凝聚光轮…',
           hintDiscThrow: '光轮就绪，向下挥出！',
-          hintDiscFire: '八分光轮！'
+          hintDiscFire: '光轮斩！'
         },
         warnings: {
           warningFireball: '危险！怪兽发射火球 — 交叉防御或左右躲避！',
@@ -169,9 +174,12 @@ const messages = {
         banners: {
           bannerWaveStart: '怪兽出现！战斗开始！',
           bannerKick: '奥特飞踢！',
-          bannerBeam: '哉佩利敖光线！',
-          bannerSuperBeam: '终极闪耀·哉佩利敖光线！',
-          bannerDisc: '八分光轮！',
+          bannerBeamTiga: '哉佩利敖光线！',
+          bannerSuperBeamTiga: '终极闪耀·哉佩利敖光线！',
+          bannerDiscTiga: '八分光轮！',
+          bannerBeamZero: '集束射线！',
+          bannerSuperBeamZero: '满充能量·集束射线！',
+          bannerDiscZero: '奥特零光轮！',
           bannerPerfectGuard: '完美防御！能量飙升！',
           bannerInterrupt: '成功打断怪兽蓄力！',
           bannerWaveClear: '怪兽击败！能量恢复！',
@@ -187,11 +195,11 @@ const messages = {
           kick: '飞踢',
           disc: '光轮',
           beam: '光线',
-          keyboardHint: 'A/D 闪避 · S 防御 · J/K 出拳 · I 飞踢 · U 光轮 · 空格 哉佩利敖光线'
+          keyboardHint: 'A/D 闪避 · S 防御 · J/K 出拳 · I 飞踢 · U 光轮 · 空格 奥特光线'
         },
         result: {
           victoryTitle: '光之巨人 · 全关制霸！',
-          defeatTitle: '再站起来，迪迦！',
+          defeatTitle: '再站起来，光之战士！',
           totalScore: '最终得分',
           defeated: '击败怪兽',
           maxCombo: '最高连击',
@@ -231,8 +239,8 @@ const messages = {
           desc: 'Retro cartridge collection! GB/GBC/GBA/NES emulator with 7 homebrew classics, tap to play!'
         },
         ultraman: {
-          title: 'Ultraman Tiga Motion',
-          desc: '3D third-person Ultraman motion battle! Punch, guard, and fire Zepellion Ray to defeat 5 iconic kaiju!'
+          title: 'Ultraman Motion Battle',
+          desc: '3D third-person Ultraman motion battle! Play as Tiga or Zero — punch, guard, and fire ultimate rays to defeat 5 iconic kaiju!'
         },
         demo1: {
           title: 'Demo Game 1',
@@ -296,12 +304,18 @@ const messages = {
         instructionsHand: 'Raise left/right hand to switch lane, raise both to jump'
       },
       ultramanView: {
-        title: 'ULTRAMAN TIGA · MOTION BATTLE',
+        title: 'WARRIOR OF LIGHT · MOTION BATTLE',
         subtitle: 'Become the Giant of Light and defend the harbor city against 5 iconic kaiju!',
         cameraMode: 'Motion Camera',
         keyboardMode: 'Keyboard / Touch',
         selectStage: 'Select Wave',
         selectArena: 'Select Arena',
+        selectHero: 'Choose Ultra Warrior',
+        heroNames: {
+          tiga: 'Tiga',
+          zero: 'Zero'
+        },
+        heroHpSuffix: 'HP',
         arenas: {
           auto: 'Auto Rotate',
           seaside: 'Sunny Seaside',
@@ -320,9 +334,8 @@ const messages = {
         combo: 'COMBO',
         wave: 'WAVE {current}/{total}',
         energy: 'LIGHT ENERGY',
-        energyReady: 'Zepellion Ray Ready!',
+        energyReady: 'Ultimate ray ready!',
         energyFull: 'MAX! Form L / + to fire SUPER RAY!',
-        heroHp: 'TIGA HP',
         mute: 'MUTE',
         unmute: 'SFX',
         recenter: 'RECENTER',
@@ -339,7 +352,7 @@ const messages = {
           disc: 'Raise & Chop',
           discDesc: 'Ultra Slash interrupt',
           beam: 'L / + Pose',
-          beamDesc: 'Zepellion Ray!'
+          beamDesc: 'Ultimate ray!'
         },
         monsters: {
           baltan: 'Alien Baltan',
@@ -349,7 +362,7 @@ const messages = {
           gatanothor: 'Gatanothor'
         },
         hints: {
-          hintStandCenter: 'Stand in front of the camera — Tiga mirrors your body!',
+          hintStandCenter: 'Stand in front of the camera — Ultraman mirrors your body!',
           hintShowArms: 'Step back slightly for full-body live sync',
           hintReady: 'Live Sync! Punch, kick, or make L/+ pose for Ray',
           hintPunch: 'Ultra Punch!',
@@ -357,7 +370,7 @@ const messages = {
           hintGuardPrep: 'Crossing arms to guard...',
           hintGuardActive: 'Ultra Barrier Active!',
           hintBeamCharge: 'Hold L / + pose to charge beam...',
-          hintBeamFire: 'ZEPELLION RAY!',
+          hintBeamFire: 'ULTIMATE RAY!',
           hintDiscCharge: 'Raise hand high to form Ultra Slash...',
           hintDiscThrow: 'Slash ready! Swing down!',
           hintDiscFire: 'ULTRA SLASH!'
@@ -370,9 +383,12 @@ const messages = {
         banners: {
           bannerWaveStart: 'KAIJU ALERT! BATTLE START!',
           bannerKick: 'ULTRA KICK!',
-          bannerBeam: 'ZEPELLION RAY!',
-          bannerSuperBeam: 'GLITTER ZEPELLION RAY!',
-          bannerDisc: 'ULTRA SLASH!',
+          bannerBeamTiga: 'ZEPELLION RAY!',
+          bannerSuperBeamTiga: 'GLITTER ZEPELLION RAY!',
+          bannerDiscTiga: 'ULTRA SLASH!',
+          bannerBeamZero: 'WIDE ZERO SHOT!',
+          bannerSuperBeamZero: 'FULL-POWER WIDE ZERO SHOT!',
+          bannerDiscZero: 'PLASMA SLASH!',
           bannerPerfectGuard: 'PERFECT GUARD! +ENERGY!',
           bannerInterrupt: 'CHARGE INTERRUPTED!',
           bannerWaveClear: 'KAIJU DEFEATED!',
@@ -388,11 +404,11 @@ const messages = {
           kick: 'KICK',
           disc: 'SLASH',
           beam: 'RAY',
-          keyboardHint: 'A/D Dodge · S Guard · J/K Punch · I Kick · U Slash · Space Zepellion Ray'
+          keyboardHint: 'A/D Dodge · S Guard · J/K Punch · I Kick · U Slash · Space Ultra Ray'
         },
         result: {
           victoryTitle: 'GIANT OF LIGHT · VICTORY!',
-          defeatTitle: 'RISE AGAIN, TIGA!',
+          defeatTitle: 'RISE AGAIN, WARRIOR OF LIGHT!',
           totalScore: 'FINAL SCORE',
           defeated: 'DEFEATED',
           maxCombo: 'MAX COMBO',
@@ -432,8 +448,8 @@ const messages = {
           desc: 'レトロカートリッジ集！GB/GBC/GBA/NES エミュレータで自作名作7本をすぐプレイ！'
         },
         ultraman: {
-          title: 'ウルトラマンティガ体感',
-          desc: '3D三人称体感バトル！パンチ・ガード・ゼペリオン光線で5大怪獣を倒せ！'
+          title: 'ウルトラマン体感バトル',
+          desc: '3D三人称体感バトル！ティガかゼロになりきり、パンチ・ガード・究極光線で5大怪獣を倒せ！'
         },
         demo1: {
           title: 'デモゲーム 1',
@@ -497,12 +513,18 @@ const messages = {
         instructionsHand: '左右の手を上げてレーン切り替え、両手上げでジャンプ'
       },
       ultramanView: {
-        title: 'ウルトラマンティガ・体感バトル',
+        title: '光の戦士・体感バトル',
         subtitle: '光の巨人となり、港街で5大怪獣に立ち向かえ！',
         cameraMode: '体感カメラモード',
         keyboardMode: 'キーボード / タッチ',
         selectStage: 'ステージ選択',
         selectArena: 'バトルステージ',
+        selectHero: '光の戦士を選択',
+        heroNames: {
+          tiga: 'ティガ',
+          zero: 'ゼロ'
+        },
+        heroHpSuffix: '体力',
         arenas: {
           auto: 'ステージ連動',
           seaside: '海辺の港',
@@ -521,9 +543,8 @@ const messages = {
         combo: 'コンボ',
         wave: 'WAVE {current}/{total}',
         energy: '光エネルギー',
-        energyReady: 'ゼペリオン光線発射可能！',
+        energyReady: '究極光線発射可能！',
         energyFull: 'MAX！L字/十字で超必殺光線！',
-        heroHp: 'ティガ体力',
         mute: '消音',
         unmute: '音声',
         recenter: '位置調整',
@@ -538,9 +559,9 @@ const messages = {
           guard: '胸前でX交差',
           guardDesc: 'ウルトラバリア防御',
           disc: '頭上から振り下ろす',
-          discDesc: '八つ裂き光輪',
+          discDesc: '光輪斬',
           beam: 'L字 / 十字',
-          beamDesc: 'ゼペリオン光線'
+          beamDesc: '究極光線'
         },
         monsters: {
           baltan: 'バルタン星人',
@@ -550,7 +571,7 @@ const messages = {
           gatanothor: '邪神ガタノゾーア'
         },
         hints: {
-          hintStandCenter: 'カメラの中央に立つとティガが全身連動します',
+          hintStandCenter: 'カメラの中央に立つとウルトラマンが全身連動します',
           hintShowArms: '少し下がって全身を映してください',
           hintReady: '全身連動中！パンチ・キック・L字/十字で光線！',
           hintPunch: 'ウルトラパンチ！',
@@ -558,7 +579,7 @@ const messages = {
           hintGuardPrep: '両腕交差でガード準備…',
           hintGuardActive: 'ウルトラバリア展開！',
           hintBeamCharge: 'L字/十字をキープして光線チャージ…',
-          hintBeamFire: 'ゼペリオン光線発射！',
+          hintBeamFire: '究極光線発射！',
           hintDiscCharge: '片手を高く上げて光輪チャージ…',
           hintDiscThrow: '準備完了！振り下ろせ！',
           hintDiscFire: '八つ裂き光輪！'
@@ -571,9 +592,12 @@ const messages = {
         banners: {
           bannerWaveStart: '怪獣出現！バトル開始！',
           bannerKick: 'ウルトラキック！',
-          bannerBeam: 'ゼペリオン光線！',
-          bannerSuperBeam: 'グリッター・ゼペリオン光線！',
-          bannerDisc: '八つ裂き光輪！',
+          bannerBeamTiga: 'ゼペリオン光線！',
+          bannerSuperBeamTiga: 'グリッター・ゼペリオン光線！',
+          bannerDiscTiga: '八つ裂き光輪！',
+          bannerBeamZero: 'ワイドゼロショット！',
+          bannerSuperBeamZero: 'フルパワー・ワイドゼロショット！',
+          bannerDiscZero: 'プラズマスラッシュ！',
           bannerPerfectGuard: 'パーフェクトガード！',
           bannerInterrupt: 'チャージ阻止成功！',
           bannerWaveClear: '怪獣撃破！体力回復！',
@@ -589,11 +613,11 @@ const messages = {
           kick: 'キック',
           disc: '光輪',
           beam: '光線',
-          keyboardHint: 'A/D 回避 · S 防御 · J/K パンチ · I キック · U 光輪 · Space ゼペリオン光線'
+          keyboardHint: 'A/D 回避 · S 防御 · J/K パンチ · I キック · U 光輪 · Space ウルトラ光線'
         },
         result: {
           victoryTitle: '光の巨人・全ステージ制覇！',
-          defeatTitle: 'もう一度立ち上がれ、ティガ！',
+          defeatTitle: 'もう一度立ち上がれ、光の戦士！',
           totalScore: '最終スコア',
           defeated: '撃破怪獣',
           maxCombo: '最大コンボ',
@@ -633,8 +657,8 @@ const messages = {
           desc: '레트로 카트리지 컬렉션! GB/GBC/GBA/NES 에뮬레이터로 홈브류 명작 7종을 바로 플레이!'
         },
         ultraman: {
-          title: '울트라맨 티가 체감',
-          desc: '3D 3인칭 체감 배틀! 펀치, 가드, 제페리온 광선으로 5대 괴수를 물리치세요!'
+          title: '울트라맨 체감 배틀',
+          desc: '3D 3인칭 체감 배틀! 티가 아니면 제로로 변신해 펀치, 가드, 궁극 광선으로 5대 괴수를 물리치세요!'
         },
         demo1: {
           title: '데모 게임 1',
@@ -698,12 +722,18 @@ const messages = {
         instructionsHand: '왼손/오른손을 들어 차선 변경, 양손을 들어 점프'
       },
       ultramanView: {
-        title: '울트라맨 티가 · 체감 배틀',
+        title: '빛의 전사 · 체감 배틀',
         subtitle: '빛의 거인이 되어 항구 도시의 5대 괴수에 맞서 싸우세요!',
         cameraMode: '체감 카메라 모드',
         keyboardMode: '키보드 / 터치 모드',
         selectStage: '스테이지 선택',
         selectArena: '전투 배경 선택',
+        selectHero: '빛의 전사 선택',
+        heroNames: {
+          tiga: '티가',
+          zero: '제로'
+        },
+        heroHpSuffix: '체력',
         arenas: {
           auto: '자동 전환',
           seaside: '햇살 해변',
@@ -722,9 +752,8 @@ const messages = {
         combo: '콤보',
         wave: 'WAVE {current}/{total}',
         energy: '빛 에너지',
-        energyReady: '제페리온 광선 발사 가능!',
+        energyReady: '궁극 광선 발사 가능!',
         energyFull: 'MAX! L / + 포즈로 궁극 광선!',
-        heroHp: '티가 체력',
         mute: '음소거',
         unmute: '소리',
         recenter: '위치 보정',
@@ -741,7 +770,7 @@ const messages = {
           disc: '손 들어 내려치기',
           discDesc: '울트라 슬래시',
           beam: 'L / + 포즈',
-          beamDesc: '제페리온 광선'
+          beamDesc: '궁극 광선'
         },
         monsters: {
           baltan: '발탄 성인',
@@ -751,7 +780,7 @@ const messages = {
           gatanothor: '사신 가타노조아'
         },
         hints: {
-          hintStandCenter: '카메라 중앙에 서면 티가가 전신 동작을 따라합니다',
+          hintStandCenter: '카메라 중앙에 서면 울트라맨이 전신 동작을 따라합니다',
           hintShowArms: '조금 뒤로 물러서 전신을 보여주세요',
           hintReady: '실시간 연동! 펀치, 킥, L/+ 포즈로 광선 발사!',
           hintPunch: '울트라 펀치!',
@@ -759,7 +788,7 @@ const messages = {
           hintGuardPrep: '양팔을 교차해 방어 준비…',
           hintGuardActive: '울트라 배리어 발동!',
           hintBeamCharge: 'L / + 포즈를 유지해 광선 충전 중…',
-          hintBeamFire: '제페리온 광선 발사!',
+          hintBeamFire: '궁극 광선 발사!',
           hintDiscCharge: '한 손을 높이 들어 광륜 충전 중…',
           hintDiscThrow: '준비 완료! 아래로 휘두르세요!',
           hintDiscFire: '울트라 슬래시!'
@@ -772,9 +801,12 @@ const messages = {
         banners: {
           bannerWaveStart: '괴수 출현! 전투 시작!',
           bannerKick: '울트라 킥!',
-          bannerBeam: '제페리온 광선!',
-          bannerSuperBeam: '글리터 제페리온 광선!',
-          bannerDisc: '울트라 슬래시!',
+          bannerBeamTiga: '제페리온 광선!',
+          bannerSuperBeamTiga: '글리터 제페리온 광선!',
+          bannerDiscTiga: '울트라 슬래시!',
+          bannerBeamZero: '와이드 제로 샷!',
+          bannerSuperBeamZero: '풀파워 와이드 제로 샷!',
+          bannerDiscZero: '플라즈마 슬래시!',
           bannerPerfectGuard: '퍼펙트 가드!',
           bannerInterrupt: '괴수 충전 차단!',
           bannerWaveClear: '괴수 격파! 체력 회복!',
@@ -790,11 +822,11 @@ const messages = {
           kick: '킥',
           disc: '광륜',
           beam: '광선',
-          keyboardHint: 'A/D 회피 · S 방어 · J/K 펀치 · I 킥 · U 광륜 · Space 제페리온 광선'
+          keyboardHint: 'A/D 회피 · S 방어 · J/K 펀치 · I 킥 · U 광륜 · Space 울트라 광선'
         },
         result: {
           victoryTitle: '빛의 거인 · 올 클리어!',
-          defeatTitle: '다시 일어서라, 티가!',
+          defeatTitle: '다시 일어서라, 빛의 전사!',
           totalScore: '최종 점수',
           defeated: '격파 괴수',
           maxCombo: '최대 콤보',
@@ -834,8 +866,8 @@ const messages = {
           desc: 'Collection de cartouches rétro ! Émulateur GB/GBC/GBA/NES et 7 classiques homebrew.'
         },
         ultraman: {
-          title: 'Ultraman Tiga Motion',
-          desc: 'Combat 3D à la 3e personne ! Frappez, parez et lancez le Rayon Zepellion contre 5 kaiju !'
+          title: 'Ultraman Motion Battle',
+          desc: 'Combat 3D à la 3e personne ! Incarnez Tiga ou Zero : frappez, parez et lancez des rayons ultimes contre 5 kaiju !'
         },
         demo1: {
           title: 'Jeu de Démo 1',
@@ -899,12 +931,18 @@ const messages = {
         instructionsHand: 'Levez la main gauche/droite pour changer de voie, les deux pour sauter'
       },
       ultramanView: {
-        title: 'ULTRAMAN TIGA · COMBAT MOTION',
+        title: 'GUERRIER DE LUMIÈRE · COMBAT MOTION',
         subtitle: 'Devenez le Géant de Lumière et affrontez 5 kaiju dans le port !',
         cameraMode: 'Mode Caméra Motion',
         keyboardMode: 'Clavier / Tactile',
         selectStage: 'Choisir la vague',
         selectArena: 'Choisir l’arène',
+        selectHero: 'Choisir le guerrier',
+        heroNames: {
+          tiga: 'Tiga',
+          zero: 'Zero'
+        },
+        heroHpSuffix: 'PV',
         arenas: {
           auto: 'Rotation auto',
           seaside: 'Bord de mer',
@@ -923,9 +961,8 @@ const messages = {
         combo: 'COMBO',
         wave: 'VAGUE {current}/{total}',
         energy: 'ÉNERGIE LUMIÈRE',
-        energyReady: 'Rayon Zepellion prêt !',
+        energyReady: 'Rayon ultime prêt !',
         energyFull: 'MAX ! Pose L / + pour le SUPER RAYON !',
-        heroHp: 'PV TIGA',
         mute: 'MUET',
         unmute: 'SON',
         recenter: 'RECENTRER',
@@ -942,7 +979,7 @@ const messages = {
           disc: 'Lever et trancher',
           discDesc: 'Disque Ultra Slash',
           beam: 'Pose L / +',
-          beamDesc: 'Rayon Zepellion'
+          beamDesc: 'Rayon ultime'
         },
         monsters: {
           baltan: 'Alien Baltan',
@@ -952,7 +989,7 @@ const messages = {
           gatanothor: 'Gatanothor'
         },
         hints: {
-          hintStandCenter: 'Tenez-vous au centre : Tiga imite vos mouvements !',
+          hintStandCenter: 'Tenez-vous au centre : Ultraman imite vos mouvements !',
           hintShowArms: 'Reculez un peu pour la synchro corps entier',
           hintReady: 'Synchro active ! Poing, pied ou pose L / +',
           hintPunch: 'Ultra Punch !',
@@ -960,7 +997,7 @@ const messages = {
           hintGuardPrep: 'Croisez les bras pour parer…',
           hintGuardActive: 'Barrière Ultra active !',
           hintBeamCharge: 'Maintenez la pose L / +…',
-          hintBeamFire: 'RAYON ZEPELLION !',
+          hintBeamFire: 'RAYON ULTIME !',
           hintDiscCharge: 'Levez une main pour charger le disque…',
           hintDiscThrow: 'Prêt ! Abaissez le bras !',
           hintDiscFire: 'ULTRA SLASH !'
@@ -973,9 +1010,12 @@ const messages = {
         banners: {
           bannerWaveStart: 'ALERTE KAIJU ! COMBAT !',
           bannerKick: 'ULTRA KICK !',
-          bannerBeam: 'RAYON ZEPELLION !',
-          bannerSuperBeam: 'SUPER RAYON ZEPELLION !',
-          bannerDisc: 'ULTRA SLASH !',
+          bannerBeamTiga: 'RAYON ZEPELLION !',
+          bannerSuperBeamTiga: 'SUPER RAYON ZEPELLION !',
+          bannerDiscTiga: 'ULTRA SLASH !',
+          bannerBeamZero: 'TIR LARGE DE ZERO !',
+          bannerSuperBeamZero: 'TIR LARGE ULTIME DE ZERO !',
+          bannerDiscZero: 'PLASMA SLASH !',
           bannerPerfectGuard: 'PARADE PARFAITE !',
           bannerInterrupt: 'CHARGE INTERROMPUE !',
           bannerWaveClear: 'KAIJU VAINCU !',
@@ -991,11 +1031,11 @@ const messages = {
           kick: 'PIED',
           disc: 'DISQUE',
           beam: 'RAYON',
-          keyboardHint: 'A/D Esquive · S Garde · J/K Poing · I Pied · U Disque · Espace Rayon'
+          keyboardHint: 'A/D Esquive · S Garde · J/K Poing · I Pied · U Disque · Espace Rayon Ultra'
         },
         result: {
           victoryTitle: 'GÉANT DE LUMIÈRE · VICTOIRE !',
-          defeatTitle: 'RELÈVE-TOI, TIGA !',
+          defeatTitle: 'RELÈVE-TOI, GUERRIER DE LUMIÈRE !',
           totalScore: 'SCORE FINAL',
           defeated: 'VAINCUS',
           maxCombo: 'COMBO MAX',

@@ -70,8 +70,59 @@ export class UltraAudio {
     osc.stop(now + 0.19)
 
     if (hit) {
+      // 打击感：胸口共振的次低音重锤
+      const sub = ctx.createOscillator()
+      const subGain = ctx.createGain()
+      sub.type = 'sine'
+      sub.frequency.setValueAtTime(86, now)
+      sub.frequency.exponentialRampToValueAtTime(34, now + 0.13)
+      subGain.gain.setValueAtTime(0.34, now)
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15)
+      sub.connect(subGain)
+      subGain.connect(ctx.destination)
+      sub.start(now)
+      sub.stop(now + 0.16)
       this.playNoiseBurst(0.12, 0.22, 950)
     }
+  }
+
+  /** 重招劈斩命中（飞踢 / 光轮 / 光线爆点）：高频破空 + 低频重击复合 */
+  public playHeavyImpact() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+
+    // 金属高频劈裂
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(1750, now)
+    osc.frequency.exponentialRampToValueAtTime(320, now + 0.12)
+    gain.gain.setValueAtTime(0.16, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14)
+    const hp = ctx.createBiquadFilter()
+    hp.type = 'highpass'
+    hp.frequency.value = 420
+    osc.connect(hp)
+    hp.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.15)
+
+    // 低频冲击底气
+    const sub = ctx.createOscillator()
+    const subGain = ctx.createGain()
+    sub.type = 'sine'
+    sub.frequency.setValueAtTime(96, now)
+    sub.frequency.exponentialRampToValueAtTime(30, now + 0.2)
+    subGain.gain.setValueAtTime(0.4, now)
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.22)
+    sub.connect(subGain)
+    subGain.connect(ctx.destination)
+    sub.start(now)
+    sub.stop(now + 0.23)
+
+    this.playNoiseBurst(0.16, 0.26, 1400)
   }
 
   /** 八分光轮嗡鸣飞斩 */
@@ -170,6 +221,20 @@ export class UltraAudio {
     gain.connect(ctx.destination)
     osc.start(now)
     osc.stop(now + 0.28)
+
+    // 金属屏障共鸣余韵（微失谐双振荡器）
+    for (const detune of [1318, 1332]) {
+      const ring = ctx.createOscillator()
+      const ringGain = ctx.createGain()
+      ring.type = 'sine'
+      ring.frequency.value = detune
+      ringGain.gain.setValueAtTime(0.07, now)
+      ringGain.gain.exponentialRampToValueAtTime(0.001, now + 0.34)
+      ring.connect(ringGain)
+      ringGain.connect(ctx.destination)
+      ring.start(now)
+      ring.stop(now + 0.36)
+    }
   }
 
   /** 英雄受击沉闷冲击 */
@@ -188,6 +253,20 @@ export class UltraAudio {
     gain.connect(ctx.destination)
     osc.start(now)
     osc.stop(now + 0.32)
+
+    // 受击次低音钝击，把“挨了一记重的”砸进身体里
+    const sub = ctx.createOscillator()
+    const subGain = ctx.createGain()
+    sub.type = 'sine'
+    sub.frequency.setValueAtTime(72, now)
+    sub.frequency.exponentialRampToValueAtTime(30, now + 0.24)
+    subGain.gain.setValueAtTime(0.36, now)
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.26)
+    sub.connect(subGain)
+    subGain.connect(ctx.destination)
+    sub.start(now)
+    sub.stop(now + 0.27)
+
     this.playNoiseBurst(0.22, 0.25, 420)
   }
 

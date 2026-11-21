@@ -248,8 +248,9 @@ export class UltraGestureRecognizer {
       this.baseShoulderY += (midY - this.baseShoulderY) * 0.012
     }
     const deltaY = (this.baseShoulderY - midY) / scale // > 0 表示跳起，< 0 表示下蹲
-    const jumpHeight = deltaY > 0.22 ? clamp((deltaY - 0.22) * 5.8, 0, 5.2) : 0
-    const crouchDepth = deltaY < -0.15 ? clamp((-deltaY - 0.15) * 3.8, 0, 2.8) : 0
+    // 体感优化：降低起跳/下蹲触发门槛并放缓增益斜率，小朋友小幅动作也能稳定触发、不会过度位移
+    const jumpHeight = deltaY > 0.18 ? clamp((deltaY - 0.18) * 5.2, 0, 5.2) : 0
+    const crouchDepth = deltaY < -0.12 ? clamp((-deltaY - 0.12) * 3.4, 0, 2.8) : 0
 
     // 2. 构建实时全身 3D 骨骼映射包（迪迦每一帧都会严格跟着玩家全身动！）
     const livePose = this.extractLiveBodyPose(worldPts, jumpHeight, crouchDepth)
@@ -362,7 +363,8 @@ export class UltraGestureRecognizer {
       oneUpward
 
     const beamElapsed = this.beamHold.update(isBeamPose, now)
-    const beamRequiredMs = 450
+    // 体感优化：蓄力时长 450ms -> 380ms，摆好姿势更快出光
+    const beamRequiredMs = 380
     if (isBeamPose || (beamElapsed > 0 && this.beamHold.isRecent(now))) {
       this.punchReady = [null, null]
       this.discRaiseStart = [null, null]
@@ -543,11 +545,12 @@ export class UltraGestureRecognizer {
         continue
       }
       // 抬腿判定：膝盖或脚踝明显抬升至接近髋部高度（y 坐标越小越高）
-      const kneeRaised = hip.y - knee.y > -scale * 0.55
-      const ankleRaised = hip.y - ankle.y > -scale * 1.15
+      // 体感优化：门槛略放宽 + 冷却 550ms -> 430ms，连续飞踢更跟手
+      const kneeRaised = hip.y - knee.y > -scale * 0.62
+      const ankleRaised = hip.y - ankle.y > -scale * 1.28
       const isKickHigh = kneeRaised && ankleRaised
 
-      if (isKickHigh && !this.kickWasHigh[side] && now - this.kickLast[side]! > 550) {
+      if (isKickHigh && !this.kickWasHigh[side] && now - this.kickLast[side]! > 430) {
         this.kickLast[side] = now
         out.kick = side === 0 ? 'left' : 'right'
         out.hintKey = 'hintKick'
@@ -575,7 +578,7 @@ export class UltraGestureRecognizer {
       const relZ = (w.z - s.z) / scale
       const inStrikeZone = relY > -0.65 && relY < 1.1
 
-      if (angle < 136 && inStrikeZone) {
+      if (angle < 132 && inStrikeZone) {
         const prev = this.punchReady[side]
         if (!prev) {
           this.punchReady[side] = { time: now, relX, relY, relZ, angle }
@@ -594,7 +597,7 @@ export class UltraGestureRecognizer {
 
       const ready = this.punchReady[side]
       if (!ready) continue
-      if (!inStrikeZone || now - ready.time > 900) {
+      if (!inStrikeZone || now - ready.time > 750) {
         this.punchReady[side] = null
         continue
       }
@@ -602,14 +605,15 @@ export class UltraGestureRecognizer {
       const forward = ready.relZ - relZ
       const lateral = Math.abs(relX - ready.relX)
       const travel = Math.hypot(relX - ready.relX, relY - ready.relY, relZ - ready.relZ)
-      const isStraight = angle > 134 && angle - ready.angle > 18
-      const cooldownOk = now - this.punchLast[side]! > 240
+      // 体感优化：展臂角度与位移阈值放宽、冷却 240ms -> 200ms，出拳识别更快更灵
+      const isStraight = angle > 128 && angle - ready.angle > 14
+      const cooldownOk = now - this.punchLast[side]! > 200
 
       if (
         cooldownOk &&
         isStraight &&
-        travel > 0.18 &&
-        (forward > 0.09 || (travel > 0.35 && lateral < 0.72))
+        travel > 0.14 &&
+        (forward > 0.07 || (travel > 0.32 && lateral < 0.72))
       ) {
         const score = forward + travel * 0.35
         if (score > bestScore) {

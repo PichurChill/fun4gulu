@@ -9,6 +9,10 @@ export type GamePhase =
 
 export type ControlMode = 'camera' | 'keyboard'
 
+import type { HeroId } from './heroes'
+
+export type { HeroId }
+
 export type ConcreteSceneTheme = 'seaside' | 'city' | 'mountain' | 'volcano'
 export type SceneTheme = 'auto' | ConcreteSceneTheme
 
@@ -139,6 +143,7 @@ export interface FloatingDamageEvent {
 export interface BattleHudState {
   phase: GamePhase
   loadingProgress: number
+  heroId: HeroId
   waveIndex: number
   totalWaves: number
   activeTheme: ConcreteSceneTheme
