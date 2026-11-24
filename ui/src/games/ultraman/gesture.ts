@@ -122,7 +122,9 @@ class SmoothHold {
  * 2) 同时识别出拳、飞踢、左右闪避、X交叉防御、八分光轮、L/十字哉佩利敖光线以触发战斗特效
  */
 export class UltraGestureRecognizer {
-  private centerX: number | null = null
+  /** 默认为 0（以摄像头画面正中心 0.5 为基准）；点击“校准站位”时可记录当前位置微调 */
+  private centerOffset = 0
+  private lastMidXRatio = 0.5
   private baseShoulderY: number | null = null
   private lastFrameTime: number | null = null
   private guardSince: number | null = null
@@ -139,7 +141,8 @@ export class UltraGestureRecognizer {
   private smoothLean = 0
 
   public reset() {
-    this.centerX = null
+    this.centerOffset = 0
+    this.lastMidXRatio = 0.5
     this.baseShoulderY = null
     this.lastFrameTime = null
     this.guardSince = null
@@ -156,8 +159,9 @@ export class UltraGestureRecognizer {
     this.smoothLean = 0
   }
 
+  /** 重新标定站位中心与站立高度基准 */
   public recenter() {
-    this.centerX = null
+    this.centerOffset = this.lastMidXRatio - 0.5
     this.baseShoulderY = null
   }
 
@@ -242,15 +246,14 @@ export class UltraGestureRecognizer {
     const scale = Math.max(shoulderWidth, height * 0.07)
 
     // 1. 站位水平与垂直基准（用于迪迦左右移动 + 起跳/下蹲同步）
-    // 基准只在首次锁定与手动"校准站位"时更新，不再缓慢自动漂移——
-    // 自动漂移会让基准被慢慢拉走，人物在画面里越来越偏、始终不居中
     const midX = (lsRaw.x + rsRaw.x) * 0.5
     const midY = (lsRaw.y + rsRaw.y) * 0.5
 
-    if (this.centerX === null) {
-      this.centerX = midX
-    }
-    const rawLean = clamp((-(midX - this.centerX) / scale) * 1.45, -1, 1)
+    // 左右位置默认以摄像头画面正中线(0.5)为基准：人站画面中间 → 迪迦就在正中间
+    // 前置摄像头原图未镜像，人向自己右侧移动时原图 x 变小，因此取负号
+    this.lastMidXRatio = midX / width
+    const offsetFromCenter = this.lastMidXRatio - (0.5 + this.centerOffset)
+    const rawLean = clamp(-offsetFromCenter / 0.28, -1, 1)
     const lean = laneCenter === undefined ? rawLean : clamp((laneCenter - midX / width) / 0.14, -1, 1)
     this.smoothLean += (lean - this.smoothLean) * -Math.expm1(-13 * deltaSeconds)
     out.lean = Math.abs(this.smoothLean) < 0.06 ? 0 : this.smoothLean
