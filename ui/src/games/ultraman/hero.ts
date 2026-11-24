@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { releaseModel } from './releaseModel'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import type { FingerChain, HeroFormSpec, HeroProfile } from './heroes'
+import type { FingerChain, HeroFormSpec, HeroProfile, SuitRemapMode } from './heroes'
 import type { HeroAction, LiveBodyPose, Vec3Like } from './types'
 
 const tmpV1 = new THREE.Vector3()
@@ -10,8 +10,13 @@ const tmpV3 = new THREE.Vector3()
 const tmpQ1 = new THREE.Quaternion()
 const tmpQ2 = new THREE.Quaternion()
 
-function lerpVec(target: THREE.Vector3, src: Vec3Like, alpha: number) {
-  tmpV1.set(src.x, src.y, src.z)
+function lerpArenaVec(
+  target: THREE.Vector3,
+  src: Vec3Like,
+  alpha: number,
+  sideSign: 1 | -1,
+) {
+  tmpV1.set(src.x * sideSign, src.y, src.z * sideSign)
   if (tmpV1.lengthSq() < 1e-6) return
   tmpV1.normalize()
   target.lerp(tmpV1, alpha)
@@ -19,37 +24,114 @@ function lerpVec(target: THREE.Vector3, src: Vec3Like, alpha: number) {
 }
 
 /**
- * 奥特曼第三人称全身骨骼控制器（迪迦 / 赛罗通用）
- * 支持两种无缝衔接的驱动模式：
- * 1) 体感实时全身动捕重定向（头、脊柱、双臂、双手、双腿、下蹲/跳跃 1:1 实时同步玩家）
- * 2) 键盘/触屏程序化经典招式动画（出拳、飞踢、交叉防御、光轮、光线、胜利升空）
- *
- * 骨骼绑定优化：通过 HeroProfile 的逻辑骨名映射驱动任意命名的骨架；
- * 骨骼指向尾端优先读取模型自带 bone_tips 元数据，缺失时自动用子骨世界位置推导；
- * 手指弯曲基于世界系掌心法线逐节累计旋转，不再依赖任何骨架局部轴约定。
+ * 离屏像素级战衣色相重映射（仅在加载英雄模型时生成一次并缓存）
+ */
+function buildRemappedSuitTexture(baseTex: THREE.Texture, mode: SuitRemapMode): THREE.Texture {
+  if (mode === 'original') return baseTex
+  const img = baseTex.image as (HTMLImageElement | ImageBitmap | HTMLCanvasElement) | undefined
+  if (!img || !('width' in img) || img.width <= 0 || img.height <= 0) return baseTex
+
+  const w = img.width
+  const h = img.height
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return baseTex
+
+  ctx.drawImage(img as CanvasImageSource, 0, 0, w, h)
+  const imageData = ctx.getImageData(0, 0, w, h)
+  const d = imageData.data
+
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i]!
+    const g = d[i + 1]!
+    const b = d[i + 2]!
+    const maxC = Math.max(r, g, b)
+    const minC = Math.min(r, g, b)
+    const sat = maxC - minC
+    if (sat < 20) continue
+
+    if (mode === 'all-red') {
+      if (b > g + 10 && b > r * 0.52) {
+        const lum = Math.max(r, b)
+        d[i] = Math.min(255, Math.round(lum * 1.18 + 14))
+        d[i + 1] = Math.round(Math.min(g, lum * 0.28) * 0.55)
+        d[i + 2] = Math.round(Math.min(r, g) * 0.35)
+      } else if (r > b + 18 && r > g + 18) {
+        d[i] = Math.min(255, Math.round(r * 1.08 + 6))
+        d[i + 1] = Math.round(g * 0.78)
+        d[i + 2] = Math.round(b * 0.72)
+      }
+    } else if (mode === 'all-violet') {
+      if (r > b + 14 && r > g + 14) {
+        d[i] = Math.round(r * 0.46 + b * 0.24)
+        d[i + 1] = Math.round(g * 0.75 + r * 0.14)
+        d[i + 2] = Math.min(255, Math.round(r * 1.04 + 18))
+      } else if (b > g + 10) {
+        d[i] = Math.round(r * 0.85)
+        d[i + 2] = Math.min(255, Math.round(b * 1.1 + 10))
+      }
+    } else if (mode === 'all-cobalt') {
+      if (r > b + 14 && r > g + 14) {
+        d[i] = Math.round(r * 0.16)
+        d[i + 1] = Math.round(r * 0.45 + g * 0.35)
+        d[i + 2] = Math.min(255, Math.round(r * 1.08 + 20))
+      }
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.flipY = baseTex.flipY
+  tex.colorSpace = baseTex.colorSpace
+  tex.wrapS = baseTex.wrapS
+  tex.wrapT = baseTex.wrapT
+  tex.anisotropy = baseTex.anisotropy
+  tex.needsUpdate = true
+  return tex
+}
+
+export interface HeroControllerOptions {
+  /** 阵营朝向：1 = 南端驻守 +baseZ 面朝 -Z；-1 = 北端驻守 -baseZ 面朝 +Z（双人对战 P2） */
+  sideSign?: 1 | -1
+  /** 站位距中心基准距离（正数，实际世界 Z = sideSign * baseZ） */
+  baseZ?: number
+}
+
+/**
+ * 奥特曼第三人称全身骨骼与特摄近战突进控制器（支持单人闯关与双人同场面对面对决）
  */
 export class HeroController {
   public readonly root = new THREE.Group()
+  public readonly sideSign: 1 | -1
+  public readonly baseZ: number
+  private readonly baseYaw: number
+
   private model: THREE.Object3D | null = null
   private profile: HeroProfile | null = null
   private loadGen = 0
-  /** 模型内全部骨骼（按模型真实骨名索引） */
   private bones = new Map<string, THREE.Bone>()
-  /** 逻辑骨（upperArmL / spineLower / ...）-> 实际骨骼 */
   private logical = new Map<string, THREE.Bone>()
   private restQuats = new Map<THREE.Bone, THREE.Quaternion>()
   private restPositions = new Map<THREE.Bone, THREE.Vector3>()
   private boneTips = new Map<THREE.Bone, THREE.Vector3>()
   private timerMaterials: THREE.MeshStandardMaterial[] = []
   private eyeMaterials: THREE.MeshStandardMaterial[] = []
-  /** 形态染色目标：银色身体 / 形态纹路（如迪迦 Multi-Type 紫）两组材质 */
-  private formSilverMaterials: THREE.MeshStandardMaterial[] = []
-  private formMultiMaterials: THREE.MeshStandardMaterial[] = []
+  private customChestDome: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial> | null =
+    null
+
+  private formSilverEntries: { mat: THREE.MeshStandardMaterial; baseColor: THREE.Color }[] = []
+  private formSuitEntries: {
+    mat: THREE.MeshStandardMaterial
+    baseColor: THREE.Color
+    originalMap: THREE.Texture | null
+    remappedMaps: Map<SuitRemapMode, THREE.Texture>
+  }[] = []
+  private derivedTextures: THREE.Texture[] = []
   private currentForm: HeroFormSpec | null = null
-  /** 静止站立时脚踝骨距地面的初始高度，用于动捕时自动脚底贴地校正 */
   private restAnkleY = 0.85
 
-  public readonly baseZ = 20
   public currentX = 0
   private targetX = 0
   private action: HeroAction = 'idle'
@@ -62,7 +144,9 @@ export class HeroController {
   private isGuarding = false
   private victoryAscent = 0
 
-  // 实时体感全身平滑状态
+  private combatLungeZ = 0
+  private combatVaultY = 0
+
   private livePose: LiveBodyPose | null = null
   private lastLivePoseTime = -Infinity
   private smTorsoPitch = 0
@@ -73,29 +157,65 @@ export class HeroController {
   private smHeadRoll = 0
   private smJumpHeight = 0
   private smCrouchDepth = 0
-  private smUpperL = new THREE.Vector3(-0.45, -0.35, -0.78).normalize()
-  private smLowerL = new THREE.Vector3(0.22, 0.42, -0.88).normalize()
-  private smHandL = new THREE.Vector3(0.22, 0.42, -0.88).normalize()
-  private smUpperR = new THREE.Vector3(0.55, -0.52, -0.62).normalize()
-  private smLowerR = new THREE.Vector3(-0.18, 0.24, -0.95).normalize()
-  private smHandR = new THREE.Vector3(-0.18, 0.24, -0.95).normalize()
-  private smThighL = new THREE.Vector3(-0.14, -0.96, -0.22).normalize()
-  private smShinL = new THREE.Vector3(-0.08, -0.98, 0.16).normalize()
-  private smThighR = new THREE.Vector3(0.16, -0.96, -0.12).normalize()
-  private smShinR = new THREE.Vector3(0.08, -0.98, 0.14).normalize()
+  private smUpperL = new THREE.Vector3()
+  private smLowerL = new THREE.Vector3()
+  private smHandL = new THREE.Vector3()
+  private smUpperR = new THREE.Vector3()
+  private smLowerR = new THREE.Vector3()
+  private smHandR = new THREE.Vector3()
+  private smThighL = new THREE.Vector3()
+  private smShinL = new THREE.Vector3()
+  private smThighR = new THREE.Vector3()
+  private smShinR = new THREE.Vector3()
 
-  constructor(scene: THREE.Scene) {
-    this.root.name = 'UltraHeroRoot'
-    this.root.position.set(0, 0, this.baseZ)
-    // 默认朝向修正由 profile.facingYaw 提供，root 绕 Y 旋转后背对镜头、面朝前方 -Z 的怪兽
-    this.root.rotation.set(0, Math.PI, 0)
+  constructor(scene: THREE.Scene, opts?: HeroControllerOptions) {
+    this.sideSign = opts?.sideSign ?? 1
+    this.baseZ = opts?.baseZ ?? 13.2
+    this.baseYaw = this.sideSign === 1 ? Math.PI : 0
+
+    this.root.name = this.sideSign === 1 ? 'UltraHeroRootP1' : 'UltraHeroRootP2'
+    this.root.position.set(0, 0, this.sideSign * this.baseZ)
+    this.root.rotation.set(0, this.baseYaw, 0)
+    this.resetSmoothLimbs()
     scene.add(this.root)
+  }
+
+  private resetSmoothLimbs() {
+    const s = this.sideSign
+    this.smUpperL.set(-0.45 * s, -0.35, -0.78 * s).normalize()
+    this.smLowerL.set(0.22 * s, 0.42, -0.88 * s).normalize()
+    this.smHandL.set(0.22 * s, 0.42, -0.88 * s).normalize()
+    this.smUpperR.set(0.55 * s, -0.52, -0.62 * s).normalize()
+    this.smLowerR.set(-0.18 * s, 0.24, -0.95 * s).normalize()
+    this.smHandR.set(-0.18 * s, 0.24, -0.95 * s).normalize()
+    this.smThighL.set(-0.14 * s, -0.96, -0.22 * s).normalize()
+    this.smShinL.set(-0.08 * s, -0.98, 0.16 * s).normalize()
+    this.smThighR.set(0.16 * s, -0.96, -0.12 * s).normalize()
+    this.smShinR.set(0.08 * s, -0.98, 0.14 * s).normalize()
+  }
+
+  /** 当前英雄世界 Z 坐标 */
+  public get worldZ(): number {
+    return this.root.position.z
+  }
+
+  /** 当前英雄站位基准世界 Z 坐标 */
+  public get homeWorldZ(): number {
+    return this.sideSign * this.baseZ
+  }
+
+  /** 获取当前英雄胸口受击目标中心（供双人对战对手锁敌瞄准） */
+  public getTargetCenter(): THREE.Vector3 {
+    return new THREE.Vector3(
+      this.currentX,
+      this.root.position.y + 8.8,
+      this.root.position.z - 0.6 * this.sideSign,
+    )
   }
 
   public async load(loader: GLTFLoader, profile: HeroProfile): Promise<void> {
     const gen = ++this.loadGen
     if (this.profile?.id === profile.id && this.model) return
-    // 加载代际号：快速连续切换英雄时，只让最后一次加载生效
     const gltf = await loader.loadAsync(profile.modelUrl)
     if (gen !== this.loadGen) {
       releaseModel(gltf.scene)
@@ -105,6 +225,10 @@ export class HeroController {
     this.profile = profile
     const model = gltf.scene
     this.model = model
+
+    // 加载计算静息包围盒与骨骼尾端前先归零根节点旋转，随后再恢复阵营朝向
+    this.root.position.set(0, 0, this.sideSign * this.baseZ)
+    this.root.rotation.set(0, this.baseYaw + profile.facingYaw, 0)
 
     model.updateMatrixWorld(true)
     const box = new THREE.Box3().setFromObject(model)
@@ -118,10 +242,17 @@ export class HeroController {
 
     this.timerMaterials = []
     this.eyeMaterials = []
-    this.formSilverMaterials = []
-    this.formMultiMaterials = []
+    this.formSilverEntries = []
+    this.formSuitEntries = []
+    this.derivedTextures = []
     this.currentForm = null
-    let fallbackGlowMaterial: THREE.MeshStandardMaterial | null = null
+    const staticAttachments: THREE.Mesh[] = []
+    const neededRemaps = new Set<SuitRemapMode>()
+    if (profile.forms) {
+      for (const f of profile.forms) {
+        if (f.suitRemap !== 'original') neededRemaps.add(f.suitRemap)
+      }
+    }
 
     model.traverse((node) => {
       if ((node as THREE.Bone).isBone) {
@@ -132,6 +263,16 @@ export class HeroController {
       }
       if ((node as THREE.Mesh).isMesh) {
         const mesh = node as THREE.Mesh
+        if (
+          profile.id === 'tiga' &&
+          (mesh.name.includes('TigaEyes') || mesh.name.includes('TigaEnergy'))
+        ) {
+          mesh.visible = false
+          return
+        }
+        if (!(mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+          staticAttachments.push(mesh)
+        }
         mesh.castShadow = true
         mesh.receiveShadow = true
         mesh.frustumCulled = false
@@ -141,31 +282,49 @@ export class HeroController {
             const matches = (names: string[]) =>
               names.some((n) => m.name.includes(n) || mesh.name.includes(n))
             if (profile.formBodyMaterials && matches(profile.formBodyMaterials.silver)) {
-              this.formSilverMaterials.push(m)
-            } else if (profile.formBodyMaterials && matches(profile.formBodyMaterials.multiType)) {
-              this.formMultiMaterials.push(m)
+              m.roughness = 0.36
+              m.metalness = 0.56
+              this.formSilverEntries.push({ mat: m, baseColor: m.color.clone() })
+            } else if (profile.formBodyMaterials && matches(profile.formBodyMaterials.suit)) {
+              m.roughness = 0.54
+              m.metalness = 0.14
+              const remappedMaps = new Map<SuitRemapMode, THREE.Texture>()
+              if (m.map) {
+                remappedMaps.set('original', m.map)
+                for (const mode of neededRemaps) {
+                  const derived = buildRemappedSuitTexture(m.map, mode)
+                  remappedMaps.set(mode, derived)
+                  if (derived !== m.map) this.derivedTextures.push(derived)
+                }
+              }
+              this.formSuitEntries.push({
+                mat: m,
+                baseColor: m.color.clone(),
+                originalMap: m.map,
+                remappedMaps,
+              })
             } else if (profile.timerMaterialNames.length > 0 && matches(profile.timerMaterialNames)) {
               if (!mesh.name.includes('Container')) {
                 this.timerMaterials.push(m)
                 m.emissive = new THREE.Color(profile.accentColor)
                 m.emissiveIntensity = profile.timerIdleIntensity
+                m.roughness = 0.2
               }
             } else if (profile.eyeMaterialNames.length > 0 && matches(profile.eyeMaterialNames)) {
               this.eyeMaterials.push(m)
-              m.emissive = new THREE.Color(0xfff4c2)
-              m.emissiveIntensity = 1.8
+              m.emissive = new THREE.Color(0xfff6cc)
+              m.emissiveIntensity = 2.0
+              m.roughness = 0.18
             } else {
-              m.roughness = Math.min(m.roughness, 0.52)
-              m.metalness = Math.max(m.metalness, 0.18)
-              if (!fallbackGlowMaterial) fallbackGlowMaterial = m
+              const isGold = /gold|amber/i.test(m.name)
+              m.roughness = isGold ? 0.32 : 0.52
+              m.metalness = isGold ? 0.68 : 0.18
             }
           }
         }
       }
     })
 
-    // 重建被导出器拍平的肢体骨骼链（attach 保持世界姿势不变，仅恢复旋转传播路径），
-    // 并同步更新受影响骨骼的静息记录
     if (profile.relinkBones) {
       for (const [parentName, childName] of profile.relinkBones) {
         const parent = this.bones.get(parentName)
@@ -178,12 +337,36 @@ export class HeroController {
       this.root.updateMatrixWorld(true)
     }
 
-    // 单材质模型（如赛罗）：没有独立计时器材质，用首个身体材质承载危险能量脉冲
-    if (this.timerMaterials.length === 0 && fallbackGlowMaterial) {
-      this.timerMaterials.push(fallbackGlowMaterial)
+    if (staticAttachments.length > 0 && this.bones.size > 0) {
+      this.root.updateMatrixWorld(true)
+      const headBone = this.bones.get(profile.bones.head ?? '')
+      const armCandidates = [
+        this.bones.get(profile.bones.lowerArmL),
+        this.bones.get(profile.bones.handL),
+        this.bones.get(profile.bones.lowerArmR),
+        this.bones.get(profile.bones.handR),
+      ].filter((b): b is THREE.Bone => !!b)
+
+      for (const part of staticAttachments) {
+        const boxCenter = new THREE.Box3().setFromObject(part).getCenter(new THREE.Vector3())
+        if (/jiao|horn|crest|helmet|crown|lens/i.test(part.name) && headBone) {
+          headBone.attach(part)
+        } else if (/shouzhuo|bracelet|wrist/i.test(part.name) && armCandidates.length > 0) {
+          let bestBone = armCandidates[0]!
+          let minDist = Infinity
+          for (const cand of armCandidates) {
+            const d = cand.getWorldPosition(new THREE.Vector3()).distanceTo(boxCenter)
+            if (d < minDist) {
+              minDist = d
+              bestBone = cand
+            }
+          }
+          bestBone.attach(part)
+        }
+      }
+      this.root.updateMatrixWorld(true)
     }
 
-    // 逻辑骨名解析
     this.logical.clear()
     for (const [key, actualName] of Object.entries(profile.bones)) {
       if (!actualName || key === 'fingersL' || key === 'fingersR') continue
@@ -191,7 +374,48 @@ export class HeroController {
       if (bone) this.logical.set(key, bone)
     }
 
-    // fail-fast：关键驱动骨或手指链缺失时立即暴露，绝不带着残缺绑定静默运行
+    // 为迪迦胸口金色护甲中央镶嵌立体发光彩色计时器宝石（双人对打时正面视角同样晶莹闪耀）
+    if (profile.id === 'tiga') {
+      const chestBone = this.logical.get('spineChest')
+      const neckBone = this.logical.get('neckUpper')
+      if (chestBone) {
+        this.root.updateMatrixWorld(true)
+        const chestPos = chestBone.getWorldPosition(new THREE.Vector3())
+        const neckPos = neckBone ? neckBone.getWorldPosition(new THREE.Vector3()) : null
+        const domeY = neckPos
+          ? THREE.MathUtils.lerp(chestPos.y, neckPos.y, 0.28)
+          : chestPos.y + 0.45
+        const domeX = chestPos.x
+
+        // 从英雄正前方沿视线方向射线投射至胸甲外表面，精确贴合不悬空
+        const rayOrigin = new THREE.Vector3(domeX, domeY, chestPos.z - 4.0 * this.sideSign)
+        const rayDir = new THREE.Vector3(0, 0, this.sideSign)
+        const raycaster = new THREE.Raycaster(rayOrigin, rayDir, 0.1, 6.0)
+        const hits = raycaster
+          .intersectObject(model, true)
+          .filter((h) => h.object.visible)
+        const domeZ =
+          hits.length > 0
+            ? hits[0]!.point.z - 0.02 * this.sideSign
+            : chestPos.z - 0.72 * this.sideSign
+
+        const domeMat = new THREE.MeshStandardMaterial({
+          color: 0x7dd3fc,
+          emissive: new THREE.Color(profile.accentColor),
+          emissiveIntensity: 1.8,
+          roughness: 0.14,
+          metalness: 0.1,
+        })
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 12), domeMat)
+        dome.scale.set(0.92, 1.18, 0.46)
+        dome.position.set(domeX, domeY, domeZ)
+        dome.rotation.set(0, this.baseYaw, 0)
+        this.sceneAttachChestDome(chestBone, dome)
+        this.customChestDome = dome
+        this.timerMaterials.push(domeMat)
+      }
+    }
+
     const requiredLimbs = [
       'upperArmL', 'lowerArmL', 'handL',
       'upperArmR', 'lowerArmR', 'handR',
@@ -201,10 +425,7 @@ export class HeroController {
     ] as const
     const missing = requiredLimbs.filter((key) => !this.logical.has(key))
     if (missing.length > 0) {
-      throw new Error(
-        `[HeroRig] ${profile.id} 模型缺少关键骨骼映射: ${missing.join(', ')}；` +
-          `请核对 heroes.ts 骨名与 GLB 加载后的实际骨骼名（three.js 会把骨名中的空白规范化为下划线）`,
-      )
+      throw new Error(`[HeroRig] ${profile.id} 模型缺少关键骨骼映射: ${missing.join(', ')}`)
     }
     for (const [sideName, fingers] of [
       ['fingersL', profile.bones.fingersL],
@@ -217,8 +438,6 @@ export class HeroController {
       }
     }
 
-    // 骨骼指向尾端：优先读取模型自带 bone_tips 元数据（迪迦），
-    // 缺失的骨骼自动用全部子骨的世界位置均值推导（赛罗 Bip001 等）
     let tips: Record<string, [number, number, number]> = {}
     model.traverse((node) => {
       const data = (node.userData?.bone_tips ?? null) as Record<string, [number, number, number]> | null
@@ -243,7 +462,6 @@ export class HeroController {
       }
     }
 
-    // 记录静止脚踝高度，用于动捕踢腿/扎马步时保持支撑脚贴地
     const footL = this.logical.get('footL')
     const footR = this.logical.get('footR')
     if (footL && footR) {
@@ -253,10 +471,36 @@ export class HeroController {
         footR.getWorldPosition(new THREE.Vector3()).y,
       )
     }
+
+    this.setForm(profile.forms?.[0] ?? null)
+  }
+
+  private sceneAttachChestDome(
+    chestBone: THREE.Bone,
+    dome: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>,
+  ) {
+    const worldHost = this.root.parent ?? this.root
+    worldHost.add(dome)
+    worldHost.updateMatrixWorld(true)
+    chestBone.updateWorldMatrix(true, false)
+    chestBone.attach(dome)
   }
 
   private unloadModel() {
     if (!this.model) return
+    if (this.customChestDome) {
+      this.customChestDome.parent?.remove(this.customChestDome)
+      this.customChestDome.geometry.dispose()
+      this.customChestDome.material.dispose()
+      this.customChestDome = null
+    }
+    for (const entry of this.formSuitEntries) {
+      entry.mat.map = entry.originalMap
+    }
+    for (const tex of this.derivedTextures) {
+      tex.dispose()
+    }
+    this.derivedTextures = []
     this.root.remove(this.model)
     releaseModel(this.model)
     this.model = null
@@ -267,31 +511,45 @@ export class HeroController {
     this.boneTips.clear()
     this.timerMaterials = []
     this.eyeMaterials = []
-    this.formSilverMaterials = []
-    this.formMultiMaterials = []
+    this.formSilverEntries = []
+    this.formSuitEntries = []
     this.currentForm = null
   }
 
   public dispose() {
     this.loadGen++
     this.unloadModel()
+    this.root.parent?.remove(this.root)
   }
-
 
   public setLean(lean: number) {
-    this.targetX = THREE.MathUtils.clamp(lean, -1, 1) * 5.6 * (this.currentForm?.moveMul ?? 1)
+    const moveMul = (this.profile?.baseMoveMul ?? 1) * (this.currentForm?.moveMul ?? 1)
+    this.targetX = this.sideSign * THREE.MathUtils.clamp(lean, -1, 1) * 5.5 * moveMul
   }
 
-  /** 切换形态：身体材质染色 + 移动速度倍率（无形态英雄传 null 还原默认） */
   public setForm(form: HeroFormSpec | null) {
     this.currentForm = form
-    if (!form) {
-      for (const m of this.formSilverMaterials) m.color.setRGB(1, 1, 1)
-      for (const m of this.formMultiMaterials) m.color.setRGB(1, 1, 1)
-      return
+    for (const entry of this.formSilverEntries) {
+      if (!form) {
+        entry.mat.color.copy(entry.baseColor)
+      } else {
+        entry.mat.color.setRGB(
+          entry.baseColor.r * form.silverScale[0],
+          entry.baseColor.g * form.silverScale[1],
+          entry.baseColor.b * form.silverScale[2],
+        )
+      }
     }
-    for (const m of this.formSilverMaterials) m.color.setRGB(...form.bodyTints.silver)
-    for (const m of this.formMultiMaterials) m.color.setRGB(...form.bodyTints.multiType)
+    for (const entry of this.formSuitEntries) {
+      entry.mat.color.copy(entry.baseColor)
+      const targetMap = form
+        ? entry.remappedMaps.get(form.suitRemap) ?? entry.originalMap
+        : entry.originalMap
+      if (entry.mat.map !== targetMap) {
+        entry.mat.map = targetMap
+        entry.mat.needsUpdate = true
+      }
+    }
   }
 
   public setGuard(active: boolean) {
@@ -308,7 +566,6 @@ export class HeroController {
     if (side) this.discChargeSide = side
   }
 
-  /** 输入实时摄像头动捕全身骨骼数据（每帧无缝跟随玩家） */
   public setLiveBodyPose(pose: LiveBodyPose | null, now: number) {
     this.livePose = pose
     if (pose?.active) {
@@ -335,6 +592,8 @@ export class HeroController {
     this.actionTime = 0
     this.currentX = 0
     this.targetX = 0
+    this.combatLungeZ = 0
+    this.combatVaultY = 0
     this.beamChargeVisual = 0
     this.discChargeVisual = 0
     this.isGuarding = false
@@ -349,16 +608,17 @@ export class HeroController {
     this.smHeadRoll = 0
     this.smJumpHeight = 0
     this.smCrouchDepth = 0
-    this.root.position.set(0, 0, this.baseZ)
-    this.root.rotation.set(0, Math.PI + (this.profile?.facingYaw ?? 0), 0)
+    this.resetSmoothLimbs()
+    this.root.position.set(0, 0, this.sideSign * this.baseZ)
+    this.root.rotation.set(0, this.baseYaw + (this.profile?.facingYaw ?? 0), 0)
   }
 
   public getAction(): HeroAction {
     return this.action
   }
 
-  /** 将指定骨骼指向给定的世界方向向量 */
-  private aimBone(boneName: string, worldDir: THREE.Vector3, weight = 1) {
+  /** 将指定骨骼指向纯世界坐标方向向量 */
+  private aimBoneWorld(boneName: string, worldDir: THREE.Vector3, weight = 1) {
     const bone = this.bones.get(boneName)
     if (!bone) return
     const tipLocal = this.boneTips.get(bone)
@@ -391,7 +651,15 @@ export class HeroController {
     bone.updateWorldMatrix(false, true)
   }
 
-  /** 获取骨骼当前世界指向（origin -> 尾端），无尾端信息时返回 null */
+  /** 将指定骨骼指向角色自身阵营前向空间（自动适配 P1 面朝 -Z 与 P2 面朝 +Z） */
+  private aimBoneArena(boneName: string, arenaDir: THREE.Vector3, weight = 1) {
+    this.aimBoneWorld(
+      boneName,
+      new THREE.Vector3(arenaDir.x * this.sideSign, arenaDir.y, arenaDir.z * this.sideSign),
+      weight,
+    )
+  }
+
   private getBoneWorldDir(boneName: string): THREE.Vector3 | null {
     const bone = this.bones.get(boneName)
     if (!bone) return null
@@ -405,11 +673,6 @@ export class HeroController {
     return dir.normalize()
   }
 
-  /**
-   * 弯曲单手全部手指（0=完全伸直手刀，1=紧握拳头）
-   * 世界系通用实现：掌心法线 = 手刀方向 × 食指根→小指根，
-   * 各指节绕“手刀方向 × 掌心法线”轴按累计角弯向掌心，与骨架命名和局部轴无关
-   */
   private curlHand(side: 'L' | 'R', amount: number) {
     if (!this.profile) return
     const t = THREE.MathUtils.clamp(amount, 0, 1)
@@ -446,7 +709,6 @@ export class HeroController {
     ]
 
     for (const [chain, angles] of chains) {
-      // 先记录各指节本帧静息指向，再按累计弯曲角逐节弯向掌心（子节自动叠加父节旋转）
       const restDirs: (THREE.Vector3 | null)[] = []
       for (const name of chain) {
         restDirs.push(this.getBoneWorldDir(name)?.clone() ?? null)
@@ -457,7 +719,7 @@ export class HeroController {
         if (!dir) break
         cum += t * (angles[j] ?? 0.6)
         dir.applyQuaternion(tmpQ1.setFromAxisAngle(bendAxis, cum))
-        this.aimBone(chain[j]!, dir)
+        this.aimBoneWorld(chain[j]!, dir)
       }
     }
   }
@@ -471,32 +733,37 @@ export class HeroController {
       bone.updateWorldMatrix(true, false)
       return bone.getWorldPosition(new THREE.Vector3())
     }
-    return this.root.position.clone().add(fallbackOffset)
+    return this.root.position
+      .clone()
+      .add(
+        new THREE.Vector3(
+          fallbackOffset.x * this.sideSign,
+          fallbackOffset.y,
+          fallbackOffset.z * this.sideSign,
+        ),
+      )
   }
 
-  /** 获取当前发射光线的前臂上下两点（自动跟随玩家竖直的那侧手臂） */
   public getBeamOriginSegment(): [THREE.Vector3, THREE.Vector3] {
     const suffix = this.beamArmSide === 'left' ? 'L' : 'R'
     const sx = this.beamArmSide === 'left' ? -0.6 : 0.6
     const elbow = this.getBoneWorldPosition(`lowerArm${suffix}`, new THREE.Vector3(sx, 8.8, -1.8))
     const wrist = this.getBoneWorldPosition(`hand${suffix}`, new THREE.Vector3(sx, 10.6, -1.8))
-    elbow.z -= 0.45
-    wrist.z -= 0.45
+    elbow.z -= 0.42 * this.sideSign
+    wrist.z -= 0.42 * this.sideSign
     return [elbow, wrist]
   }
 
-  /** 获取光轮发射点（严格跟随真实举起的手掌） */
   public getDiscOrigin(side: 'left' | 'right'): THREE.Vector3 {
     const suffix = side === 'left' ? 'L' : 'R'
     const p = this.getBoneWorldPosition(
       `hand${suffix}`,
       new THREE.Vector3(side === 'left' ? -2 : 2, 13.5, -1),
     )
-    p.y += 1.15
+    p.y += 1.05
     return p
   }
 
-  /** 获取出拳击打点（严格跟随真实拳头位置） */
   public getFistOrigin(side: 'left' | 'right'): THREE.Vector3 {
     const suffix = side === 'left' ? 'L' : 'R'
     return this.getBoneWorldPosition(
@@ -505,29 +772,71 @@ export class HeroController {
     )
   }
 
-  /** 获取奥特飞踢脚尖发射点 */
   public getFootOrigin(side: 'left' | 'right'): THREE.Vector3 {
     const suffix = side === 'left' ? 'L' : 'R'
     const p = this.getBoneWorldPosition(
       `foot${suffix}`,
       new THREE.Vector3(side === 'left' ? -1.2 : 1.2, 5.5, -2.2),
     )
-    p.z -= 0.6
+    p.z -= 0.6 * this.sideSign
     return p
   }
 
-  public update(dt: number, elapsedTime: number, dangerTimer: boolean, nowMs = performance.now(), inputDt = dt) {
+  private computeCombatLunge(): { z: number; y: number } {
+    if (
+      this.action === 'idle' ||
+      this.action === 'victory' ||
+      this.action === 'defeat' ||
+      this.actionDuration <= 0
+    ) {
+      return { z: 0, y: 0 }
+    }
+    const progress = THREE.MathUtils.clamp(this.actionTime / this.actionDuration, 0, 1)
+    const burst =
+      progress < 0.35
+        ? 1 - Math.pow(1 - progress / 0.35, 2.4)
+        : Math.cos(((progress - 0.35) / 0.65) * (Math.PI * 0.5))
+
+    if (this.action === 'punch-left' || this.action === 'punch-right') {
+      return { z: burst * 4.2, y: 0 }
+    }
+    if (this.action === 'punch-heavy') {
+      return { z: burst * 6.8, y: Math.sin(progress * Math.PI) * 0.85 }
+    }
+    if (this.action === 'kick-left' || this.action === 'kick-right') {
+      return { z: burst * 7.6, y: Math.sin(progress * Math.PI) * 2.1 }
+    }
+    if (this.action === 'jump-kick') {
+      return { z: burst * 9.2, y: Math.sin(progress * Math.PI) * 4.6 }
+    }
+    if (this.action === 'disc') {
+      return { z: burst * 1.8, y: 0 }
+    }
+    if (this.action === 'hit') {
+      return { z: -Math.sin(progress * Math.PI) * 2.1, y: 0 }
+    }
+    return { z: 0, y: 0 }
+  }
+
+  public update(
+    dt: number,
+    elapsedTime: number,
+    dangerTimer: boolean,
+    nowMs = performance.now(),
+    inputDt = dt,
+  ) {
     if (!this.model) return
 
-    if (this.action !== 'idle' && this.action !== 'victory') {
+    if (this.action !== 'idle' && this.action !== 'victory' && this.action !== 'defeat') {
       this.actionTime += dt
       if (this.actionTime >= this.actionDuration) {
         this.action = 'idle'
         this.actionTime = 0
       }
+    } else if (this.action === 'defeat') {
+      this.actionTime += dt
     }
 
-    // 重置骨骼至静息姿态
     for (const [bone, quat] of this.restQuats) {
       bone.quaternion.copy(quat)
     }
@@ -535,37 +844,51 @@ export class HeroController {
       bone.position.copy(pos)
     }
 
-    // 左右闪避平滑移动
-    this.currentX += (this.targetX - this.currentX) * (1 - Math.exp(-inputDt * 12))
+    this.currentX += (this.targetX - this.currentX) * (1 - Math.exp(-inputDt * 13))
 
-    // 彩色计时器与双眼辉光
-    const idleIntensity = this.profile?.timerIdleIntensity ?? 1.2
+    const lunge = this.computeCombatLunge()
+    this.combatLungeZ += (lunge.z - this.combatLungeZ) * (1 - Math.exp(-inputDt * 26))
+    this.combatVaultY += (lunge.y - this.combatVaultY) * (1 - Math.exp(-inputDt * 24))
+
+    const idleIntensity = this.profile?.timerIdleIntensity ?? 1.4
     for (const m of this.timerMaterials) {
-      if (dangerTimer) {
-        const blink = Math.sin(elapsedTime * 11.5) > 0
+      if (dangerTimer || this.action === 'defeat') {
+        const blink = this.action === 'defeat' ? false : Math.sin(elapsedTime * 11.5) > 0
+        if (this.customChestDome?.material === m) {
+          m.color.setHex(blink ? 0xff4d6d : 0x551122)
+        }
         m.emissive.setHex(blink ? 0xff1f3d : 0x550011)
-        m.emissiveIntensity = blink ? 3.2 : 0.4
-      } else {
+        m.emissiveIntensity = this.action === 'defeat' ? 0.15 : blink ? 3.0 : 0.35
+      } else if (idleIntensity > 0) {
+        const hex = this.profile?.accentColor ?? 0x38e8ff
+        if (this.customChestDome?.material === m) {
+          m.color.setHex(0x7dd3fc)
+        }
+        m.emissive.setHex(hex)
         m.emissiveIntensity = idleIntensity + Math.sin(elapsedTime * 3.5) * 0.25
+      } else {
+        m.emissiveIntensity = 0
       }
     }
     for (const m of this.eyeMaterials) {
-      m.emissiveIntensity = 1.7 + Math.sin(elapsedTime * 2.5) * 0.2
+      m.emissiveIntensity =
+        this.action === 'defeat' ? 0.25 : 1.85 + Math.sin(elapsedTime * 2.5) * 0.2
     }
 
-    // 胜利升空特殊动画
     if (this.action === 'victory') {
       this.updateVictoryAscent(dt)
       return
     }
+    if (this.action === 'defeat') {
+      this.updateDefeatKneel()
+      return
+    }
 
-    // 优先使用摄像头全身实时动捕姿态：奥特曼整体一举一动完全跟随识别到的真人！
     if (this.isLiveTracking(nowMs) && this.livePose) {
       this.applyLiveBodyPose(this.livePose, inputDt, elapsedTime)
       return
     }
 
-    // 键盘 / 触屏模式：程序化经典特摄动画
     this.applyProceduralPose(elapsedTime)
   }
 
@@ -573,36 +896,63 @@ export class HeroController {
     this.victoryAscent += dt
     const t = Math.min(1, this.victoryAscent / 2.2)
     const easeUp = t * t
-    this.root.position.set(this.currentX * (1 - t), easeUp * 26, this.baseZ - easeUp * 14)
+    this.root.position.set(
+      this.currentX * (1 - t),
+      easeUp * 24,
+      this.sideSign * (this.baseZ - easeUp * 10),
+    )
     this.root.rotation.set(
-      easeUp * 0.28,
-      Math.PI + (this.profile?.facingYaw ?? 0) + Math.sin(this.victoryAscent * 1.4) * 0.2,
+      easeUp * 0.28 * this.sideSign,
+      this.baseYaw + (this.profile?.facingYaw ?? 0) + Math.sin(this.victoryAscent * 1.4) * 0.2,
       0,
     )
     this.root.updateMatrixWorld(true)
-    this.aimBone(this.profile!.bones.upperArmR, new THREE.Vector3(0.08, 0.96, -0.25))
-    this.aimBone(this.profile!.bones.lowerArmR, new THREE.Vector3(0.04, 0.98, -0.2))
-    this.aimBone(this.profile!.bones.upperArmL, new THREE.Vector3(-0.22, -0.92, 0.3))
-    this.aimBone(this.profile!.bones.lowerArmL, new THREE.Vector3(-0.15, -0.95, 0.28))
+    this.aimBoneArena(this.profile!.bones.upperArmR, new THREE.Vector3(0.08, 0.96, -0.25))
+    this.aimBoneArena(this.profile!.bones.lowerArmR, new THREE.Vector3(0.04, 0.98, -0.2))
+    this.aimBoneArena(this.profile!.bones.upperArmL, new THREE.Vector3(-0.22, -0.92, 0.3))
+    this.aimBoneArena(this.profile!.bones.lowerArmL, new THREE.Vector3(-0.15, -0.95, 0.28))
     this.curlHand('R', 1)
     this.curlHand('L', 1)
     this.root.updateMatrixWorld(true)
   }
 
-  /**
-   * 实时全身动捕驱动：平滑映射头、脊柱、双臂、双手、双腿、下蹲与起跳
-   * 体感优化：动态速率平滑——肢体方向突变（快速出拳/挥臂/踢腿）时瞬时拉高跟随速率，
-   * 小幅摄像头噪声仍走强防抖基线，快动作跟手与静止防抖两不误
-   */
+  private updateDefeatKneel() {
+    const t = Math.min(1, this.actionTime / 0.55)
+    const ease = 1 - Math.pow(1 - t, 3)
+    this.root.position.set(this.currentX, -2.6 * ease, this.sideSign * (this.baseZ + 1.5 * ease))
+    this.root.rotation.set(0, this.baseYaw + (this.profile?.facingYaw ?? 0), 0)
+    const spineLower = this.logical.get('spineLower')
+    const spineChest = this.logical.get('spineChest')
+    const thighL = this.logical.get('thighL')
+    const shinL = this.logical.get('shinL')
+    const thighR = this.logical.get('thighR')
+    const shinR = this.logical.get('shinR')
+    if (spineLower) spineLower.rotation.x += 0.32 * ease
+    if (spineChest) spineChest.rotation.x += 0.28 * ease
+    if (thighL) thighL.rotation.x += 1.05 * ease
+    if (shinL) shinL.rotation.x -= 1.65 * ease
+    if (thighR) thighR.rotation.x += 0.45 * ease
+    if (shinR) shinR.rotation.x -= 1.45 * ease
+    this.root.updateMatrixWorld(true)
+    if (this.profile) {
+      this.aimBoneArena(this.profile.bones.upperArmL, new THREE.Vector3(-0.35, -0.88, -0.32), ease)
+      this.aimBoneArena(this.profile.bones.lowerArmL, new THREE.Vector3(-0.18, -0.92, -0.35), ease)
+      this.aimBoneArena(this.profile.bones.upperArmR, new THREE.Vector3(0.35, -0.88, -0.32), ease)
+      this.aimBoneArena(this.profile.bones.lowerArmR, new THREE.Vector3(0.18, -0.92, -0.35), ease)
+    }
+    this.root.updateMatrixWorld(true)
+  }
+
   private applyLiveBodyPose(pose: LiveBodyPose, dt: number, elapsedTime: number) {
-    const baseRate = 20
+    const baseRate = 22
     const alpha = 1 - Math.exp(-dt * baseRate)
+    const s = this.sideSign
     const adaptiveAlpha = (cur: THREE.Vector3, target: Vec3Like | null, fallback: number) => {
       if (!target) return fallback
-      tmpV1.set(target.x, target.y, target.z).normalize()
+      tmpV1.set(target.x * s, target.y, target.z * s).normalize()
       if (tmpV1.lengthSq() < 1e-6) return fallback
       const change = 1 - Math.min(1, Math.max(-1, cur.dot(tmpV1)))
-      const rate = baseRate + Math.min(70, Math.max(0, change - 0.0015) * 1500)
+      const rate = baseRate + Math.min(75, Math.max(0, change - 0.0012) * 1650)
       return 1 - Math.exp(-dt * rate)
     }
 
@@ -615,36 +965,46 @@ export class HeroController {
     this.smJumpHeight = THREE.MathUtils.lerp(this.smJumpHeight, pose.jumpHeight, alpha)
     this.smCrouchDepth = THREE.MathUtils.lerp(this.smCrouchDepth, pose.crouchDepth, alpha)
 
-    if (pose.upperArmL) lerpVec(this.smUpperL, pose.upperArmL, adaptiveAlpha(this.smUpperL, pose.upperArmL, alpha))
-    if (pose.lowerArmL) lerpVec(this.smLowerL, pose.lowerArmL, adaptiveAlpha(this.smLowerL, pose.lowerArmL, alpha))
-    if (pose.handL) lerpVec(this.smHandL, pose.handL, adaptiveAlpha(this.smHandL, pose.handL, alpha))
-    else if (pose.lowerArmL) lerpVec(this.smHandL, pose.lowerArmL, alpha)
+    if (pose.upperArmL)
+      lerpArenaVec(this.smUpperL, pose.upperArmL, adaptiveAlpha(this.smUpperL, pose.upperArmL, alpha), s)
+    if (pose.lowerArmL)
+      lerpArenaVec(this.smLowerL, pose.lowerArmL, adaptiveAlpha(this.smLowerL, pose.lowerArmL, alpha), s)
+    if (pose.handL)
+      lerpArenaVec(this.smHandL, pose.handL, adaptiveAlpha(this.smHandL, pose.handL, alpha), s)
+    else if (pose.lowerArmL) lerpArenaVec(this.smHandL, pose.lowerArmL, alpha, s)
 
-    if (pose.upperArmR) lerpVec(this.smUpperR, pose.upperArmR, adaptiveAlpha(this.smUpperR, pose.upperArmR, alpha))
-    if (pose.lowerArmR) lerpVec(this.smLowerR, pose.lowerArmR, adaptiveAlpha(this.smLowerR, pose.lowerArmR, alpha))
-    if (pose.handR) lerpVec(this.smHandR, pose.handR, adaptiveAlpha(this.smHandR, pose.handR, alpha))
-    else if (pose.lowerArmR) lerpVec(this.smHandR, pose.lowerArmR, alpha)
+    if (pose.upperArmR)
+      lerpArenaVec(this.smUpperR, pose.upperArmR, adaptiveAlpha(this.smUpperR, pose.upperArmR, alpha), s)
+    if (pose.lowerArmR)
+      lerpArenaVec(this.smLowerR, pose.lowerArmR, adaptiveAlpha(this.smLowerR, pose.lowerArmR, alpha), s)
+    if (pose.handR)
+      lerpArenaVec(this.smHandR, pose.handR, adaptiveAlpha(this.smHandR, pose.handR, alpha), s)
+    else if (pose.lowerArmR) lerpArenaVec(this.smHandR, pose.lowerArmR, alpha, s)
 
-    if (pose.thighL) lerpVec(this.smThighL, pose.thighL, adaptiveAlpha(this.smThighL, pose.thighL, alpha))
-    if (pose.shinL) lerpVec(this.smShinL, pose.shinL, adaptiveAlpha(this.smShinL, pose.shinL, alpha))
-    if (pose.thighR) lerpVec(this.smThighR, pose.thighR, adaptiveAlpha(this.smThighR, pose.thighR, alpha))
-    if (pose.shinR) lerpVec(this.smShinR, pose.shinR, adaptiveAlpha(this.smShinR, pose.shinR, alpha))
+    if (pose.thighL)
+      lerpArenaVec(this.smThighL, pose.thighL, adaptiveAlpha(this.smThighL, pose.thighL, alpha), s)
+    if (pose.shinL)
+      lerpArenaVec(this.smShinL, pose.shinL, adaptiveAlpha(this.smShinL, pose.shinL, alpha), s)
+    if (pose.thighR)
+      lerpArenaVec(this.smThighR, pose.thighR, adaptiveAlpha(this.smThighR, pose.thighR, alpha), s)
+    if (pose.shinR)
+      lerpArenaVec(this.smShinR, pose.shinR, adaptiveAlpha(this.smShinR, pose.shinR, alpha), s)
 
-    // 受击轻微后撤震动（叠加在真人姿态上，不覆盖四肢）
-    let hitBackZ = 0
     let hitPitch = 0
     if (this.action === 'hit') {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
-      hitBackZ = 1.4 * p
-      hitPitch = -0.18 * p
+      hitPitch = -0.2 * p
     }
 
-    this.root.position.set(this.currentX, this.smJumpHeight, this.baseZ + hitBackZ)
-    // 根节点朝向面朝 -Z，并叠加玩家真实的扭腰转肩水平角
-    this.root.rotation.set(0, Math.PI + (this.profile?.facingYaw ?? 0) + this.smTorsoYaw * 0.45, 0)
+    const totalJumpY = Math.max(this.smJumpHeight, this.combatVaultY)
+    this.root.position.set(this.currentX, totalJumpY, this.sideSign * (this.baseZ - this.combatLungeZ))
+    this.root.rotation.set(
+      0,
+      this.baseYaw + (this.profile?.facingYaw ?? 0) + this.smTorsoYaw * 0.45,
+      0,
+    )
     this.root.updateMatrixWorld(true)
 
-    // 1. 脊柱分段弯曲（俯仰 + 侧倾 + 扭腰，流畅自然）
     const spineLower = this.logical.get('spineLower')
     const spineUpper = this.logical.get('spineUpper')
     const spineChest = this.logical.get('spineChest')
@@ -665,7 +1025,6 @@ export class HeroController {
       spineChest.rotation.y += this.smTorsoYaw * 0.15
     }
 
-    // 2. 头部跟随玩家转头、抬头/低头与歪头
     const neckUpper = this.logical.get('neckUpper')
     const head = this.logical.get('head')
     if (neckUpper) {
@@ -681,16 +1040,13 @@ export class HeroController {
 
     this.root.updateMatrixWorld(true)
 
-    // 3. 双腿驱动：全身入镜时直接 1:1 跟随双腿（支持抬腿飞踢、扎马步、劈叉等）；
-    //    半身入镜时用带下蹲屈膝与起跳收腿的稳健战斗弓步承接上半身
     const hip = this.logical.get('hip')
     if (pose.coverage === 'full' && pose.thighL && pose.thighR && this.profile) {
-      this.aimBone(this.profile.bones.thighL, this.smThighL)
-      if (pose.shinL) this.aimBone(this.profile.bones.shinL, this.smShinL)
-      this.aimBone(this.profile.bones.thighR, this.smThighR)
-      if (pose.shinR) this.aimBone(this.profile.bones.shinR, this.smShinR)
+      this.aimBoneWorld(this.profile.bones.thighL, this.smThighL)
+      if (pose.shinL) this.aimBoneWorld(this.profile.bones.shinL, this.smShinL)
+      this.aimBoneWorld(this.profile.bones.thighR, this.smThighR)
+      if (pose.shinR) this.aimBoneWorld(this.profile.bones.shinR, this.smShinR)
 
-      // 自动支撑脚贴地校正：计算当前左右脚踝世界最低点，贴齐地面再叠加跳跃高度
       this.root.updateMatrixWorld(true)
       const footL = this.logical.get('footL')
       const footR = this.logical.get('footR')
@@ -700,11 +1056,11 @@ export class HeroController {
           footR.getWorldPosition(tmpV2).y,
         )
         const groundDelta = this.restAnkleY - minFootY
-        this.root.position.y += groundDelta + this.smJumpHeight
+        this.root.position.y = Math.max(0, groundDelta + totalJumpY)
       }
     } else {
       const crouchFlex = THREE.MathUtils.clamp(this.smCrouchDepth * 0.28, 0, 0.72)
-      const jumpTuck = THREE.MathUtils.clamp(this.smJumpHeight * 0.14, 0, 0.55)
+      const jumpTuck = THREE.MathUtils.clamp(totalJumpY * 0.14, 0, 0.55)
       if (hip) {
         hip.position.y -= 0.05 + crouchFlex * 0.36
       }
@@ -723,32 +1079,30 @@ export class HeroController {
     }
 
     if (this.action === 'jump-kick' && this.profile) {
-      const extension = Math.sin(Math.PI * this.actionTime / this.actionDuration)
-      this.aimBone(this.profile.bones.thighR, new THREE.Vector3(0.12, 0.25, -1), extension)
-      this.aimBone(this.profile.bones.shinR, new THREE.Vector3(0.08, 0.12, -1), extension)
+      const extension = Math.sin((Math.PI * this.actionTime) / this.actionDuration)
+      this.aimBoneArena(this.profile.bones.thighR, new THREE.Vector3(0.12, 0.25, -1), extension)
+      this.aimBoneArena(this.profile.bones.shinR, new THREE.Vector3(0.08, 0.12, -1), extension)
     }
 
     this.root.updateMatrixWorld(true)
 
-    // 4. 双臂与双手 1:1 实时跟随玩家的每一次抬手、出拳、叉腰、交叉、举手、摆光线！
     if (this.profile) {
       if (pose.upperArmL) {
-        this.aimBone(this.profile.bones.upperArmL, this.smUpperL)
+        this.aimBoneWorld(this.profile.bones.upperArmL, this.smUpperL)
         if (pose.lowerArmL) {
-          this.aimBone(this.profile.bones.lowerArmL, this.smLowerL)
-          this.aimBone(this.profile.bones.handL, this.smHandL, 0.75)
+          this.aimBoneWorld(this.profile.bones.lowerArmL, this.smLowerL)
+          this.aimBoneWorld(this.profile.bones.handL, this.smHandL, 0.75)
         }
       }
       if (pose.upperArmR) {
-        this.aimBone(this.profile.bones.upperArmR, this.smUpperR)
+        this.aimBoneWorld(this.profile.bones.upperArmR, this.smUpperR)
         if (pose.lowerArmR) {
-          this.aimBone(this.profile.bones.lowerArmR, this.smLowerR)
-          this.aimBone(this.profile.bones.handR, this.smHandR, 0.75)
+          this.aimBoneWorld(this.profile.bones.lowerArmR, this.smLowerR)
+          this.aimBoneWorld(this.profile.bones.handR, this.smHandR, 0.75)
         }
       }
     }
 
-    // 5. 手指开合智能匹配招式状态
     const isBladeHand =
       this.action === 'beam' ||
       this.beamChargeVisual > 0.12 ||
@@ -758,7 +1112,9 @@ export class HeroController {
       ? 0.0
       : this.isGuarding
         ? 0.22
-        : this.action === 'punch-left' || this.action === 'punch-right'
+        : this.action === 'punch-left' ||
+            this.action === 'punch-right' ||
+            this.action === 'punch-heavy'
           ? 1.0
           : 0.75
     this.curlHand('L', curlAmt)
@@ -767,44 +1123,55 @@ export class HeroController {
     this.root.updateMatrixWorld(true)
   }
 
-  /**
-   * 键盘 / 触屏模式下的程序化经典战斗动画
-   */
   private applyProceduralPose(elapsedTime: number) {
     if (!this.profile) return
     const b = this.profile.bones
-    const leanRatio = this.currentX / 5.6
+    const leanRatio = THREE.MathUtils.clamp((this.currentX * this.sideSign) / 5.5, -1, 1)
     const breath = Math.sin(elapsedTime * 2.6)
-    let forwardStep = 0
     let bodyYaw = 0
-    let bodyPitch = 0.04
+    let bodyPitch = 0.05
 
     if (this.action === 'punch-left' || this.action === 'punch-right') {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
-      forwardStep = p * 2.6
-      bodyYaw = (this.action === 'punch-left' ? -1 : 1) * p * 0.32
-      bodyPitch = 0.08 + p * 0.1
-    } else if (this.action === 'kick-left' || this.action === 'kick-right') {
+      bodyYaw = (this.action === 'punch-left' ? -1 : 1) * p * 0.42
+      bodyPitch = 0.1 + p * 0.14
+    } else if (this.action === 'punch-heavy') {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
-      forwardStep = p * 3.0
-      bodyYaw = (this.action === 'kick-left' ? -1 : 1) * p * 0.38
-      bodyPitch = -0.14 * p
+      bodyYaw = p * 0.56
+      bodyPitch = 0.12 + p * 0.22
+    } else if (
+      this.action === 'kick-left' ||
+      this.action === 'kick-right' ||
+      this.action === 'jump-kick'
+    ) {
+      const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
+      bodyYaw = (this.action === 'kick-left' ? -1 : 1) * p * 0.44
+      bodyPitch = -0.22 * p
     } else if (this.action === 'beam') {
       const p = Math.min(1, this.actionTime / 0.18)
-      forwardStep = 0.8 * p
       bodyPitch = -0.04 * p
     } else if (this.action === 'hit') {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
-      forwardStep = -1.6 * p
-      bodyPitch = -0.22 * p
+      bodyPitch = -0.24 * p
     } else if (this.action === 'disc') {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
-      forwardStep = 1.4 * p
-      bodyYaw = (this.discChargeSide === 'left' ? -1 : 1) * p * 0.25
+      bodyYaw = (this.discChargeSide === 'left' ? -1 : 1) * p * 0.3
+    } else if (this.action === 'pose-intro') {
+      const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
+      bodyYaw = -0.24 * p
+      bodyPitch = -0.08 * p
     }
 
-    this.root.position.set(this.currentX, 0, this.baseZ - forwardStep)
-    this.root.rotation.set(0, Math.PI + this.profile.facingYaw + bodyYaw, -leanRatio * 0.12)
+    this.root.position.set(
+      this.currentX,
+      this.combatVaultY,
+      this.sideSign * (this.baseZ - this.combatLungeZ),
+    )
+    this.root.rotation.set(
+      0,
+      this.baseYaw + this.profile.facingYaw + bodyYaw,
+      -leanRatio * 0.12 * this.sideSign,
+    )
     this.root.updateMatrixWorld(true)
 
     const hip = this.logical.get('hip')
@@ -817,23 +1184,33 @@ export class HeroController {
     const thighR = this.logical.get('thighR')
     const shinR = this.logical.get('shinR')
 
-    if (this.action === 'kick-left' || this.action === 'kick-right') {
+    if (
+      this.action === 'kick-left' ||
+      this.action === 'kick-right' ||
+      this.action === 'jump-kick'
+    ) {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
       this.root.updateMatrixWorld(true)
       if (this.action === 'kick-left') {
-        this.aimBone(b.thighL, new THREE.Vector3(-0.12, 0.32 * p - 0.85 * (1 - p), -0.92 * p - 0.15))
-        this.aimBone(b.shinL, new THREE.Vector3(-0.08, 0.28 * p - 0.92 * (1 - p), -0.95 * p))
+        this.aimBoneArena(
+          b.thighL,
+          new THREE.Vector3(-0.12, 0.36 * p - 0.85 * (1 - p), -0.95 * p - 0.12),
+        )
+        this.aimBoneArena(b.shinL, new THREE.Vector3(-0.06, 0.32 * p - 0.92 * (1 - p), -0.98 * p))
       } else {
-        this.aimBone(b.thighR, new THREE.Vector3(0.12, 0.32 * p - 0.85 * (1 - p), -0.92 * p - 0.15))
-        this.aimBone(b.shinR, new THREE.Vector3(0.08, 0.28 * p - 0.92 * (1 - p), -0.95 * p))
+        this.aimBoneArena(
+          b.thighR,
+          new THREE.Vector3(0.12, 0.38 * p - 0.85 * (1 - p), -0.95 * p - 0.12),
+        )
+        this.aimBoneArena(b.shinR, new THREE.Vector3(0.06, 0.34 * p - 0.92 * (1 - p), -0.98 * p))
       }
     } else if (thighL && shinL && thighR && shinR) {
-      thighL.rotation.x += 0.22
-      thighL.rotation.z -= 0.14
-      shinL.rotation.x -= 0.34
-      thighR.rotation.x += 0.12
-      thighR.rotation.z += 0.16
-      shinR.rotation.x -= 0.24
+      thighL.rotation.x += 0.24
+      thighL.rotation.z -= 0.15
+      shinL.rotation.x -= 0.36
+      thighR.rotation.x += 0.13
+      thighR.rotation.z += 0.17
+      shinR.rotation.x -= 0.26
     }
 
     const spineChest = this.logical.get('spineChest')
@@ -848,39 +1225,40 @@ export class HeroController {
 
     if (this.action === 'beam' || this.beamChargeVisual > 0.08) {
       const blend = this.action === 'beam' ? 1 : Math.min(1, this.beamChargeVisual * 1.4)
-      this.aimBone(b.upperArmR, new THREE.Vector3(0.42, -0.22, -0.88), blend)
-      this.aimBone(b.lowerArmR, new THREE.Vector3(-0.04, 0.98, -0.18), blend)
-      this.aimBone(b.upperArmL, new THREE.Vector3(-0.22, -0.42, -0.88), blend)
-      this.aimBone(b.lowerArmL, new THREE.Vector3(0.95, 0.12, -0.28), blend)
+      this.aimBoneArena(b.upperArmR, new THREE.Vector3(0.42, -0.22, -0.88), blend)
+      this.aimBoneArena(b.lowerArmR, new THREE.Vector3(-0.04, 0.98, -0.18), blend)
+      this.aimBoneArena(b.upperArmL, new THREE.Vector3(-0.22, -0.42, -0.88), blend)
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(0.95, 0.12, -0.28), blend)
       this.curlHand('R', 0)
       this.curlHand('L', 0)
     } else if (this.isGuarding || this.action === 'guard') {
-      this.aimBone(b.upperArmL, new THREE.Vector3(0.18, -0.18, -0.96))
-      this.aimBone(b.lowerArmL, new THREE.Vector3(0.65, 0.65, -0.38))
-      this.aimBone(b.upperArmR, new THREE.Vector3(-0.18, -0.18, -0.96))
-      this.aimBone(b.lowerArmR, new THREE.Vector3(-0.65, 0.65, -0.38))
+      this.aimBoneArena(b.upperArmL, new THREE.Vector3(0.18, -0.18, -0.96))
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(0.65, 0.65, -0.38))
+      this.aimBoneArena(b.upperArmR, new THREE.Vector3(-0.18, -0.18, -0.96))
+      this.aimBoneArena(b.lowerArmR, new THREE.Vector3(-0.65, 0.65, -0.38))
       this.curlHand('L', 0.2)
       this.curlHand('R', 0.2)
     } else if (this.action === 'punch-left') {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
-      this.aimBone(
+      this.aimBoneArena(
         b.upperArmL,
-        new THREE.Vector3(-0.18 * (1 - p), 0.14 * p - 0.15 * (1 - p), -0.96),
+        new THREE.Vector3(-0.16 * (1 - p), 0.16 * p - 0.15 * (1 - p), -0.97),
       )
-      this.aimBone(b.lowerArmL, new THREE.Vector3(0.06, 0.16 * p + 0.1, -0.98))
-      this.aimBone(b.upperArmR, new THREE.Vector3(0.55, -0.58, -0.45))
-      this.aimBone(b.lowerArmR, new THREE.Vector3(-0.32, 0.22, -0.9))
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(0.05, 0.18 * p + 0.1, -0.98))
+      this.aimBoneArena(b.upperArmR, new THREE.Vector3(0.55, -0.58, -0.45))
+      this.aimBoneArena(b.lowerArmR, new THREE.Vector3(-0.32, 0.22, -0.9))
       this.curlHand('L', 1)
       this.curlHand('R', 1)
-    } else if (this.action === 'punch-right') {
+    } else if (this.action === 'punch-right' || this.action === 'punch-heavy') {
       const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
-      this.aimBone(
+      const lift = this.action === 'punch-heavy' ? 0.28 : 0.16
+      this.aimBoneArena(
         b.upperArmR,
-        new THREE.Vector3(0.18 * (1 - p), 0.14 * p - 0.15 * (1 - p), -0.96),
+        new THREE.Vector3(0.16 * (1 - p), lift * p - 0.15 * (1 - p), -0.97),
       )
-      this.aimBone(b.lowerArmR, new THREE.Vector3(-0.06, 0.16 * p + 0.1, -0.98))
-      this.aimBone(b.upperArmL, new THREE.Vector3(-0.55, -0.58, -0.45))
-      this.aimBone(b.lowerArmL, new THREE.Vector3(0.32, 0.22, -0.9))
+      this.aimBoneArena(b.lowerArmR, new THREE.Vector3(-0.05, lift * p + 0.1, -0.98))
+      this.aimBoneArena(b.upperArmL, new THREE.Vector3(-0.58, -0.52, -0.42))
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(0.34, 0.26, -0.88))
       this.curlHand('L', 1)
       this.curlHand('R', 1)
     } else if (this.action === 'disc' || this.discChargeVisual > 0.08) {
@@ -894,30 +1272,38 @@ export class HeroController {
       if (this.action === 'disc') {
         const p = Math.min(1, this.actionTime / this.actionDuration)
         const swingY = THREE.MathUtils.lerp(0.85, -0.25, p)
-        this.aimBone(activeUpper, new THREE.Vector3(sx * 0.28, swingY, -0.92))
-        this.aimBone(activeLower, new THREE.Vector3(sx * 0.12, swingY - 0.1, -0.98))
+        this.aimBoneArena(activeUpper, new THREE.Vector3(sx * 0.28, swingY, -0.92))
+        this.aimBoneArena(activeLower, new THREE.Vector3(sx * 0.12, swingY - 0.1, -0.98))
       } else {
-        this.aimBone(activeUpper, new THREE.Vector3(sx * 0.35, 0.92, -0.18))
-        this.aimBone(activeLower, new THREE.Vector3(sx * 0.12, 0.98, -0.15))
+        this.aimBoneArena(activeUpper, new THREE.Vector3(sx * 0.35, 0.92, -0.18))
+        this.aimBoneArena(activeLower, new THREE.Vector3(sx * 0.12, 0.98, -0.15))
       }
-      this.aimBone(idleUpper, new THREE.Vector3(-sx * 0.48, -0.55, -0.62))
-      this.aimBone(idleLower, new THREE.Vector3(sx * 0.25, 0.28, -0.92))
+      this.aimBoneArena(idleUpper, new THREE.Vector3(-sx * 0.48, -0.55, -0.62))
+      this.aimBoneArena(idleLower, new THREE.Vector3(sx * 0.25, 0.28, -0.92))
       this.curlHand(isLeft ? 'L' : 'R', 0)
       this.curlHand(isLeft ? 'R' : 'L', 0.9)
+    } else if (this.action === 'pose-intro') {
+      const p = Math.sin(Math.min(1, this.actionTime / this.actionDuration) * Math.PI)
+      this.aimBoneArena(b.upperArmR, new THREE.Vector3(0.32, 0.48 * p - 0.3 * (1 - p), -0.82))
+      this.aimBoneArena(b.lowerArmR, new THREE.Vector3(-0.18, 0.85 * p + 0.24 * (1 - p), -0.55))
+      this.aimBoneArena(b.upperArmL, new THREE.Vector3(-0.56, -0.25, -0.75))
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(0.26, 0.55, -0.8))
+      this.curlHand('L', 0.2)
+      this.curlHand('R', 0.95)
     } else if (this.action === 'hit') {
-      this.aimBone(b.upperArmL, new THREE.Vector3(-0.78, -0.18, -0.4))
-      this.aimBone(b.lowerArmL, new THREE.Vector3(-0.55, 0.45, -0.68))
-      this.aimBone(b.upperArmR, new THREE.Vector3(0.78, -0.18, -0.4))
-      this.aimBone(b.lowerArmR, new THREE.Vector3(0.55, 0.45, -0.68))
+      this.aimBoneArena(b.upperArmL, new THREE.Vector3(-0.78, -0.18, -0.4))
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(-0.55, 0.45, -0.68))
+      this.aimBoneArena(b.upperArmR, new THREE.Vector3(0.78, -0.18, -0.4))
+      this.aimBoneArena(b.lowerArmR, new THREE.Vector3(0.55, 0.45, -0.68))
       this.curlHand('L', 0.5)
       this.curlHand('R', 0.5)
     } else {
-      const sway = breath * 0.05
-      this.aimBone(b.upperArmL, new THREE.Vector3(-0.46, -0.35 + sway, -0.78))
-      this.aimBone(b.lowerArmL, new THREE.Vector3(0.22, 0.42 + sway, -0.88))
-      this.aimBone(b.upperArmR, new THREE.Vector3(0.56, -0.52 - sway, -0.62))
-      this.aimBone(b.lowerArmR, new THREE.Vector3(-0.18, 0.24 - sway, -0.95))
-      this.curlHand('L', 0.85)
+      const sway = breath * 0.045
+      this.aimBoneArena(b.upperArmL, new THREE.Vector3(-0.46, -0.32 + sway, -0.8))
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(0.24, 0.46 + sway, -0.86))
+      this.aimBoneArena(b.upperArmR, new THREE.Vector3(0.54, -0.48 - sway, -0.65))
+      this.aimBoneArena(b.lowerArmR, new THREE.Vector3(-0.18, 0.28 - sway, -0.94))
+      this.curlHand('L', 0.82)
       this.curlHand('R', 0.95)
     }
 

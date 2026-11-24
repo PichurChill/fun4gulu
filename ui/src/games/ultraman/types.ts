@@ -1,4 +1,8 @@
 import type { MonsterState } from './encounter'
+import type { HeroId } from './heroes'
+
+export type { HeroId }
+
 export type GamePhase =
   | 'menu'
   | 'loading'
@@ -10,17 +14,15 @@ export type GamePhase =
 
 export type ControlMode = 'camera' | 'keyboard'
 
-import type { HeroId } from './heroes'
-
-export type { HeroId }
-
 export type ConcreteSceneTheme = 'seaside' | 'city' | 'mountain' | 'volcano'
 export type SceneTheme = 'auto' | ConcreteSceneTheme
 
 export type HeroAction =
   | 'idle'
+  | 'pose-intro'
   | 'punch-left'
   | 'punch-right'
+  | 'punch-heavy'
   | 'jump-kick'
   | 'kick-left'
   | 'kick-right'
@@ -28,6 +30,7 @@ export type HeroAction =
   | 'disc'
   | 'beam'
   | 'hit'
+  | 'defeat'
   | 'victory'
 
 export type MonsterAttackKind = 'melee' | 'fireball' | 'dark-beam'
@@ -36,9 +39,9 @@ export interface MonsterSpec {
   id: string
   modelUrl: string
   maxHp: number
-  /** 归一化后的目标高度（世界单位，迪迦高度约为 13.5） */
+  /** 归一化后的目标高度（世界单位，奥特曼高度约为 13.5） */
   targetHeight: number
-  /** 战斗默认站位 Z 坐标（迪迦在 Z = 20，怪兽在其正前方负 Z 方向） */
+  /** 战斗默认站位 Z 坐标（奥特曼在 Z = 13.2，怪兽在其正前方负 Z 方向） */
   baseZ: number
   /** 主要视觉发光色 */
   accentColor: number
@@ -70,7 +73,7 @@ export interface Vec3Like {
 }
 
 /**
- * 实时全身动捕姿态包（已转换至迪迦背影面朝 -Z 的 3D 世界方向）
+ * 实时全身动捕姿态包（已转换至奥特曼背影面朝 -Z 的 3D 世界方向）
  */
 export interface LiveBodyPose {
   active: boolean
@@ -111,6 +114,8 @@ export interface GestureSnapshot {
   lean: number
   /** 双臂胸前交叉防御 */
   guard: boolean
+  /** 本帧刚进入防御架势的时间戳（用于精准防御判定） */
+  guardJustStarted: boolean
   /** 本帧触发的拳击 */
   punch: 'left' | 'right' | null
   /** 本帧触发的抬腿飞踢 */
@@ -118,18 +123,22 @@ export interface GestureSnapshot {
   /** 举手蓄力光轮进度 [0, 1] */
   discCharge: number
   discSide: 'left' | 'right' | null
-  /** 本帧触发的八分光轮 */
+  /** 本帧触发的光轮斩 */
   discTrigger: 'left' | 'right' | null
-  /** 双手交叉举过头顶的形态切换蓄力进度 [0, 1] */
+  /** 双手举过头顶交叉的形态切换蓄力进度 [0, 1] */
   typeCharge: number
   /** 本帧触发的形态切换 */
   typeTrigger: boolean
   /** 十字/L字光线蓄力进度 [0, 1] */
   beamCharge: number
-  /** 本帧触发的哉佩利敖光线 */
+  /** 本帧触发的必杀光线 */
   beamTrigger: boolean
+  /** 是否正保持光线发射手势（用于光线对波持续推进） */
+  beamHolding: boolean
   /** 光线发射时的主竖臂侧 */
   beamArmSide: 'left' | 'right'
+  /** 归一化站位水平比例 [0, 1]（镜像后，0.5 为正中，供体感雷达绘制） */
+  mirroredCenterX: number
   /** 实时全身骨骼重定向数据 */
   livePose: LiveBodyPose | null
   /** 提示文案键 */
@@ -144,14 +153,19 @@ export interface FloatingDamageEvent {
   x: number
   y: number
   scale: number
+  /** 水平散射微偏移（px） */
+  driftX?: number
+  kind?: 'normal' | 'crit' | 'guard' | 'dodge' | 'clash'
 }
 
 export interface BattleHudState {
   phase: GamePhase
+  controlMode: ControlMode
   loadingProgress: number
   heroId: HeroId
-  /** 当前形态（迪迦 multi/power/sky；无形态英雄为 'base'） */
+  /** 当前形态（如 multi/power/sky 或 flash/strong/miracle；无形态英雄为 'base'） */
   heroForm: string
+  hasForms: boolean
   waveIndex: number
   totalWaves: number
   activeTheme: ConcreteSceneTheme
@@ -172,9 +186,14 @@ export interface BattleHudState {
   warningUrgency: number
   chargeKind: 'beam' | 'disc' | 'guard' | 'type' | null
   chargeProgress: number
+  discCooldownRatio: number
+  beamCooldownRatio: number
+  beamClashActive: boolean
+  beamClashProgress: number
   activeSkillBannerKey: string | null
   tracking: boolean
   bodyCoverage: 'none' | 'upper' | 'full'
+  mirroredCenterX: number
   poseHintKey: string
   timerDanger: boolean
 }

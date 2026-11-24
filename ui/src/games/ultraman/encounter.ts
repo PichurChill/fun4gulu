@@ -13,16 +13,16 @@ export type MonsterState =
   | 'dying'
 export type EncounterEvent = 'land' | 'collapse' | 'warn' | 'strike' | 'roar'
 export type Impact = 'light' | 'heavy' | 'beam'
-export const WINDUP_TIME = 1.35
+export const WINDUP_TIME = 1.32
 
-/** 一个时钟驱动出招、碰撞、动画和提示。每个攻击的伤害帧只经过一次。 */
+/** 统一状态机时钟驱动怪兽攻防、破防硬直与狂暴阶段 */
 export class KaijuEncounter {
   state: MonsterState = 'idle'
   time = 0
   attack: MonsterAttackKind = 'fireball'
   targetX = 0
   enraged = false
-  private cooldown = 2.4
+  private cooldown = 2.1
   private sequence = 0
   private lightHits = 0
 
@@ -32,7 +32,7 @@ export class KaijuEncounter {
   }
 
   reset() {
-    this.cooldown = 2.4
+    this.cooldown = 2.1
     this.sequence = 0
     this.lightHits = 0
     this.enraged = false
@@ -45,15 +45,17 @@ export class KaijuEncounter {
     if (state === 'guarding') {
       if (kind === 'light') return Math.round(base * 0.35)
       this.enter('staggered')
-      return base
+      return Math.round(base * 1.25)
     }
-    if (state === 'staggered' || state === 'recovering') return Math.round(base * 1.5)
+    if (state === 'staggered' || state === 'recovering') return Math.round(base * 1.55)
     if (state === 'idle' || state === 'hit') {
       this.lightHits = kind === 'light' ? this.lightHits + 1 : 0
       if (armored && this.lightHits === 2) {
         this.lightHits = 0
         this.enter('guarding')
-      } else this.enter('hit')
+      } else {
+        this.enter('hit')
+      }
     }
     return base
   }
@@ -89,7 +91,7 @@ export class KaijuEncounter {
           this.enter('windup')
           return 'warn'
         }
-        if (this.state === 'hit' && this.time >= 0.38) this.enter('idle')
+        if (this.state === 'hit' && this.time >= 0.36) this.enter('idle')
         break
       case 'windup':
         if (this.time >= WINDUP_TIME) {
@@ -105,11 +107,11 @@ export class KaijuEncounter {
       case 'guarding':
       case 'staggered':
       case 'recovering': {
-        const duration = { roaring: 1.1, guarding: 1.4, staggered: 1.55, recovering: 0.85 }[
+        const duration = { roaring: 1.1, guarding: 1.45, staggered: 1.65, recovering: 0.85 }[
           this.state
         ]
         if (this.time >= duration) {
-          this.cooldown = spec.attackInterval * (this.enraged ? 0.6 : 0.82)
+          this.cooldown = spec.attackInterval * (this.enraged ? 0.58 : 0.8)
           this.enter('idle')
         }
         break

@@ -1,26 +1,30 @@
 export type HeroId = 'tiga' | 'zero' | 'dyna' | 'zeta'
 
-/** 迪迦形态 id：复合 → 强力 → 空中 循环切换 */
-export type TigaFormId = 'multi' | 'power' | 'sky'
+/** 形态 ID：迪迦三形态（复合/强力/空中）与戴拿三形态（闪亮/强壮/奇迹） */
+export type HeroFormId = 'multi' | 'power' | 'sky' | 'flash' | 'strong' | 'miracle'
 
-/** 身体材质 RGB 染色（与贴图相乘，[1,1,1] 即还原原色） */
-export type BodyTints = {
-  silver: [number, number, number]
-  multiType: [number, number, number]
-}
+/** 战衣贴图色相重映射模式 */
+export type SuitRemapMode = 'original' | 'all-red' | 'all-violet' | 'all-cobalt'
 
 /**
- * 迪迦三形态档案：复合均衡 / 强力高伤低速 / 空中高速低伤
+ * 英雄形态档案：均衡 / 重击高伤 / 神速高能
  */
 export interface HeroFormSpec {
-  id: TigaFormId
+  id: HeroFormId
   /** 形态播报 banner key 后缀 */
   bannerKey: string
-  bodyTints: BodyTints
+  /** 战衣主贴图重映射策略（不破坏银色装甲与金色胸甲） */
+  suitRemap: SuitRemapMode
+  /** 银色护甲微色调乘子（基于原始银色基准微调冷暖，[1,1,1] 为原始钛银） */
+  silverScale: [number, number, number]
   /** 伤害倍率 */
   damageMul: number
   /** 横向移动速度倍率 */
   moveMul: number
+  /** 能量获取倍率 */
+  energyGainMul: number
+  /** 光轮技能冷却倍率 */
+  discCooldownMul: number
   /** 形态主题配色（蓄力光球 / 光线 / 光轮 / 粒子） */
   accentColor: number
   beamColor: number
@@ -72,26 +76,32 @@ export interface HeroProfile {
   bones: HeroBoneMap
   /** 模型静息站姿面朝方向与 +Z 的偏差修正（弧度，绕 Y 轴） */
   facingYaw: number
-  /** 彩色计时器 / 双眼等发光材质名匹配器（材质名或网格名包含即命中） */
+  /** 彩色计时器 / 双眼等发光材质名匹配器 */
   timerMaterialNames: string[]
   eyeMaterialNames: string[]
   /** 平稳期计时器材质自发光强度（单贴图材质模型设 0 避免整体泛色） */
   timerIdleIntensity: number
+  /** 英雄固有被动增益 */
+  baseDamageMul: number
+  baseMoveMul: number
+  baseEnergyGainMul: number
   /** 招式特效配色 */
   accentColor: number
   beamColor: number
   beamSuperColor: number
   discColor: number
   burstColor: number
-  /** HUD 彩色计时器主题色（CSS） */
+  /** HUD 主题色（CSS 十六进制） */
+  uiHex: string
+  /** HUD 彩色计时器主题标识 */
   timerTheme: HeroId
   /** 招式播报文案后缀（i18n banner key 拼接用） */
   bannerKey: string
-  /** 形态系统（迪迦三形态；缺失表示该英雄无形态切换） */
+  /** 形态系统（迪迦、戴拿三形态；缺失表示该英雄为固定觉醒态） */
   forms?: HeroFormSpec[]
   /** 形态染色用的身体材质名匹配器 */
-  formBodyMaterials?: { silver: string[]; multiType: string[] }
-  /** 加载后重建的骨骼父子关系（[父, 子]）：修复被导出器拍平的肢体链，让旋转沿链传播 */
+  formBodyMaterials?: { silver: string[]; suit: string[] }
+  /** 加载后重建的骨骼父子关系（[父, 子]） */
   relinkBones?: [string, string][]
 }
 
@@ -138,22 +148,29 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
     facingYaw: 0,
     timerMaterialNames: ['Tiga color timer', 'TigaEnergy'],
     eyeMaterialNames: ['Tiga eyes', 'TigaEyes'],
-    timerIdleIntensity: 1.2,
+    timerIdleIntensity: 1.5,
+    baseDamageMul: 1.0,
+    baseMoveMul: 1.0,
+    baseEnergyGainMul: 1.0,
     accentColor: 0x38e8ff,
     beamColor: 0x38d9ff,
     beamSuperColor: 0xfacc15,
     discColor: 0x38e8ff,
     burstColor: 0x67e8f9,
+    uiHex: '#38e8ff',
     timerTheme: 'tiga',
     bannerKey: 'Tiga',
-    formBodyMaterials: { silver: ['Tiga body silver'], multiType: ['Tiga body Multi-Type'] },
+    formBodyMaterials: { silver: ['Tiga body silver'], suit: ['Tiga body Multi-Type'] },
     forms: [
       {
         id: 'multi',
         bannerKey: 'Multi',
-        bodyTints: { silver: [1, 1, 1], multiType: [1, 1, 1] },
+        suitRemap: 'original',
+        silverScale: [1, 1, 1],
         damageMul: 1.0,
         moveMul: 1.0,
+        energyGainMul: 1.0,
+        discCooldownMul: 1.0,
         accentColor: 0x38e8ff,
         beamColor: 0x38d9ff,
         beamSuperColor: 0xfacc15,
@@ -163,9 +180,12 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
       {
         id: 'power',
         bannerKey: 'Power',
-        bodyTints: { silver: [1.0, 0.52, 0.46], multiType: [0.98, 0.3, 0.26] },
+        suitRemap: 'all-red',
+        silverScale: [1.04, 0.98, 0.96],
         damageMul: 1.45,
-        moveMul: 0.82,
+        moveMul: 0.85,
+        energyGainMul: 0.95,
+        discCooldownMul: 1.1,
         accentColor: 0xff5a3c,
         beamColor: 0xff5a3c,
         beamSuperColor: 0xffb020,
@@ -175,9 +195,12 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
       {
         id: 'sky',
         bannerKey: 'Sky',
-        bodyTints: { silver: [0.84, 0.88, 1.0], multiType: [0.62, 0.4, 0.95] },
-        damageMul: 0.78,
-        moveMul: 1.35,
+        suitRemap: 'all-violet',
+        silverScale: [0.96, 1.0, 1.08],
+        damageMul: 0.85,
+        moveMul: 1.38,
+        energyGainMul: 1.28,
+        discCooldownMul: 0.65,
         accentColor: 0xb388ff,
         beamColor: 0xb388ff,
         beamSuperColor: 0xe0c3ff,
@@ -186,58 +209,22 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
       },
     ],
   },
-  dyna: {
-    id: 'dyna',
-    modelUrl: '/models/ultraman/dyna.glb',
-    bones: ultraBones,
-    facingYaw: 0,
-    timerMaterialNames: ['Beacon'],
-    eyeMaterialNames: ['Lenses'],
-    timerIdleIntensity: 1.2,
-    timerTheme: 'dyna',
-    bannerKey: 'Dyna',
-    accentColor: 0xffbd49,
-    beamColor: 0x76ccff,
-    beamSuperColor: 0xfff3a8,
-    discColor: 0x77b9ff,
-    burstColor: 0xffd776,
-  },
-  zeta: {
-    id: 'zeta',
-    modelUrl: '/models/ultraman/zeta.glb',
-    bones: ultraBones,
-    facingYaw: 0,
-    timerMaterialNames: ['Beacon'],
-    eyeMaterialNames: ['Lenses'],
-    timerIdleIntensity: 1.2,
-    timerTheme: 'zeta',
-    bannerKey: 'Zeta',
-    accentColor: 0x57b8ff,
-    beamColor: 0x67edff,
-    beamSuperColor: 0xd4a2ff,
-    discColor: 0x6296ff,
-    burstColor: 0x74dfff,
-  },
   zero: {
     id: 'zero',
     modelUrl: '/models/ultraman/zero.glb',
     bones: {
-      // 注意：three.js GLTFLoader 会把骨骼名中的空白字符规范化为下划线，
-      // 因此这里必须写加载后的名字（Bip001_R_Hand），而非 GLB JSON 原文中的空格版本
       hip: 'Bip001_Pelvis',
       spineLower: 'Bip001_Spine',
       spineUpper: 'Bip001_Spine1',
       spineChest: 'Bip001_Spine2',
       neckUpper: undefined,
       head: 'Bip001_Head',
-      // 该导出骨架用 Twist 骨链替代主四肢骨：Clavicle → UpArmTwist → UpArmTwist1 → ForeTwist → ForeTwist1 → Hand
       upperArmL: 'Bip001_LUpArmTwist',
       lowerArmL: 'Bip001_L_ForeTwist',
       handL: 'Bip001_L_Hand',
       upperArmR: 'Bip001_RUpArmTwist',
       lowerArmR: 'Bip001_R_ForeTwist',
       handR: 'Bip001_R_Hand',
-      // 腿链：ThighTwist → ThighTwist1 → CalfTwist → CalfTwist1 → Foot
       thighL: 'Bip001_LThighTwist',
       shinL: 'Bip001_LCalfTwist',
       footL: 'Bip001_L_Foot',
@@ -260,9 +247,6 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
       },
     },
     facingYaw: 0,
-    // 该导出骨架的主骨（UpperArm/Forearm/Thigh/Calf）被删除，Twist 骨以兄弟关系平挂在
-    // Clavicle/Pelvis 下：重建父子链（上臂→前臂→手，大腿→小腿→脚）让旋转沿肢体传播，
-    // 否则蒙皮各段独立旋转会在肘/膝处撕裂扭曲
     relinkBones: [
       ['Bip001_LUpArmTwist', 'Bip001_L_ForeTwist'],
       ['Bip001_L_ForeTwist', 'Bip001_L_Hand'],
@@ -273,17 +257,108 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
       ['Bip001_RThighTwist', 'Bip001_RCalfTwist'],
       ['Bip001_RCalfTwist', 'Bip001_R_Foot'],
     ],
-    // 赛罗导出为单一贴图材质，没有独立计时器/眼睛材质：命中时整体泛光脉冲
     timerMaterialNames: [],
     eyeMaterialNames: [],
     timerIdleIntensity: 0,
+    baseDamageMul: 1.15,
+    baseMoveMul: 1.12,
+    baseEnergyGainMul: 1.15,
     accentColor: 0x7df9ff,
-    beamColor: 0x9be7ff,
+    beamColor: 0x5eead4,
     beamSuperColor: 0xffe066,
-    discColor: 0x86efac,
+    discColor: 0x4ade80,
     burstColor: 0x7df9ff,
+    uiHex: '#5eead4',
     timerTheme: 'zero',
     bannerKey: 'Zero',
+  },
+  dyna: {
+    id: 'dyna',
+    modelUrl: '/models/ultraman/dyna.glb',
+    bones: ultraBones,
+    facingYaw: 0,
+    timerMaterialNames: ['Beacon'],
+    eyeMaterialNames: ['Lenses'],
+    timerIdleIntensity: 1.5,
+    baseDamageMul: 1.05,
+    baseMoveMul: 1.0,
+    baseEnergyGainMul: 1.0,
+    timerTheme: 'dyna',
+    bannerKey: 'Dyna',
+    accentColor: 0xffbd49,
+    beamColor: 0x60a5fa,
+    beamSuperColor: 0xfff3a8,
+    discColor: 0x77b9ff,
+    burstColor: 0xffd776,
+    uiHex: '#ffbd49',
+    formBodyMaterials: { silver: ['Brushed alloy'], suit: ['Suit woven armour'] },
+    forms: [
+      {
+        id: 'flash',
+        bannerKey: 'Flash',
+        suitRemap: 'original',
+        silverScale: [1, 1, 1],
+        damageMul: 1.0,
+        moveMul: 1.0,
+        energyGainMul: 1.0,
+        discCooldownMul: 1.0,
+        accentColor: 0xffbd49,
+        beamColor: 0x60a5fa,
+        beamSuperColor: 0xfff3a8,
+        discColor: 0x77b9ff,
+        burstColor: 0xffd776,
+      },
+      {
+        id: 'strong',
+        bannerKey: 'Strong',
+        suitRemap: 'all-red',
+        silverScale: [1.05, 0.97, 0.95],
+        damageMul: 1.48,
+        moveMul: 0.86,
+        energyGainMul: 0.95,
+        discCooldownMul: 1.15,
+        accentColor: 0xff4d38,
+        beamColor: 0xff6b3d,
+        beamSuperColor: 0xffd166,
+        discColor: 0xff8552,
+        burstColor: 0xff6b4a,
+      },
+      {
+        id: 'miracle',
+        bannerKey: 'Miracle',
+        suitRemap: 'all-cobalt',
+        silverScale: [0.95, 1.01, 1.08],
+        damageMul: 0.88,
+        moveMul: 1.38,
+        energyGainMul: 1.35,
+        discCooldownMul: 0.6,
+        accentColor: 0x38bdf8,
+        beamColor: 0x38bdf8,
+        beamSuperColor: 0xa5f3fc,
+        discColor: 0x67e8f9,
+        burstColor: 0x7dd3fc,
+      },
+    ],
+  },
+  zeta: {
+    id: 'zeta',
+    modelUrl: '/models/ultraman/zeta.glb',
+    bones: ultraBones,
+    facingYaw: 0,
+    timerMaterialNames: ['Beacon'],
+    eyeMaterialNames: ['Lenses'],
+    timerIdleIntensity: 1.5,
+    baseDamageMul: 1.08,
+    baseMoveMul: 1.1,
+    baseEnergyGainMul: 1.22,
+    timerTheme: 'zeta',
+    bannerKey: 'Zeta',
+    accentColor: 0x57b8ff,
+    beamColor: 0x38e8ff,
+    beamSuperColor: 0xc084fc,
+    discColor: 0x60a5fa,
+    burstColor: 0x74dfff,
+    uiHex: '#60a5fa',
   },
 }
 

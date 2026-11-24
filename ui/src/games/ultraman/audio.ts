@@ -38,19 +38,19 @@ export class UltraAudio {
       const osc = ctx.createOscillator()
       const gain = ctx.createGain()
       osc.type = idx % 2 === 0 ? 'triangle' : 'sine'
-      osc.frequency.setValueAtTime(f * 0.75, now + idx * 0.06)
-      osc.frequency.exponentialRampToValueAtTime(f * 1.4, now + 0.55 + idx * 0.05)
-      gain.gain.setValueAtTime(0.001, now + idx * 0.06)
-      gain.gain.linearRampToValueAtTime(0.09, now + 0.15 + idx * 0.06)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.95)
+      osc.frequency.setValueAtTime(f * 0.75, now + idx * 0.055)
+      osc.frequency.exponentialRampToValueAtTime(f * 1.45, now + 0.52 + idx * 0.05)
+      gain.gain.setValueAtTime(0.001, now + idx * 0.055)
+      gain.gain.linearRampToValueAtTime(0.09, now + 0.14 + idx * 0.055)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.92)
       osc.connect(gain)
       gain.connect(ctx.destination)
-      osc.start(now + idx * 0.06)
-      osc.stop(now + 1.0)
+      osc.start(now + idx * 0.055)
+      osc.stop(now + 0.96)
     })
   }
 
-  /** 拳风从出招侧掠向中央，飞踢的扫频更低、尾音更长。 */
+  /** 拳风从出招侧掠向中央，飞踢的扫频更低、尾音更长 */
   public playSwing(side: 'left' | 'right', kick: boolean) {
     const ctx = this.ensureContext()
     if (!ctx) return
@@ -82,13 +82,12 @@ export class UltraAudio {
     if (!ctx) return
     const now = ctx.currentTime
 
-    // 拳风低频冲击
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
     osc.type = 'triangle'
-    osc.frequency.setValueAtTime(hit ? 220 : 320, now)
+    osc.frequency.setValueAtTime(hit ? 230 : 320, now)
     osc.frequency.exponentialRampToValueAtTime(48, now + 0.16)
-    gain.gain.setValueAtTime(hit ? 0.28 : 0.14, now)
+    gain.gain.setValueAtTime(hit ? 0.3 : 0.14, now)
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18)
     osc.connect(gain)
     gain.connect(ctx.destination)
@@ -96,29 +95,27 @@ export class UltraAudio {
     osc.stop(now + 0.19)
 
     if (hit) {
-      // 打击感：胸口共振的次低音重锤
       const sub = ctx.createOscillator()
       const subGain = ctx.createGain()
       sub.type = 'sine'
-      sub.frequency.setValueAtTime(86, now)
-      sub.frequency.exponentialRampToValueAtTime(34, now + 0.13)
-      subGain.gain.setValueAtTime(0.34, now)
-      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15)
+      sub.frequency.setValueAtTime(88, now)
+      sub.frequency.exponentialRampToValueAtTime(34, now + 0.14)
+      subGain.gain.setValueAtTime(0.36, now)
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16)
       sub.connect(subGain)
       subGain.connect(ctx.destination)
       sub.start(now)
-      sub.stop(now + 0.16)
-      this.playNoiseBurst(0.12, 0.22, 950)
+      sub.stop(now + 0.17)
+      this.playNoiseBurst(0.12, 0.24, 1050)
     }
   }
 
-  /** 重招劈斩命中（飞踢 / 光轮 / 光线爆点）：高频破空 + 低频重击复合 */
+  /** 重招劈斩命中（飞踢 / 光轮 / 三连重拳） */
   public playHeavyImpact() {
     const ctx = this.ensureContext()
     if (!ctx) return
     const now = ctx.currentTime
 
-    // 金属高频劈裂
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
     osc.type = 'square'
@@ -135,20 +132,88 @@ export class UltraAudio {
     osc.start(now)
     osc.stop(now + 0.15)
 
-    // 低频冲击底气
     const sub = ctx.createOscillator()
     const subGain = ctx.createGain()
     sub.type = 'sine'
-    sub.frequency.setValueAtTime(96, now)
-    sub.frequency.exponentialRampToValueAtTime(30, now + 0.2)
-    subGain.gain.setValueAtTime(0.4, now)
-    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.22)
+    sub.frequency.setValueAtTime(98, now)
+    sub.frequency.exponentialRampToValueAtTime(28, now + 0.22)
+    subGain.gain.setValueAtTime(0.42, now)
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24)
     sub.connect(subGain)
     subGain.connect(ctx.destination)
     sub.start(now)
-    sub.stop(now + 0.23)
+    sub.stop(now + 0.25)
 
-    this.playNoiseBurst(0.16, 0.26, 1400)
+    this.playNoiseBurst(0.16, 0.28, 1450)
+  }
+
+  /** 挥拳击碎/弹反怪兽火球的清脆金属爆鸣 */
+  public playDeflect() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const freqs = [880, 1320, 1980]
+    freqs.forEach((f, idx) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(f, now + idx * 0.02)
+      osc.frequency.exponentialRampToValueAtTime(f * 1.4, now + 0.22)
+      gain.gain.setValueAtTime(0.14, now + idx * 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now + idx * 0.02)
+      osc.stop(now + 0.3)
+    })
+    this.playNoiseBurst(0.12, 0.2, 2200)
+  }
+
+  /** 极速侧闪成功风声与充能音 */
+  public playDodge() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(420, now)
+    osc.frequency.exponentialRampToValueAtTime(980, now + 0.16)
+    gain.gain.setValueAtTime(0.14, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.22)
+  }
+
+  /** 双光线宿命对波能量轰鸣 */
+  public playBeamClash() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const osc1 = ctx.createOscillator()
+    const osc2 = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc1.type = 'sawtooth'
+    osc2.type = 'square'
+    osc1.frequency.setValueAtTime(140, now)
+    osc1.frequency.linearRampToValueAtTime(240, now + 1.4)
+    osc2.frequency.setValueAtTime(283, now)
+    osc2.frequency.linearRampToValueAtTime(486, now + 1.4)
+    gain.gain.setValueAtTime(0.16, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.45)
+    const lp = ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 1600
+    osc1.connect(lp)
+    osc2.connect(lp)
+    lp.connect(gain)
+    gain.connect(ctx.destination)
+    osc1.start(now)
+    osc2.start(now)
+    osc1.stop(now + 1.5)
+    osc2.stop(now + 1.5)
   }
 
   /** 八分光轮嗡鸣飞斩 */
@@ -188,14 +253,13 @@ export class UltraAudio {
     lfo.stop(now + 0.64)
   }
 
-  /** 哉佩利敖光线发射轰鸣 */
+  /** 必杀光线发射轰鸣 */
   public playBeam(isSuper = false) {
     const ctx = this.ensureContext()
     if (!ctx) return
     const now = ctx.currentTime
     const dur = isSuper ? 1.85 : 1.35
 
-    // 高频共鸣光束声
     const osc1 = ctx.createOscillator()
     const osc2 = ctx.createOscillator()
     const gain = ctx.createGain()
@@ -248,7 +312,6 @@ export class UltraAudio {
     osc.start(now)
     osc.stop(now + 0.28)
 
-    // 金属屏障共鸣余韵（微失谐双振荡器）
     for (const detune of [1318, 1332]) {
       const ring = ctx.createOscillator()
       const ringGain = ctx.createGain()
@@ -280,7 +343,6 @@ export class UltraAudio {
     osc.start(now)
     osc.stop(now + 0.32)
 
-    // 受击次低音钝击，把“挨了一记重的”砸进身体里
     const sub = ctx.createOscillator()
     const subGain = ctx.createGain()
     sub.type = 'sine'
@@ -296,7 +358,7 @@ export class UltraAudio {
     this.playNoiseBurst(0.22, 0.25, 420)
   }
 
-  /** 怪兽攻击预警提示音 */
+  /** 怪兽狂暴咆哮 */
   public playRoar() {
     const ctx = this.ensureContext()
     if (!ctx) return
