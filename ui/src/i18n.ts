@@ -99,6 +99,7 @@ const messages = {
         instructionsHand: '抬起左手/右手切换车道，双手上抬跳跃'
       },
       ultramanView: {
+        reactions: { guarding: '架起防御 · 飞踢破防', staggered: '失衡 · 快追击', roaring: '狂暴 · 攻势加快', recovering: '露出破绽' },
         chainCue: '换手出拳',
         title: '光之战士 · 体感超激斗',
         subtitle: '化身光之巨人，在海港城市迎战五大宇宙怪兽！',
@@ -421,6 +422,7 @@ const messages = {
         instructionsHand: 'Raise left/right hand to switch lane, raise both to jump'
       },
       ultramanView: {
+        reactions: { guarding: 'Guard up · Kick to break', staggered: 'Staggered · Strike now', roaring: 'Enraged · Faster attacks', recovering: 'Open to attack' },
         chainCue: 'Switch hands',
         title: 'WARRIOR OF LIGHT · MOTION BATTLE',
         subtitle: 'Become the Giant of Light and defend the harbor city against 5 iconic kaiju!',
@@ -743,6 +745,7 @@ const messages = {
         instructionsHand: '左右の手を上げてレーン切り替え、両手上げでジャンプ'
       },
       ultramanView: {
+        reactions: { guarding: '防御中 · キックで崩せ', staggered: 'よろけた · 追撃！', roaring: '怒り · 攻撃が加速', recovering: '反撃のチャンス' },
         chainCue: '反対の手でパンチ',
         title: '光の戦士・体感バトル',
         subtitle: '光の巨人となり、港街で5大怪獣に立ち向かえ！',
@@ -1065,6 +1068,7 @@ const messages = {
         instructionsHand: '왼손/오른손을 들어 차선 변경, 양손을 들어 점프'
       },
       ultramanView: {
+        reactions: { guarding: '방어 중 · 킥으로 돌파', staggered: '휘청임 · 지금 공격', roaring: '격노 · 공격 가속', recovering: '빈틈 발생' },
         chainCue: '반대손으로 펀치',
         title: '빛의 전사 · 체감 배틀',
         subtitle: '빛의 거인이 되어 항구 도시의 5대 괴수에 맞서 싸우세요!',
@@ -1387,6 +1391,7 @@ const messages = {
         instructionsHand: 'Levez la main gauche/droite pour changer de voie, les deux pour sauter'
       },
       ultramanView: {
+        reactions: { guarding: 'Garde · Brise-la du pied', staggered: 'Déséquilibré · Frappe', roaring: 'Furie · Attaques accélérées', recovering: 'Ouverture !' },
         chainCue: 'Change de poing',
         title: 'GUERRIER DE LUMIÈRE · COMBAT MOTION',
         subtitle: 'Devenez le Géant de Lumière et affrontez 5 kaiju dans le port !',

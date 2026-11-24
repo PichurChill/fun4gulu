@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import type { MonsterAttackKind, MonsterSpec } from './types'
+import { KaijuEncounter, WINDUP_TIME } from './encounter'
+import type { MonsterSpec } from './types'
 
 export const MONSTER_WAVES: MonsterSpec[] = [
   {
@@ -81,13 +82,16 @@ interface MonsterRig {
   armR: THREE.Bone | null
   foreL: THREE.Bone | null
   foreR: THREE.Bone | null
-  handL: THREE.Bone | null
-  handR: THREE.Bone | null
+  jaw: THREE.Bone | null
+  clawL: THREE.Bone | null
+  clawR: THREE.Bone | null
+  thighL: THREE.Bone | null
+  thighR: THREE.Bone | null
+  shinL: THREE.Bone | null
+  shinR: THREE.Bone | null
   tail: THREE.Bone[]
   tentacles: THREE.Bone[]
 }
-
-export type MonsterState = 'entering' | 'idle' | 'windup' | 'attack' | 'hit' | 'dying'
 
 /**
  * 怪兽 3D 模型与动作驱动器（兼容罗马字/日文 MMD 骨骼及静态模型）
@@ -101,13 +105,15 @@ export class KaijuController {
   private meshes: THREE.Mesh[] = []
   private originalEmissives = new Map<THREE.Material, { color: number; intensity: number }>()
 
-  public state: MonsterState = 'idle'
-  public stateTime = 0
-  public currentAttack: MonsterAttackKind = 'fireball'
+  public readonly encounter = new KaijuEncounter()
+  private get state() { return this.encounter.state }
+  private get stateTime() { return this.encounter.time }
+  private get currentAttack() { return this.encounter.attack }
   public currentX = 0
   public currentZ = -6
   private recoilSide = 0
   public hitFlash = 0
+  private stepPhase = 0
   private patrolPhase = 0
   private modelHeight = 17
   private lungeOffsetZ = 0
@@ -136,6 +142,9 @@ export class KaijuController {
       model.rotation.y = spec.facingOffsetY
     }
 
+    this.root.position.set(0, 0, 0)
+    this.root.rotation.set(0, 0, 0)
+    this.root.scale.setScalar(1)
     this.root.add(model)
     this.root.updateMatrixWorld(true)
 
@@ -195,8 +204,13 @@ export class KaijuController {
       armR: pick('R_ZYOUWAN', '腕.R', '腕R'),
       foreL: pick('L_UDE', 'ひじ.L', '腕3.L', '腕2.L'),
       foreR: pick('R_UDE', 'ひじ.R', '腕3.R', '腕2.R'),
-      handL: pick('L_TE', '手首.L', '手首2.L'),
-      handR: pick('R_TE', '手首.R', '手首2.R'),
+      jaw: pick('jaw', 'lowerjaw'),
+      clawL: pick('L_TUME', 'pincer.L'),
+      clawR: pick('R_TUME', 'pincer.R'),
+      thighL: pick('L_MOMO', 'L_Thigh', '足.L'),
+      thighR: pick('R_MOMO', 'R_Thigh', '足.R'),
+      shinL: pick('L_SUNE', 'L_Leg', 'ひざ.L'),
+      shinR: pick('R_SUNE', 'R_Leg', 'ひざ.R'),
       tail: tailBones,
       tentacles: tentacleBones,
     }
@@ -206,8 +220,8 @@ export class KaijuController {
     this.lungeOffsetZ = 0
     this.hitFlash = 0
     this.patrolPhase = 0
-    this.state = 'entering'
-    this.stateTime = 0
+    this.stepPhase = 0
+    this.encounter.reset()
     this.root.visible = true
     this.root.scale.setScalar(1)
     this.root.position.set(0, 18, spec.baseZ - 14)
@@ -233,19 +247,9 @@ export class KaijuController {
     this.rig = null
   }
 
-  public setState(state: MonsterState, attackKind?: MonsterAttackKind) {
-    this.state = state
-    this.stateTime = 0
-    if (attackKind) this.currentAttack = attackKind
-  }
-
   public triggerHitFlash(strength = 1, side?: 'left' | 'right') {
     this.recoilSide = side === 'left' ? 1 : side === 'right' ? -1 : 0
     this.hitFlash = Math.min(1, Math.max(this.hitFlash, strength))
-    if (this.state === 'idle') {
-      this.state = 'hit'
-      this.stateTime = 0
-    }
   }
 
   /** 获取怪兽胸口受击中心世界坐标（用于光线、光轮、拳风锁敌命中点） */
@@ -272,10 +276,9 @@ export class KaijuController {
     )
   }
 
-  public update(dt: number, elapsedTime: number) {
+  public update(dt: number, elapsedTime: number, heroX: number) {
     if (!this.model || !this.spec) return
 
-    this.stateTime += dt
     this.patrolPhase += dt
 
     // 恢复骨骼静息姿态
@@ -302,6 +305,7 @@ export class KaijuController {
     }
 
     const baseZ = this.spec.baseZ
+    let stride = 0
     let posY = 0
     let pitchX = 0
     let rollZ = 0
@@ -315,41 +319,48 @@ export class KaijuController {
       this.currentZ = THREE.MathUtils.lerp(baseZ - 14, baseZ, easeOut)
       this.currentX = 0
       pitchX = (1 - easeOut) * 0.16
-      if (t >= 1) {
-        this.state = 'idle'
-        this.stateTime = 0
-      }
     } else if (this.state === 'dying') {
-      // 血量归零剧烈抽搐倒下并缩散消失
-      const t = Math.min(1, this.stateTime / 1.8)
-      pitchX = -t * 1.15
-      rollZ = Math.sin(this.stateTime * 24) * 0.16 * (1 - t)
-      posY = -t * 4.5
-      const s = Math.max(0.05, 1 - Math.max(0, t - 0.55) * 2.1)
-      this.root.scale.setScalar(s)
-      if (t >= 0.99) {
-        this.root.visible = false
-      }
+      // 重心先偏移，躯干随即加速倒下；触地后留在战场上。
+      const t = Math.min(1, this.stateTime / 1.05)
+      pitchX = -1.43 * t * t
+      rollZ = 0.27 * Math.sin(t * Math.PI / 2)
+      posY = 0.6 * t
     } else {
       // 战斗状态下轻微威慑巡游与呼吸
       const breath = Math.sin(elapsedTime * 2.2)
-      const targetPatrolX = Math.sin(this.patrolPhase * 0.65) * 3.2
-      this.currentX += (targetPatrolX - this.currentX) * Math.min(1, dt * 2.5)
+      const flank = this.spec.id === 'baltan' ? 5.5 : this.spec.id === 'ganq' ? 4 : 2.2
+      const stalkingX = heroX * 0.55 + Math.cos(this.patrolPhase * 0.48) * flank
+      const targetPatrolX = this.state === 'attack' || this.state === 'windup'
+        ? this.encounter.targetX : this.state === 'idle' ? stalkingX : this.currentX
+      const dx = (targetPatrolX - this.currentX) * (1 - Math.exp(-dt * 2.5))
+      this.currentX += dx
+      this.stepPhase += Math.abs(dx) * 1.85
+      stride = Math.min(1, Math.abs(dx) / (dt * 2.8))
       posY = this.spec.isStaticMesh ? Math.sin(elapsedTime * 2.4) * 0.55 + 0.3 : Math.abs(breath) * 0.18
-      yawY = Math.sin(this.patrolPhase * 0.65) * 0.12
+      yawY = Math.atan2(heroX - this.currentX, 20 - this.currentZ)
 
       if (this.state === 'hit') {
         const p = Math.sin(Math.min(1, this.stateTime / 0.38) * Math.PI)
         pitchX = -0.22 * p
         this.lungeOffsetZ = -2.2 * p
         rollZ = Math.sin(this.stateTime * 35) * 0.08 * p
-        if (this.stateTime >= 0.38) {
-          this.state = 'idle'
-          this.stateTime = 0
-        }
+      } else if (this.state === 'staggered' || this.state === 'recovering') {
+        const broken = this.state === 'staggered'
+        const duration = broken ? 1.55 : 0.85
+        const bend = Math.sin(Math.PI * Math.min(1, this.stateTime / duration)) ** 0.55
+        pitchX = (broken ? 0.52 : 0.25) * bend
+        rollZ = (broken ? 0.17 : -0.08) * bend
+        posY -= bend * (broken ? 1.6 : 0.55)
+        this.lungeOffsetZ *= Math.exp(-7 * dt)
+      } else if (this.state === 'roaring' || this.state === 'guarding') {
+        const roar = this.state === 'roaring'
+        const lift = Math.sin(Math.PI * Math.min(1, this.stateTime / (roar ? 1.1 : 1.4)))
+        pitchX = (roar ? -0.32 : 0.2) * lift
+        posY += lift * (roar ? 0.65 : -0.6)
+        this.lungeOffsetZ *= Math.exp(-7 * dt)
       } else if (this.state === 'windup') {
         // 蓄力后仰准备攻击
-        const p = Math.min(1, this.stateTime / 1.35)
+        const p = Math.min(1, this.stateTime / WINDUP_TIME)
         pitchX = -0.18 * p
         this.lungeOffsetZ = -1.8 * p
         rollZ = Math.sin(elapsedTime * 22) * 0.04 * p
@@ -363,10 +374,6 @@ export class KaijuController {
           // 吐火球/发射光线时胸口前挺
           this.lungeOffsetZ = p * 3.5
           pitchX = p * 0.14
-        }
-        if (this.stateTime >= 0.65) {
-          this.state = 'idle'
-          this.stateTime = 0
         }
       } else {
         this.lungeOffsetZ += (0 - this.lungeOffsetZ) * Math.min(1, dt * 6)
@@ -386,6 +393,19 @@ export class KaijuController {
       if (this.rig.head) {
         this.rig.head.rotation.y += Math.sin(elapsedTime * 1.4) * 0.09
       }
+
+      // 步幅由实际横移距离决定。守势屈膝下沉，失衡时一侧膝盖让步。
+      const step = Math.sin(this.stepPhase) * stride
+      const crouch = this.state === 'staggered' ? 0.52 : this.state === 'guarding' ? 0.32 : 0.12
+      if (this.rig.thighL) this.rig.thighL.rotation.x += crouch + step * 0.28
+      if (this.rig.thighR) this.rig.thighR.rotation.x += crouch - step * 0.28
+      if (this.rig.shinL) this.rig.shinL.rotation.x -= crouch + Math.max(0, step) * 0.44
+      if (this.rig.shinR) this.rig.shinR.rotation.x -= crouch + Math.max(0, -step) * 0.44
+      const open = this.state === 'roaring' ? Math.sin(Math.PI * this.stateTime / 1.1) : 0
+      if (this.rig.jaw) this.rig.jaw.rotation.x += open * 0.55
+      const pincers = this.state === 'windup' ? this.stateTime / WINDUP_TIME : open
+      if (this.rig.clawL) this.rig.clawL.rotation.z += pincers * 0.55
+      if (this.rig.clawR) this.rig.clawR.rotation.z -= pincers * 0.55
 
       // 消除 MMD 默认平举 T-Pose：让双臂自然放下并略微前伸成战斗格斗架势
       // 巴尔坦、杰顿、机械哥莫拉为人形双臂 T-Pose；加坦杰厄双钳原本水平张开更具压迫感只需微调
@@ -412,14 +432,23 @@ export class KaijuController {
         this.rig.foreR.rotation.x -= baseElbowBend
       }
 
-      if (this.state === 'windup') {
-        const p = Math.min(1, this.stateTime / 1.35)
+      if (this.state === 'roaring' || this.state === 'guarding' || this.state === 'staggered') {
+        const open = this.state === 'roaring'
+        const broken = this.state === 'staggered'
+        const pose = Math.min(1, this.stateTime * 7)
+        if (this.rig.head) this.rig.head.rotation.x += (open ? -0.5 : 0.32) * pose
+        if (this.rig.armL) this.rig.armL.rotation.z += (open || broken ? 0.9 : -0.42) * pose
+        if (this.rig.armR) this.rig.armR.rotation.z -= (open || broken ? 0.9 : -0.42) * pose
+        if (this.rig.foreL) this.rig.foreL.rotation.x -= (open ? 0.1 : 0.85) * pose
+        if (this.rig.foreR) this.rig.foreR.rotation.x -= (open ? 0.1 : 0.85) * pose
+      } else if (this.state === 'windup') {
+        const p = Math.min(1, this.stateTime / WINDUP_TIME)
         if (this.rig.armL) {
-          this.rig.armL.rotation.z += p * 1.15
+          this.rig.armL.rotation.z += p * (this.currentAttack === 'melee' ? 1.5 : 0.65)
           this.rig.armL.rotation.x -= p * 0.65
         }
         if (this.rig.armR) {
-          this.rig.armR.rotation.z -= p * 1.15
+          this.rig.armR.rotation.z -= p * (this.currentAttack === 'melee' ? 0.2 : 0.65)
           this.rig.armR.rotation.x -= p * 0.65
         }
       } else if (this.state === 'attack') {

@@ -53,6 +53,7 @@ const hud = reactive<BattleHudState>({
   waveIndex: 0,
   totalWaves: MONSTER_WAVES.length,
   activeTheme: 'seaside',
+  monsterState: 'idle',
   monsterId: MONSTER_WAVES[0]!.id,
   monsterHp: MONSTER_WAVES[0]!.maxHp,
   monsterMaxHp: MONSTER_WAVES[0]!.maxHp,
@@ -718,6 +719,9 @@ onUnmounted(() => {
               {{ t('message.ultramanView.wave', { current: hud.waveIndex + 1, total: hud.totalWaves }) }}
             </span>
             <span class="boss-name">{{ currentMonsterName }}</span>
+            <span v-if="hud.phase === 'fighting' && ['guarding', 'staggered', 'roaring', 'recovering'].includes(hud.monsterState)" class="boss-action" :class="hud.monsterState">
+              {{ t(`message.ultramanView.reactions.${hud.monsterState}`) }}
+            </span>
             <span class="boss-hp-num">{{ hud.monsterHp }} / {{ hud.monsterMaxHp }}</span>
           </div>
           <div class="boss-hp-track">
@@ -1597,6 +1601,9 @@ onUnmounted(() => {
   color: #fca5a5;
 }
 
+.boss-action { color: #a9f4dc; font-weight: 800; font-size: clamp(10px, 1vw, 14px); }
+.boss-action.guarding { color: #b9d9ff; }
+.boss-action.roaring { color: #ffb47c; }
 .boss-hp-track {
   height: 16px;
   border-radius: 8px;

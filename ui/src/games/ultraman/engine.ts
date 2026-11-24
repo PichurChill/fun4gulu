@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { UltraAudio } from './audio'
 import { BattleEffects } from './effects'
+import { WINDUP_TIME } from './encounter'
+import type { EncounterEvent, Impact } from './encounter'
 import { ArenaManager } from './environment'
 import { UltraGestureRecognizer } from './gesture'
 import { canTrackFeet, JumpKickRecognizer } from './jump'
@@ -49,6 +51,7 @@ export class UltramanGameEngine {
   private lastTimestamp = 0
   private elapsedTime = 0
   private disposed = false
+  private baseAssets: Promise<void> | null = null
   private assetsReady = false
 
   // 游戏状态机
@@ -69,7 +72,6 @@ export class UltramanGameEngine {
   private punchChain = 0
   private lastPunchSide: 'left' | 'right' | null = null
   private chainTimeLeft = 0
-  private lockedAttackX = 0
   private combo = 0
   private maxCombo = 0
   private comboResetTimer = 0
@@ -77,10 +79,6 @@ export class UltramanGameEngine {
   private defeatedCount = 0
 
   // 怪兽攻击节奏控制
-  private monsterAttackCooldown = 2.6
-  private monsterWindupTimer = 0
-  private pendingAttack: MonsterAttackKind = 'fireball'
-  private attackResolved = false
   private waveTransitionTimer = 0
 
   // 英雄招式与动捕状态
@@ -165,10 +163,10 @@ export class UltramanGameEngine {
   }
 
   /** 实时切换战场主题（菜单里点选即可立刻预览 3D 场景变化） */
-  public setSceneTheme(theme: SceneTheme, previewWaveIndex?: number) {
+  public async setSceneTheme(theme: SceneTheme, previewWaveIndex?: number) {
     this.preferredTheme = theme
     const concrete = this.resolveThemeForWave(previewWaveIndex ?? this.waveIndex)
-    this.arena.setTheme(concrete)
+    await this.arena.setTheme(concrete)
     this.emitHud()
   }
 
@@ -177,21 +175,27 @@ export class UltramanGameEngine {
     return MONSTER_WAVES[waveIdx]?.defaultTheme ?? 'seaside'
   }
 
-  /** 预加载当前英雄模型、城市建筑与第 1 关怪兽 */
-  public async preloadBaseAssets(): Promise<void> {
-    if (this.assetsReady) return
+  /** 菜单预览和快速开局共用同一次资源加载。 */
+  public preloadBaseAssets(): Promise<void> {
+    this.baseAssets ??= this.loadBaseAssets().catch(error => {
+      this.baseAssets = null
+      throw error
+    })
+    return this.baseAssets
+  }
+
+  private async loadBaseAssets() {
     this.loadingProgress = 15
     this.emitHud()
-
-    await this.hero.load(this.loader, this.heroProfile)
-    this.loadingProgress = 55
-    this.emitHud()
-
     await Promise.all([
-      this.arena.loadCityBuildings(this.loader),
+      this.hero.load(this.loader, this.heroProfile),
+      this.arena.setTheme(this.resolveThemeForWave(this.waveIndex)),
       this.kaiju.spawn(this.loader, MONSTER_WAVES[0]!),
     ])
-    this.kaiju.setState('idle')
+    if (this.disposed) return
+    await this.hero.load(this.loader, this.heroProfile)
+    if (this.disposed) return
+    this.kaiju.encounter.enter('idle')
     this.effects.setHeroTheme(this.heroProfile)
     this.loadingProgress = 100
     this.assetsReady = true
@@ -319,20 +323,14 @@ export class UltramanGameEngine {
     this.waveIndex = index
     this.monsterMaxHp = spec.maxHp
     this.monsterHp = spec.maxHp
-    this.monsterAttackCooldown = 2.4
-    this.monsterWindupTimer = 0
-    this.attackResolved = false
     this.beamDamageTicksRemaining = 0
     this.effects.clearAllDynamic()
-
-    // 自动切换或保持指定场景主题
-    this.arena.setTheme(this.resolveThemeForWave(index))
 
     this.phase = 'loading'
     this.loadingProgress = 75
     this.emitHud()
 
-    await this.kaiju.spawn(this.loader, spec)
+    await Promise.all([this.arena.setTheme(this.resolveThemeForWave(index)), this.kaiju.spawn(this.loader, spec)])
     this.loadingProgress = 100
     this.phase = 'intro'
     this.waveTransitionTimer = 1.25
@@ -346,7 +344,7 @@ export class UltramanGameEngine {
     this.audio.setDangerAlarm(false)
     this.effects.clearAllDynamic()
     this.hero.resetPose()
-    this.kaiju.setState('idle')
+    this.kaiju.encounter.enter('idle')
     this.emitHud()
   }
 
@@ -534,11 +532,13 @@ export class UltramanGameEngine {
     amount: number,
     color: string,
     isCritical = false,
-    impact: 'light' | 'heavy' | 'beam' = 'light',
+    impact: Impact = 'light',
     punchSide?: 'left' | 'right',
   ) {
     if (this.phase !== 'fighting' || this.monsterHp <= 0) return
 
+    const id = MONSTER_WAVES[this.waveIndex]!.id
+    amount = this.kaiju.encounter.receiveHit(amount, impact, id === 'zetton' || id === 'gomora-mecha')
     this.monsterHp = Math.max(0, this.monsterHp - amount)
     this.combo += 1
     this.maxCombo = Math.max(this.maxCombo, this.combo)
@@ -557,6 +557,7 @@ export class UltramanGameEngine {
     )
 
     if (impact === 'heavy') {
+      this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime)
       this.addHitStop(0.085)
       this.addTrauma(0.42)
       this.effects.spawnImpactRing(hitPos, 0xffffff, 8.5)
@@ -587,9 +588,8 @@ export class UltramanGameEngine {
   private onMonsterDefeated() {
     this.defeatedCount += 1
     this.score += 1500 + this.waveIndex * 600
-    this.monsterWindupTimer = 0
     this.beamDamageTicksRemaining = 0
-    this.kaiju.setState('dying')
+    this.kaiju.encounter.enter('dying')
     this.audio.playExplosion()
     this.addHitStop(0.12)
     this.addTrauma(0.95)
@@ -613,7 +613,7 @@ export class UltramanGameEngine {
     this.emitHud()
   }
 
-  private applyAttackOnHero(damage: number, canDodgeByLean: boolean, attackX: number) {
+  private applyAttackOnHero(damage: number, attack: MonsterAttackKind, attackX: number) {
     if (this.phase !== 'fighting') return
 
     if (this.effects.isHeroBeamActive()) {
@@ -626,7 +626,7 @@ export class UltramanGameEngine {
       return
     }
 
-    if (canDodgeByLean && Math.abs(this.hero.currentX - attackX) > 3.1) {
+    if (attack === 'fireball' && Math.abs(this.hero.currentX - attackX) > 3.1) {
       this.energy = Math.min(100, this.energy + 12)
       this.score += 200
       this.spawnFloatingAtWorld(
@@ -641,6 +641,9 @@ export class UltramanGameEngine {
 
     const isGuarding = this.isHeroGuarding()
     if (isGuarding) {
+      if (attack === 'melee' && this.kaiju.encounter.state === 'attack') {
+        this.kaiju.encounter.enter('staggered')
+      }
       this.perfectGuards += 1
       this.energy = Math.min(100, this.energy + 25)
       this.score += 350
@@ -783,8 +786,9 @@ export class UltramanGameEngine {
 
     const dangerTimer = this.phase === 'fighting' && this.heroHp <= this.heroMaxHp * 0.3
     this.hero.update(dt, this.elapsedTime, dangerTimer, nowMs, rawDt)
-    this.kaiju.update(dt, this.elapsedTime)
-    this.arena.update(dt, this.elapsedTime)
+    if (this.phase !== 'fighting') this.advanceEncounter(dt, false)
+    this.kaiju.update(dt, this.elapsedTime, this.hero.currentX)
+    this.arena.update(this.elapsedTime)
 
     if (this.phase === 'intro') {
       this.waveTransitionTimer -= dt
@@ -826,11 +830,12 @@ export class UltramanGameEngine {
       this.elapsedTime,
     )
 
-    const isWarning = this.phase === 'fighting' && this.monsterWindupTimer > 0
+    const fight = this.kaiju.encounter
+    const isWarning = this.phase === 'fighting' && fight.state === 'windup'
     this.effects.updateWarningRing(
       isWarning,
-      this.pendingAttack === 'fireball' ? this.lockedAttackX : this.hero.currentX,
-      isWarning ? 1 - this.monsterWindupTimer / 1.35 : 0,
+      fight.attack === 'fireball' ? fight.targetX : this.hero.currentX,
+      isWarning ? fight.time / WINDUP_TIME : 0,
       this.elapsedTime,
     )
 
@@ -844,7 +849,6 @@ export class UltramanGameEngine {
   }
 
   private stepCombat(dt: number) {
-    const spec = MONSTER_WAVES[this.waveIndex]!
 
     if (this.beamDamageTicksRemaining > 0) {
       this.beamTickTimer -= dt
@@ -881,10 +885,8 @@ export class UltramanGameEngine {
           } else if (proj.kind === 'ultra-disc') {
             this.energy = Math.min(100, this.energy + 18)
             this.audio.playHeavyImpact()
-            if (this.monsterWindupTimer > 0) {
-              this.monsterWindupTimer = 0
-              this.monsterAttackCooldown = spec.attackInterval * 0.85
-              this.kaiju.setState('hit')
+            if (this.kaiju.encounter.state === 'windup') {
+              this.kaiju.encounter.enter('staggered')
               this.showBanner('bannerInterrupt', 1.0)
             }
             this.applyDamageToMonster(proj.damage, '#67e8f9', true, 'heavy')
@@ -893,51 +895,35 @@ export class UltramanGameEngine {
       } else {
         if (proj.pos.z >= this.hero.baseZ - 2.6) {
           proj.hitTriggered = true
-          this.applyAttackOnHero(proj.damage, true, proj.pos.x)
+          this.applyAttackOnHero(proj.damage, 'fireball', proj.pos.x)
         }
       }
     }
 
-    if (this.monsterHp <= 0 || this.kaiju.state === 'entering' || this.kaiju.state === 'dying') {
-      return
-    }
+    if (this.phase === 'fighting') this.advanceEncounter(dt, true)
+  }
 
-    if (this.monsterWindupTimer > 0) {
-      this.monsterWindupTimer -= dt
-      if (this.monsterWindupTimer <= 0) {
-        this.kaiju.setState('attack', this.pendingAttack)
-        this.attackResolved = false
-        if (this.pendingAttack === 'fireball') {
-          const origin = this.kaiju.getAttackEmitOrigin()
-          const target = new THREE.Vector3(this.lockedAttackX, 9.2, this.hero.baseZ)
-          this.effects.spawnKaijuFireball(origin, target, spec.accentColor, spec.attackDamage)
-          this.attackResolved = true
-        } else if (this.pendingAttack === 'dark-beam') {
-          this.effects.startKaijuBeam(spec.accentColor)
-          this.applyAttackOnHero(spec.attackDamage + 4, false, this.hero.currentX)
-          this.attackResolved = true
-        }
-        this.monsterAttackCooldown = spec.attackInterval
-      }
-    } else if (
-      this.kaiju.state === 'attack' &&
-      this.pendingAttack === 'melee' &&
-      !this.attackResolved
-    ) {
-      if (this.kaiju.stateTime >= 0.28) {
-        this.attackResolved = true
-        this.applyAttackOnHero(spec.attackDamage, false, this.hero.currentX)
-      }
-    } else {
-      this.monsterAttackCooldown -= dt
-      if (this.monsterAttackCooldown <= 0) {
-        const attacks = spec.attacks
-        this.pendingAttack = attacks[Math.floor(Math.random() * attacks.length)]!
-        this.lockedAttackX = this.hero.currentX
-        this.monsterWindupTimer = 1.35
-        this.kaiju.setState('windup', this.pendingAttack)
-        this.audio.playWarning()
-        this.emitHud()
+  private advanceEncounter(dt: number, fighting: boolean) {
+    const fight = this.kaiju.encounter
+    const spec = MONSTER_WAVES[this.waveIndex]!
+    const event: EncounterEvent | undefined = fight.advance(dt, fighting, this.monsterHp / this.monsterMaxHp, this.hero.currentX, spec)
+    if (event === 'warn') {
+      this.audio.playWarning()
+      this.emitHud()
+    } else if (event === 'land' || event === 'roar' || event === 'collapse') {
+      this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime)
+      this.addTrauma(event === 'roar' ? 0.32 : 0.45)
+      if (event === 'roar') this.audio.playRoar()
+    } else if (event === 'strike') {
+      if (fight.attack === 'fireball') {
+        this.effects.spawnKaijuFireball(
+          this.kaiju.getAttackEmitOrigin(),
+          new THREE.Vector3(fight.targetX, 9.2, this.hero.baseZ),
+          spec.accentColor, spec.attackDamage,
+        )
+      } else {
+        if (fight.attack === 'dark-beam') this.effects.startKaijuBeam(spec.accentColor)
+        this.applyAttackOnHero(spec.attackDamage + (fight.attack === 'dark-beam' ? 4 : 0), fight.attack, fight.targetX)
       }
     }
   }
@@ -963,6 +949,12 @@ export class UltramanGameEngine {
       )
     }
 
+    if ((this.phase === 'intro' || this.phase === 'fighting' || this.phase === 'wave-clear') && !this.effects.isHeroBeamActive()) {
+      // 越肩构图留出对手的轮廓，能看清怪兽架臂和失衡时的动作。
+      targetCam.x += 5.5
+      targetCam.z += 2
+      targetLook.x += 0.8
+    }
     this.cameraAnchor.lerp(targetCam, 1 - Math.exp(-dt * 6.5))
     this.camera.position.copy(this.cameraAnchor)
 
@@ -984,12 +976,13 @@ export class UltramanGameEngine {
 
   public getHudSnapshot(): BattleHudState {
     const spec = MONSTER_WAVES[this.waveIndex] ?? MONSTER_WAVES[0]!
+    const fight = this.kaiju.encounter
     let warningTextKey: string | null = null
-    if (this.phase === 'fighting' && this.monsterWindupTimer > 0) {
+    if (this.phase === 'fighting' && fight.state === 'windup') {
       warningTextKey =
-        this.pendingAttack === 'fireball'
+        fight.attack === 'fireball'
           ? 'warningFireball'
-          : this.pendingAttack === 'dark-beam'
+          : fight.attack === 'dark-beam'
             ? 'warningDarkBeam'
             : 'warningMelee'
     }
@@ -1031,10 +1024,8 @@ export class UltramanGameEngine {
       perfectGuards: this.perfectGuards,
       defeatedCount: this.defeatedCount,
       warningTextKey,
-      warningUrgency:
-        this.monsterWindupTimer > 0
-          ? THREE.MathUtils.clamp(1 - this.monsterWindupTimer / 1.35, 0, 1)
-          : 0,
+      warningUrgency: warningTextKey ? Math.min(1, fight.time / WINDUP_TIME) : 0,
+      monsterState: fight.state,
       chargeKind,
       chargeProgress,
       activeSkillBannerKey: this.skillBannerKey,
@@ -1056,6 +1047,7 @@ export class UltramanGameEngine {
     this.audio.dispose()
     this.effects.clearAllDynamic()
     this.kaiju.clearCurrentModel()
+    this.arena.dispose()
     this.renderer.dispose()
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement)

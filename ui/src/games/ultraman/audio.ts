@@ -297,6 +297,31 @@ export class UltraAudio {
   }
 
   /** 怪兽攻击预警提示音 */
+  public playRoar() {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const t = ctx.currentTime
+    const voice = ctx.createOscillator()
+    const throat = ctx.createBiquadFilter()
+    const gain = ctx.createGain()
+    voice.type = 'sawtooth'
+    voice.frequency.setValueAtTime(48, t)
+    voice.frequency.exponentialRampToValueAtTime(92, t + 0.19)
+    voice.frequency.exponentialRampToValueAtTime(36, t + 0.85)
+    throat.type = 'bandpass'
+    throat.frequency.setValueAtTime(390, t)
+    throat.frequency.exponentialRampToValueAtTime(770, t + 0.22)
+    throat.frequency.exponentialRampToValueAtTime(250, t + 0.84)
+    throat.Q.value = 1.4
+    gain.gain.setValueAtTime(0.001, t)
+    gain.gain.linearRampToValueAtTime(0.38, t + 0.14)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9)
+    voice.connect(throat).connect(gain).connect(ctx.destination)
+    voice.start(t)
+    voice.stop(t + 0.92)
+    this.playNoiseBurst(0.55, 0.19, 550)
+  }
+
   public playWarning() {
     const ctx = this.ensureContext()
     if (!ctx) return

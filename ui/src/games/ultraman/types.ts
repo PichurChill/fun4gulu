@@ -1,3 +1,4 @@
+import type { MonsterState } from './encounter'
 export type GamePhase =
   | 'menu'
   | 'loading'
@@ -155,6 +156,7 @@ export interface BattleHudState {
   totalWaves: number
   activeTheme: ConcreteSceneTheme
   monsterId: string
+  monsterState: MonsterState
   monsterHp: number
   monsterMaxHp: number
   heroHp: number
