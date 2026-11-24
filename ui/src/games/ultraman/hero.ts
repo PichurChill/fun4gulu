@@ -513,7 +513,7 @@ export class HeroController {
     return p
   }
 
-  public update(dt: number, elapsedTime: number, dangerTimer: boolean, nowMs = performance.now()) {
+  public update(dt: number, elapsedTime: number, dangerTimer: boolean, nowMs = performance.now(), inputDt = dt) {
     if (!this.model) return
 
     if (this.action !== 'idle' && this.action !== 'victory') {
@@ -533,7 +533,7 @@ export class HeroController {
     }
 
     // 左右闪避平滑移动
-    this.currentX += (this.targetX - this.currentX) * Math.min(1, dt * 12)
+    this.currentX += (this.targetX - this.currentX) * (1 - Math.exp(-inputDt * 12))
 
     // 彩色计时器与双眼辉光
     const idleIntensity = this.profile?.timerIdleIntensity ?? 1.2
@@ -558,7 +558,7 @@ export class HeroController {
 
     // 优先使用摄像头全身实时动捕姿态：奥特曼整体一举一动完全跟随识别到的真人！
     if (this.isLiveTracking(nowMs) && this.livePose) {
-      this.applyLiveBodyPose(this.livePose, dt, elapsedTime)
+      this.applyLiveBodyPose(this.livePose, inputDt, elapsedTime)
       return
     }
 
@@ -717,6 +717,12 @@ export class HeroController {
         thighR.rotation.z += 0.16 + crouchFlex * 0.12
         shinR.rotation.x -= 0.24 + crouchFlex * 1.45 + jumpTuck * 0.9
       }
+    }
+
+    if (this.action === 'jump-kick' && this.profile) {
+      const extension = Math.sin(Math.PI * this.actionTime / this.actionDuration)
+      this.aimBone(this.profile.bones.thighR, new THREE.Vector3(0.12, 0.25, -1), extension)
+      this.aimBone(this.profile.bones.shinR, new THREE.Vector3(0.08, 0.12, -1), extension)
     }
 
     this.root.updateMatrixWorld(true)

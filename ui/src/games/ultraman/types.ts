@@ -20,6 +20,7 @@ export type HeroAction =
   | 'idle'
   | 'punch-left'
   | 'punch-right'
+  | 'jump-kick'
   | 'kick-left'
   | 'kick-right'
   | 'guard'
@@ -160,6 +161,7 @@ export interface BattleHudState {
   heroMaxHp: number
   energy: number
   score: number
+  punchChain: number
   combo: number
   maxCombo: number
   perfectGuards: number

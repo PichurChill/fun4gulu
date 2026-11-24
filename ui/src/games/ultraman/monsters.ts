@@ -106,6 +106,7 @@ export class KaijuController {
   public currentAttack: MonsterAttackKind = 'fireball'
   public currentX = 0
   public currentZ = -6
+  private recoilSide = 0
   public hitFlash = 0
   private patrolPhase = 0
   private modelHeight = 17
@@ -238,7 +239,8 @@ export class KaijuController {
     if (attackKind) this.currentAttack = attackKind
   }
 
-  public triggerHitFlash(strength = 1) {
+  public triggerHitFlash(strength = 1, side?: 'left' | 'right') {
+    this.recoilSide = side === 'left' ? 1 : side === 'right' ? -1 : 0
     this.hitFlash = Math.min(1, Math.max(this.hitFlash, strength))
     if (this.state === 'idle') {
       this.state = 'hit'
@@ -373,7 +375,7 @@ export class KaijuController {
     }
 
     this.root.position.set(this.currentX, posY, this.currentZ)
-    this.root.rotation.set(pitchX, yawY, rollZ)
+    this.root.rotation.set(pitchX, yawY + this.recoilSide * this.hitFlash * 0.22, rollZ + this.recoilSide * this.hitFlash * 0.12)
 
     // 骨骼级呼吸、手臂挥击、触手与尾巴柔性摆动
     if (this.rig) {

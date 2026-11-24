@@ -50,6 +50,32 @@ export class UltraAudio {
     })
   }
 
+  /** 拳风从出招侧掠向中央，飞踢的扫频更低、尾音更长。 */
+  public playSwing(side: 'left' | 'right', kick: boolean) {
+    const ctx = this.ensureContext()
+    if (!ctx) return
+    const now = ctx.currentTime
+    const duration = kick ? 0.14 : 0.09
+    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
+    const wind = ctx.createBufferSource()
+    wind.buffer = buffer
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.setValueAtTime(kick ? 650 : 1050, now)
+    filter.frequency.exponentialRampToValueAtTime(kick ? 1650 : 2900, now + duration)
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.001, now)
+    gain.gain.linearRampToValueAtTime(0.38, now + duration * 0.4)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration)
+    const pan = ctx.createStereoPanner()
+    pan.pan.setValueAtTime(side === 'left' ? -0.65 : 0.65, now)
+    pan.pan.linearRampToValueAtTime(0, now + duration)
+    wind.connect(filter).connect(gain).connect(pan).connect(ctx.destination)
+    wind.start(now)
+  }
+
   /** 出拳呼啸与命中重击 */
   public playPunch(hit = true) {
     const ctx = this.ensureContext()

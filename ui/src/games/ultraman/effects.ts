@@ -36,6 +36,8 @@ interface Projectile {
   age: number
   maxAge: number
   fromHero: boolean
+  punchSide?: 'left' | 'right'
+  finisher?: boolean
   hitTriggered: boolean
 }
 
@@ -342,11 +344,11 @@ export class BattleEffects {
   }
 
   /** 发射出拳能量冲击波 */
-  public spawnPunchWave(origin: THREE.Vector3, target: THREE.Vector3, damage: number) {
+  public spawnPunchWave(origin: THREE.Vector3, target: THREE.Vector3, damage: number, side: 'left' | 'right', finisher: boolean) {
     const wave = new THREE.Mesh(
-      new THREE.TorusGeometry(1.15, 0.24, 8, 18),
+      new THREE.TorusGeometry(finisher ? 1.85 : 1.15, finisher ? 0.4 : 0.24, 8, 24),
       new THREE.MeshBasicMaterial({
-        color: this.themeBurstColor,
+        color: finisher ? 0xffcd55 : this.themeBurstColor,
         transparent: true,
         opacity: 0.92,
         blending: THREE.AdditiveBlending,
@@ -357,9 +359,11 @@ export class BattleEffects {
     wave.lookAt(target)
     this.group.add(wave)
 
-    const vel = target.clone().sub(origin).normalize().multiplyScalar(82)
+    const vel = target.clone().sub(origin).multiplyScalar(1 / 0.11)
     this.projectiles.push({
       kind: 'punch-wave',
+      punchSide: side,
+      finisher,
       mesh: wave,
       pos: origin.clone(),
       vel,
@@ -400,7 +404,7 @@ export class BattleEffects {
     grp.lookAt(target)
     this.group.add(grp)
 
-    const vel = target.clone().sub(origin).normalize().multiplyScalar(78)
+    const vel = target.clone().sub(origin).multiplyScalar(1 / 0.16)
     this.projectiles.push({
       kind: 'kick-wave',
       mesh: grp,

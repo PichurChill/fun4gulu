@@ -99,6 +99,7 @@ const messages = {
         instructionsHand: '抬起左手/右手切换车道，双手上抬跳跃'
       },
       ultramanView: {
+        chainCue: '换手出拳',
         title: '光之战士 · 体感超激斗',
         subtitle: '化身光之巨人，在海港城市迎战五大宇宙怪兽！',
         cameraMode: '体感模式（摄像头）',
@@ -124,7 +125,7 @@ const messages = {
           volcano: '火山遗迹'
         },
         bodySyncFull: '全身实时同步中',
-        bodySyncUpper: '上半身实时同步中',
+        bodySyncUpper: '半身 · 跳起飞踢',
         bodySyncNone: '寻找身体中...',
         startButton: '变身出击！',
         loadingModel: '光之能量汇聚中...',
@@ -144,7 +145,9 @@ const messages = {
         switchToKeyboard: '改用键盘模式开战',
         moves: {
           punch: '左右挥拳',
-          punchDesc: '出拳连击打怪兽',
+          jump: '跳起飞踢',
+          jumpDesc: '全身抬腿踢，半身跳起踢',
+          punchDesc: '左右交替打三拳，第三拳重击',
           dodge: '左右侧身',
           dodgeDesc: '躲避怪兽火球',
           guard: '胸前 X 交叉',
@@ -197,6 +200,8 @@ const messages = {
           bannerFormPower: '强力型 · 怪力爆发！',
           bannerFormSky: '空中型 · 神速翔空！',
           bannerPerfectGuard: '完美防御！能量飙升！',
+          bannerJumpKick: '腾空飞踢！',
+          bannerTriple: '奥特三连重击！',
           bannerInterrupt: '成功打断怪兽蓄力！',
           bannerWaveClear: '怪兽击败！能量恢复！',
           bannerVictory: '地球和平已守护！光之胜利！',
@@ -416,6 +421,7 @@ const messages = {
         instructionsHand: 'Raise left/right hand to switch lane, raise both to jump'
       },
       ultramanView: {
+        chainCue: 'Switch hands',
         title: 'WARRIOR OF LIGHT · MOTION BATTLE',
         subtitle: 'Become the Giant of Light and defend the harbor city against 5 iconic kaiju!',
         cameraMode: 'Motion Camera',
@@ -441,7 +447,7 @@ const messages = {
           volcano: 'Volcano Ruins'
         },
         bodySyncFull: 'Full-Body Live Sync',
-        bodySyncUpper: 'Upper-Body Live Sync',
+        bodySyncUpper: 'Upper body · Hop to kick',
         bodySyncNone: 'Tracking...',
         startButton: 'TRANSFORM!',
         loadingModel: 'Gathering Light Energy...',
@@ -461,7 +467,9 @@ const messages = {
         switchToKeyboard: 'Play with Keyboard',
         moves: {
           punch: 'Punch',
-          punchDesc: 'Throw left/right punches',
+          jump: 'Jump kick',
+          jumpDesc: 'Feet in view: kick. Upper body only: hop.',
+          punchDesc: 'Alternate hands for a heavy third punch',
           dodge: 'Lean L/R',
           dodgeDesc: 'Dodge kaiju fireballs',
           guard: 'Cross Arms X',
@@ -514,6 +522,8 @@ const messages = {
           bannerFormPower: 'POWER TYPE · MIGHT UNLEASHED!',
           bannerFormSky: 'SKY TYPE · LIGHTNING SPEED!',
           bannerPerfectGuard: 'PERFECT GUARD! +ENERGY!',
+          bannerJumpKick: 'RISING KICK!',
+          bannerTriple: 'ULTRA TRIPLE STRIKE!',
           bannerInterrupt: 'CHARGE INTERRUPTED!',
           bannerWaveClear: 'KAIJU DEFEATED!',
           bannerVictory: 'PEACE RESTORED! VICTORY!',
@@ -733,6 +743,7 @@ const messages = {
         instructionsHand: '左右の手を上げてレーン切り替え、両手上げでジャンプ'
       },
       ultramanView: {
+        chainCue: '反対の手でパンチ',
         title: '光の戦士・体感バトル',
         subtitle: '光の巨人となり、港街で5大怪獣に立ち向かえ！',
         cameraMode: '体感カメラモード',
@@ -758,7 +769,7 @@ const messages = {
           volcano: '火山遺跡'
         },
         bodySyncFull: '全身リアルタイム連動',
-        bodySyncUpper: '上半身リアルタイム連動',
+        bodySyncUpper: '上半身 · ジャンプでキック',
         bodySyncNone: '体を検出中...',
         startButton: '変身スタート！',
         loadingModel: '光のエネルギー集結中...',
@@ -778,7 +789,9 @@ const messages = {
         switchToKeyboard: 'キーボードでプレイ',
         moves: {
           punch: '左右パンチ',
-          punchDesc: 'パンチ連撃で攻撃',
+          jump: 'ジャンプキック',
+          jumpDesc: '全身ならキック、上半身ならジャンプ',
+          punchDesc: '左右交互に3発で強打',
           dodge: '左右に避ける',
           dodgeDesc: '火球をステップ回避',
           guard: '胸前でX交差',
@@ -831,6 +844,8 @@ const messages = {
           bannerFormPower: 'パワータイプ・怪力爆発！',
           bannerFormSky: 'スカイタイプ・神速翔空！',
           bannerPerfectGuard: 'パーフェクトガード！',
+          bannerJumpKick: 'ジャンプキック！',
+          bannerTriple: 'ウルトラ三連撃！',
           bannerInterrupt: 'チャージ阻止成功！',
           bannerWaveClear: '怪獣撃破！体力回復！',
           bannerVictory: '地球の平和を守り抜いた！',
@@ -1050,6 +1065,7 @@ const messages = {
         instructionsHand: '왼손/오른손을 들어 차선 변경, 양손을 들어 점프'
       },
       ultramanView: {
+        chainCue: '반대손으로 펀치',
         title: '빛의 전사 · 체감 배틀',
         subtitle: '빛의 거인이 되어 항구 도시의 5대 괴수에 맞서 싸우세요!',
         cameraMode: '체감 카메라 모드',
@@ -1075,7 +1091,7 @@ const messages = {
           volcano: '화산 유적'
         },
         bodySyncFull: '전신 실시간 동기화',
-        bodySyncUpper: '상반신 실시간 동기화',
+        bodySyncUpper: '상반신 · 점프해서 킥',
         bodySyncNone: '신체 감지 중...',
         startButton: '변신 출격!',
         loadingModel: '빛의 에너지 충전 중...',
@@ -1095,7 +1111,9 @@ const messages = {
         switchToKeyboard: '키보드로 플레이',
         moves: {
           punch: '좌우 펀치',
-          punchDesc: '연속 펀치 공격',
+          jump: '점프 킥',
+          jumpDesc: '전신은 발차기, 상반신은 점프',
+          punchDesc: '양손을 번갈아 세 번째 강타',
           dodge: '좌우 회피',
           dodgeDesc: '화염구 피하기',
           guard: '가슴 X 교차',
@@ -1148,6 +1166,8 @@ const messages = {
           bannerFormPower: '파워 타입 · 괴력 폭발!',
           bannerFormSky: '스카이 타입 · 신속 강습!',
           bannerPerfectGuard: '퍼펙트 가드!',
+          bannerJumpKick: '점프 킥!',
+          bannerTriple: '울트라 3연타!',
           bannerInterrupt: '괴수 충전 차단!',
           bannerWaveClear: '괴수 격파! 체력 회복!',
           bannerVictory: '지구의 평화를 지켜냈습니다!',
@@ -1367,6 +1387,7 @@ const messages = {
         instructionsHand: 'Levez la main gauche/droite pour changer de voie, les deux pour sauter'
       },
       ultramanView: {
+        chainCue: 'Change de poing',
         title: 'GUERRIER DE LUMIÈRE · COMBAT MOTION',
         subtitle: 'Devenez le Géant de Lumière et affrontez 5 kaiju dans le port !',
         cameraMode: 'Mode Caméra Motion',
@@ -1392,7 +1413,7 @@ const messages = {
           volcano: 'Ruines volcaniques'
         },
         bodySyncFull: 'Synchro corps entier',
-        bodySyncUpper: 'Synchro haut du corps',
+        bodySyncUpper: 'Buste · Saute pour frapper',
         bodySyncNone: 'Détection...',
         startButton: 'TRANSFORMATION !',
         loadingModel: 'Concentration de la lumière...',
@@ -1412,7 +1433,9 @@ const messages = {
         switchToKeyboard: 'Jouer au clavier',
         moves: {
           punch: 'Coups de poing',
-          punchDesc: 'Enchaînez gauche/droite',
+          jump: 'Coup de pied sauté',
+          jumpDesc: 'Pieds visibles : donne un coup. Sinon, saute !',
+          punchDesc: 'Alterne les poings pour un troisième coup puissant',
           dodge: 'Esquive G/D',
           dodgeDesc: 'Évitez les boules de feu',
           guard: 'Bras en X',
@@ -1465,6 +1488,8 @@ const messages = {
           bannerFormPower: 'TYPE PUISSANCE · FORCE BRUTE !',
           bannerFormSky: 'TYPE CIEL · VITESSE ÉCLAIR !',
           bannerPerfectGuard: 'PARADE PARFAITE !',
+          bannerJumpKick: 'COUP DE PIED SAUTÉ !',
+          bannerTriple: 'TRIPLE FRAPPE ULTRA !',
           bannerInterrupt: 'CHARGE INTERROMPUE !',
           bannerWaveClear: 'KAIJU VAINCU !',
           bannerVictory: 'PAIX RESTAURÉE ! VICTOIRE !',

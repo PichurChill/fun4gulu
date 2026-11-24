@@ -24,11 +24,6 @@ interface MediaPipePoseInstance {
   close?: () => Promise<void>
 }
 
-interface MediaPipeCameraInstance {
-  start(): Promise<void>
-  stop(): void
-}
-
 const router = useRouter()
 const { t } = useI18n()
 
@@ -65,6 +60,7 @@ const hud = reactive<BattleHudState>({
   heroMaxHp: 100,
   energy: 50,
   score: 0,
+  punchChain: 0,
   combo: 0,
   maxCombo: 0,
   perfectGuards: 0,
@@ -101,7 +97,9 @@ const isPlaying = computed(
 // ---- 运行时句柄 ----
 let engine: UltramanGameEngine | null = null
 let poseInstance: MediaPipePoseInstance | null = null
-let cameraInstance: MediaPipeCameraInstance | null = null
+let cameraSession = 0
+let frameRequest = 0
+let pendingFrame: Promise<void> | null = null
 let poseCtx: CanvasRenderingContext2D | null = null
 let mediapipeLoaded = false
 const pressedKeys = new Set<string>()
@@ -110,7 +108,6 @@ const floatTimers = new Map<number, number>()
 // ---- MediaPipe 按需加载 ----
 const MEDIAPIPE_SCRIPTS = [
   'https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js',
-  'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js',
   'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1675466124/drawing_utils.js',
 ]
 
@@ -184,70 +181,79 @@ function drawMiniSkeleton(landmarks: PoseLandmark[] | undefined) {
 }
 
 async function startCameraTracking(): Promise<void> {
-  if (!videoRef.value) throw new Error('Video element unavailable')
+  const session = cameraSession
+  const video = videoRef.value
+  if (!video) throw new Error('Video element unavailable')
   await ensureMediaPipeScripts()
-
+  if (session !== cameraSession) return
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 360 } },
     audio: false,
   })
-  videoRef.value.srcObject = stream
-  await videoRef.value.play()
-
+  if (session !== cameraSession) {
+    stream.getTracks().forEach((track) => track.stop())
+    return
+  }
+  video.srcObject = stream
+  await video.play()
+  if (session !== cameraSession) return
   const win = window as unknown as {
     Pose: new (cfg: { locateFile: (file: string) => string }) => MediaPipePoseInstance
-    Camera: new (
-      video: HTMLVideoElement,
-      cfg: { onFrame: () => Promise<void>; width: number; height: number },
-    ) => MediaPipeCameraInstance
   }
 
-  poseInstance = new win.Pose({
+  const pose = new win.Pose({
     locateFile: (file: string) =>
       `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`,
   })
-  poseInstance.setOptions({
+  poseInstance = pose
+  pose.setOptions({
     modelComplexity: 1,
     smoothLandmarks: true,
     enableSegmentation: false,
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5,
   })
-  poseInstance.onResults((results) => {
+  pose.onResults((results) => {
+    if (session !== cameraSession) return
     const lms = results.poseLandmarks ?? null
     const worldLms = results.poseWorldLandmarks ?? null
     drawMiniSkeleton(lms ?? undefined)
-    engine?.feedPoseLandmarks(lms, worldLms, performance.now(), 480, 360)
+    engine?.feedPoseLandmarks(lms, worldLms, performance.now(), video.videoWidth, video.videoHeight)
   })
 
-  cameraInstance = new win.Camera(videoRef.value, {
-    onFrame: async () => {
-      if (poseInstance && videoRef.value) {
-        await poseInstance.send({ image: videoRef.value })
+  // 首帧完成后才开始战斗，避免模型初始化期间怪兽已经开始攻击。
+  const infer = () => pose.send({ image: video })
+  pendingFrame = infer()
+  await pendingFrame
+  const nextFrame = async () => {
+    if (session !== cameraSession) return
+    try {
+      pendingFrame = infer()
+      await pendingFrame
+    } catch (err) {
+      if (session === cameraSession) {
+        handleExitToMenu()
+        cameraError.value = err instanceof Error ? err.message : String(err)
       }
-    },
-    width: 480,
-    height: 360,
-  })
-  await cameraInstance.start()
+      return
+    }
+    if (session === cameraSession) frameRequest = video.requestVideoFrameCallback(nextFrame)
+  }
+  if (session === cameraSession) frameRequest = video.requestVideoFrameCallback(nextFrame)
 }
 
 function stopCameraTracking() {
-  if (cameraInstance) {
-    try {
-      cameraInstance.stop()
-    } catch {
-      // 忽略停止过程中的浏览器状态异常
-    }
-    cameraInstance = null
+  cameraSession++
+  if (frameRequest) {
+    videoRef.value?.cancelVideoFrameCallback(frameRequest)
+    frameRequest = 0
   }
-  if (poseInstance) {
-    try {
-      void poseInstance.close?.()
-    } catch {
-      // 忽略关闭异常
-    }
+  const pose = poseInstance
+  if (pose) {
+    const close = () => pose.close?.()
+    void Promise.resolve(pendingFrame).then(close, close)
     poseInstance = null
+    pendingFrame = null
   }
   const stream = videoRef.value?.srcObject as MediaStream | null
   if (stream) {
@@ -286,22 +292,27 @@ function cycleActiveArena() {
 
 // ---- 游戏流程控制 ----
 async function handleStartBattle(overrideMode?: ControlMode) {
-  if (!engine) return
+  if (!engine || startingCamera.value) return
   if (overrideMode) selectedMode.value = overrideMode
   cameraError.value = null
+  engine.audio.unlock()
 
   stopCameraTracking()
 
+  const session = cameraSession
   if (selectedMode.value === 'camera') {
     startingCamera.value = true
     try {
       await startCameraTracking()
     } catch (err: unknown) {
+      if (session !== cameraSession) return
+      stopCameraTracking()
       startingCamera.value = false
       const msg = err instanceof Error ? err.message : String(err)
       cameraError.value = msg
       return
     }
+    if (session !== cameraSession) return
     startingCamera.value = false
   }
 
@@ -325,7 +336,7 @@ function toggleMute() {
 }
 
 function handleRecenter() {
-  engine?.gesture.recenter()
+  engine?.recenter()
 }
 
 // ---- 键盘控制（支持键盘模式，也支持在体感模式下随时辅助测试与陪玩） ----
@@ -380,7 +391,7 @@ function onKeyUp(e: KeyboardEvent) {
 
 function onVisibilityChange() {
   if (!document.hidden && engine) {
-    engine.gesture.reset()
+    engine.resetTracking()
   }
 }
 
@@ -579,7 +590,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 5 个动作图示教学 -->
+        <!-- 动作图示教学 -->
         <div class="moves-grid">
           <div class="move-card">
             <svg class="pose-svg" viewBox="0 0 64 64" fill="none">
@@ -590,6 +601,16 @@ onUnmounted(() => {
             </svg>
             <div class="move-name">{{ t('message.ultramanView.moves.punch') }}</div>
             <div class="move-desc">{{ t('message.ultramanView.moves.punchDesc') }}</div>
+          </div>
+
+          <div class="move-card">
+            <svg class="pose-svg" viewBox="0 0 64 64" fill="none">
+              <circle cx="30" cy="10" r="5" stroke="#38e8ff" stroke-width="3" />
+              <path d="m30 16-5 14-9 8 7 5m2-13 12 4 16-9M28 20l13-5m-13 5-10 6" stroke="#ffbc66" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M13 54h36m-15-5v-9m-4 4 4-4 4 4" stroke="#38e8ff" stroke-width="2" />
+            </svg>
+            <div class="move-name">{{ t('message.ultramanView.moves.jump') }}</div>
+            <div class="move-desc">{{ t('message.ultramanView.moves.jumpDesc') }}</div>
           </div>
 
           <div class="move-card">
@@ -779,6 +800,10 @@ onUnmounted(() => {
             />
           </div>
 
+          <div v-if="hud.punchChain > 0" class="chain-cue">
+            <span>{{ t('message.ultramanView.chainCue') }}</span>
+            <i v-for="n in 3" :key="n" :class="{ filled: n <= hud.punchChain }" />
+          </div>
           <div class="bar-row energy-row">
             <span class="bar-label">{{ t('message.ultramanView.energy') }}</span>
             <span class="energy-tip" :class="{ full: hud.energy >= 100, ready: hud.energy >= 35 }">
@@ -1288,7 +1313,7 @@ onUnmounted(() => {
 
 .moves-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -1585,6 +1610,25 @@ onUnmounted(() => {
   background: linear-gradient(90deg, #b91c1c 0%, #ef4444 55%, #fb923c 100%);
   box-shadow: 0 0 14px rgba(239, 68, 68, 0.85);
   transition: width 0.16s ease-out;
+}
+
+.chain-cue {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  color: #ffe68b;
+  font-weight: 800;
+  font-size: 13px;
+}
+.chain-cue i {
+  width: 16px;
+  height: 6px;
+  transform: skewX(-18deg);
+  background: #424956;
+}
+.chain-cue i.filled {
+  background: #ffce55;
 }
 
 /* 危险预警条 */
