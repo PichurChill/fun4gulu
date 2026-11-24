@@ -167,6 +167,8 @@ export class UltraGestureRecognizer {
     width = 640,
     height = 480,
     worldLandmarks?: PoseLandmark[] | null,
+    canChangeForm = true,
+    laneCenter?: number,
   ): GestureSnapshot {
     const out: GestureSnapshot = {
       tracking: false,
@@ -188,13 +190,14 @@ export class UltraGestureRecognizer {
     }
 
     if (
-      !landmarks ||
+      !landmarks || landmarks.length < 33 || width <= 0 || height <= 0 ||
       (this.lastFrameTime !== null && (now < this.lastFrameTime || now - this.lastFrameTime > 1200))
     ) {
       this.reset()
       this.lastFrameTime = now
       return out
     }
+    const deltaSeconds = this.lastFrameTime === null ? 0 : (now - this.lastFrameTime) / 1000
     this.lastFrameTime = now
 
     // 原始像素坐标（用于高度基准、侧移及未转角参考）
@@ -202,17 +205,17 @@ export class UltraGestureRecognizer {
       x: lm.x * width,
       y: lm.y * height,
       z: (lm.z ?? 0) * width,
-      v: lm.visibility ?? 1,
+      v: lm.x >= 0 && lm.x <= 1 && lm.y >= 0 && lm.y <= 1 ? lm.visibility ?? 1 : 0,
     }))
 
     // 3D 世界坐标（优先使用 MediaPipe 真实米制 poseWorldLandmarks，缺失时回退像素 3D）
     const worldPts: Vec3[] =
-      worldLandmarks && worldLandmarks.length >= 33
+      worldLandmarks && worldLandmarks.length === landmarks.length
         ? worldLandmarks.map((lm, idx) => ({
             x: lm.x,
             y: lm.y,
             z: lm.z ?? 0,
-            v: lm.visibility ?? landmarks[idx]?.visibility ?? 1,
+            v: Math.min(lm.visibility ?? 1, rawPts[idx]!.v),
           }))
         : rawPts.map((p) => ({
             x: p.x / width,
@@ -221,10 +224,14 @@ export class UltraGestureRecognizer {
             v: p.v,
           }))
 
+    // 拳程与肘角统一在人体三维坐标中测量，转肩时投影肩宽会缩短。
+    const worldLeft = worldPts[11]!
+    const worldRight = worldPts[12]!
+    const armScale = Math.hypot(worldLeft.x - worldRight.x, worldLeft.y - worldRight.y, worldLeft.z - worldRight.z)
     const lsRaw = rawPts[11]
     const rsRaw = rawPts[12]
     if (!isVisible(lsRaw, 0.42) || !isVisible(rsRaw, 0.42)) {
-      this.guardSince = null
+      this.reset()
       return out
     }
 
@@ -244,7 +251,8 @@ export class UltraGestureRecognizer {
       this.centerX = midX
     }
     const rawLean = clamp((-(midX - this.centerX) / scale) * 1.45, -1, 1)
-    this.smoothLean += (rawLean - this.smoothLean) * 0.35
+    const lean = laneCenter === undefined ? rawLean : clamp((laneCenter - midX / width) / 0.14, -1, 1)
+    this.smoothLean += (lean - this.smoothLean) * -Math.expm1(-13 * deltaSeconds)
     out.lean = Math.abs(this.smoothLean) < 0.06 ? 0 : this.smoothLean
 
     if (this.baseShoulderY === null) {
@@ -296,8 +304,11 @@ export class UltraGestureRecognizer {
       !isVisible(rw, 0.25)
     ) {
       this.beamHold.reset()
+      this.typeHold.reset()
+      this.discRaiseStart = [null, null]
+      this.discArmed = [null, null]
       this.guardSince = null
-      this.detectPunch(pts, now, scale, out)
+      if (armScale > 0) this.detectPunch(worldPts, now, armScale, out)
       out.hintKey = out.punch ? 'hintPunch' : 'hintShowArms'
       return out
     }
@@ -349,7 +360,7 @@ export class UltraGestureRecognizer {
     const elbowsHigh = le.y < centerY - scale * 0.3 && re.y < centerY - scale * 0.3
     const wristsAboveHead = lw.y < headTopY && rw.y < headTopY
     const wristsCrossedOverhead = (lw.x - rw.x) * (ls.x - rs.x) < 0
-    const isTypePose = elbowsHigh && wristsAboveHead && wristsCrossedOverhead
+    const isTypePose = canChangeForm && elbowsHigh && wristsAboveHead && wristsCrossedOverhead
 
     const typeElapsed = this.typeHold.update(isTypePose, now)
     if (isTypePose || this.typeHold.isRecent(now)) {
@@ -468,7 +479,7 @@ export class UltraGestureRecognizer {
     }
 
     // 招式 D：左右挥拳普攻连击
-    this.detectPunch(pts, now, scale, out)
+    if (armScale > 0) this.detectPunch(worldPts, now, armScale, out)
     return out
   }
 

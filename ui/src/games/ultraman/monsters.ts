@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { releaseModel } from './releaseModel'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { KaijuEncounter, WINDUP_TIME } from './encounter'
 import type { MonsterSpec } from './types'
@@ -101,6 +102,7 @@ interface MonsterRig {
 export class KaijuController {
   public readonly root = new THREE.Group()
   private model: THREE.Object3D | null = null
+  private loadGeneration = 0
   private spec: MonsterSpec | null = null
   private rig: MonsterRig | null = null
   private restQuats = new Map<THREE.Bone, THREE.Quaternion>()
@@ -133,9 +135,14 @@ export class KaijuController {
 
   public async spawn(loader: GLTFLoader, spec: MonsterSpec): Promise<void> {
     this.clearCurrentModel()
+    const generation = this.loadGeneration
     this.spec = spec
     const gltf = await loader.loadAsync(spec.modelUrl)
     const model = gltf.scene
+    if (generation !== this.loadGeneration) {
+      releaseModel(model)
+      return
+    }
     this.model = model
 
     // 计算包围盒，归一化高度并让脚底贴齐地面 y = 0
@@ -238,17 +245,12 @@ export class KaijuController {
     this.root.rotation.set(0, 0, 0)
   }
 
+
   public clearCurrentModel() {
+    this.loadGeneration++
     if (this.model) {
       this.root.remove(this.model)
-      this.model.traverse((node) => {
-        if ((node as THREE.Mesh).isMesh) {
-          const mesh = node as THREE.Mesh
-          mesh.geometry.dispose()
-          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-          for (const m of mats) m.dispose()
-        }
-      })
+      releaseModel(this.model)
       this.model = null
     }
     this.restQuats.clear()

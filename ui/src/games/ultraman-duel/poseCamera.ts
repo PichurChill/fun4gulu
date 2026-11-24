@@ -27,7 +27,7 @@ interface PoseLandmarkerLike {
     timestamp: number,
   ): {
     landmarks?: { x: number; y: number; z?: number; visibility?: number }[][]
-    worldLandmarks?: { x: number; y: number; z?: number }[][]
+    worldLandmarks?: { x: number; y: number; z?: number; visibility?: number }[][]
   }
   close(): void
 }
@@ -39,6 +39,8 @@ interface PoseLandmarkerLike {
 export class MultiPoseCamera {
   private landmarker: PoseLandmarkerLike | null = null
   private stream: MediaStream | null = null
+  private session = 0
+  public onError: ((error: unknown) => void) | null = null
   private rafId = 0
   private lastVideoTime = -1
   /** 每帧回调：已按镜像水平位置升序排列（最多 2 人） */
@@ -47,9 +49,11 @@ export class MultiPoseCamera {
   public async start(video: HTMLVideoElement): Promise<void> {
     if (!video) throw new Error('Video element unavailable')
 
+    const session = ++this.session
     const vision = (await import(/* @vite-ignore */ TASKS_VISION_URL)) as unknown as TasksVisionModule
     const fileset = await vision.FilesetResolver.forVisionTasks(TASKS_WASM_URL)
-    this.landmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
+    if (session !== this.session) return
+    const landmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate: 'GPU' },
       runningMode: 'VIDEO',
       numPoses: 2,
@@ -58,19 +62,36 @@ export class MultiPoseCamera {
       minTrackingConfidence: 0.4,
     })
 
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    if (session !== this.session) {
+      landmarker.close()
+      return
+    }
+    this.landmarker = landmarker
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false,
     })
-    video.srcObject = this.stream
+    if (session !== this.session) {
+      stream.getTracks().forEach(track => track.stop())
+      return
+    }
+    this.stream = stream
+    video.srcObject = stream
     await video.play()
+    if (session !== this.session) return
 
     const loop = () => {
       this.rafId = requestAnimationFrame(loop)
       if (!this.landmarker || video.readyState < 2) return
       if (video.currentTime === this.lastVideoTime) return
       this.lastVideoTime = video.currentTime
-      this.detect(video)
+      try {
+        this.detect(video)
+      } catch (error) {
+        this.stop(video)
+        if (!this.onError) throw error
+        this.onError(error)
+      }
     }
     this.rafId = requestAnimationFrame(loop)
   }
@@ -95,8 +116,8 @@ export class MultiPoseCamera {
       const worldRaw = worldSets[i] ?? []
       const worldLandmarks: PoseLandmark[] =
         worldRaw.length >= 33
-          ? worldRaw.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0, visibility: 1 }))
-          : landmarks.map((p) => ({ x: p.x, y: p.y, z: (p.z ?? 0) * 0.6, visibility: p.visibility }))
+          ? worldRaw.map((p, index) => ({ x: p.x, y: p.y, z: p.z ?? 0, visibility: p.visibility ?? landmarks[index]!.visibility }))
+          : []
       const ls = raw[11]!
       const rs = raw[12]!
       // 画面镜像显示：屏幕左 = 1 - 原始 x
@@ -109,6 +130,7 @@ export class MultiPoseCamera {
   }
 
   public stop(video: HTMLVideoElement | null) {
+    this.session++
     cancelAnimationFrame(this.rafId)
     this.rafId = 0
     this.lastVideoTime = -1

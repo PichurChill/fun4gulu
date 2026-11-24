@@ -112,6 +112,7 @@ export class UltramanGameEngine {
   private readonly camLookAt = new THREE.Vector3(-1.9, 8.6, -5)
   private readonly cameraAnchor = this.baseCamPos.clone()
 
+  private paused = false
   private readonly resizeObserver: ResizeObserver
 
   constructor(container: HTMLElement, callbacks: EngineCallbacks) {
@@ -193,8 +194,12 @@ export class UltramanGameEngine {
       this.kaiju.spawn(this.loader, MONSTER_WAVES[0]!),
     ])
     if (this.disposed) return
-    await this.hero.load(this.loader, this.heroProfile)
-    if (this.disposed) return
+    let preview: HeroProfile
+    do {
+      preview = this.heroProfile
+      await this.hero.load(this.loader, preview)
+      if (this.disposed) return
+    } while (preview !== this.heroProfile)
     this.kaiju.encounter.enter('idle')
     this.effects.setHeroTheme(this.heroProfile)
     this.loadingProgress = 100
@@ -214,6 +219,7 @@ export class UltramanGameEngine {
     this.loadingProgress = 40
     this.emitHud()
     await this.hero.load(this.loader, profile)
+    if (this.disposed || profile !== this.heroProfile || this.phase !== 'menu') return
     this.hero.resetPose()
     this.loadingProgress = 100
     this.emitHud()
@@ -289,6 +295,9 @@ export class UltramanGameEngine {
       await this.preloadBaseAssets()
     }
 
+    if (this.disposed) return
+    await this.hero.load(this.loader, this.heroProfile)
+    if (this.disposed) return
     this.waveIndex = THREE.MathUtils.clamp(startWaveIndex, 0, MONSTER_WAVES.length - 1)
     this.heroHp = this.heroMaxHp
     this.energy = 50
@@ -331,6 +340,7 @@ export class UltramanGameEngine {
     this.emitHud()
 
     await Promise.all([this.arena.setTheme(this.resolveThemeForWave(index)), this.kaiju.spawn(this.loader, spec)])
+    if (this.disposed) return
     this.loadingProgress = 100
     this.phase = 'intro'
     this.waveTransitionTimer = 1.25
@@ -348,6 +358,11 @@ export class UltramanGameEngine {
     this.emitHud()
   }
 
+  public setPaused(paused: boolean) {
+    this.paused = paused
+    this.audio.setDangerAlarm(!paused && this.heroHp > 0 && this.heroHp <= this.heroMaxHp * 0.3 && this.phase === 'fighting')
+  }
+
   public setMuted(muted: boolean) {
     this.audio.muted = muted
     if (muted) this.audio.setDangerAlarm(false)
@@ -363,9 +378,10 @@ export class UltramanGameEngine {
     now: number,
     width: number,
     height: number,
+    laneCenter?: number,
   ) {
     if (this.controlMode !== 'camera') return
-    const snap = this.gesture.update(landmarks, now, width, height, worldLandmarks)
+    const snap = this.gesture.update(landmarks, now, width, height, worldLandmarks, !!this.heroProfile.forms, laneCenter)
     this.gestureTracking = snap.tracking
     const fullBody = snap.coverage === 'full' && canTrackFeet(landmarks)
     const physicalKick = fullBody && this.feetTracked ? snap.kick : null
@@ -742,6 +758,7 @@ export class UltramanGameEngine {
 
     const rawDt = Math.min(0.05, Math.max(0.001, (now - this.lastTimestamp) / 1000))
     this.lastTimestamp = now
+    if (this.paused) return
     this.elapsedTime += rawDt
 
     // 命中顿帧：世界时间压缩，镜头平滑与震动衰减仍走真实时间
@@ -1048,6 +1065,7 @@ export class UltramanGameEngine {
     this.effects.clearAllDynamic()
     this.kaiju.clearCurrentModel()
     this.arena.dispose()
+    this.hero.dispose()
     this.renderer.dispose()
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement)

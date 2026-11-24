@@ -99,6 +99,14 @@ const messages = {
         instructionsHand: '抬起左手/右手切换车道，双手上抬跳跃'
       },
       ultramanView: {
+        split: '双人分屏',
+        rotate: '请将屏幕横过来',
+        splitHelp: '各站在画面的一侧，各自挑战同一组怪兽，比比谁得分高。',
+        waitingPair: '等两位战士入镜',
+        splitKeyboard: '双人键盘',
+        splitKeys: '移动 A/D 或 ←/→，防御 S 或 ↓。\n左边 F/G 拳、R 踢、T 光轮、V 光线；右边 J/K 拳、I 踢、U 光轮、L 光线。',
+        music: '战斗音乐',
+        sortie: '出击 · 原创战斗曲',
         reactions: { guarding: '架起防御 · 飞踢破防', staggered: '失衡 · 快追击', roaring: '狂暴 · 攻势加快', recovering: '露出破绽' },
         chainCue: '换手出拳',
         title: '光之战士 · 体感超激斗',
@@ -109,6 +117,8 @@ const messages = {
         selectArena: '选择战斗场景',
         selectHero: '选择光之战士',
         heroNames: {
+          dyna: '戴拿',
+          zeta: '泽塔',
           tiga: '迪迦',
           zero: '赛罗'
         },
@@ -189,6 +199,12 @@ const messages = {
           warningDarkBeam: '警告！暗黑光线来袭 — 快交叉防御！'
         },
         banners: {
+          bannerBeamDyna: '索尔捷特光线!',
+          bannerSuperBeamDyna: '究极索尔捷特光线!',
+          bannerDiscDyna: '闪亮光轮!',
+          bannerBeamZeta: '泽斯帝姆光线!',
+          bannerSuperBeamZeta: '究极泽斯帝姆光线!',
+          bannerDiscZeta: '泽塔光轮!',
           bannerWaveStart: '怪兽出现！战斗开始！',
           bannerKick: '奥特飞踢！',
           bannerBeamTiga: '哉佩利敖光线！',
@@ -422,6 +438,14 @@ const messages = {
         instructionsHand: 'Raise left/right hand to switch lane, raise both to jump'
       },
       ultramanView: {
+        split: 'Split screen',
+        rotate: 'Turn your screen sideways',
+        splitHelp: 'Stand on opposite sides and race the same monster waves for points.',
+        waitingPair: 'Waiting for both players',
+        splitKeyboard: 'Two-player keyboard',
+        splitKeys: 'Move A/D or ←/→, guard S or ↓.\nP1 F/G punch · R kick · T disc · V beam. P2 J/K punch · I kick · U disc · L beam.',
+        music: 'Soundtrack',
+        sortie: 'Sortie · Battle score',
         reactions: { guarding: 'Guard up · Kick to break', staggered: 'Staggered · Strike now', roaring: 'Enraged · Faster attacks', recovering: 'Open to attack' },
         chainCue: 'Switch hands',
         title: 'WARRIOR OF LIGHT · MOTION BATTLE',
@@ -432,6 +456,8 @@ const messages = {
         selectArena: 'Select Arena',
         selectHero: 'Choose Ultra Warrior',
         heroNames: {
+          dyna: 'Dyna',
+          zeta: 'Z',
           tiga: 'Tiga',
           zero: 'Zero'
         },
@@ -512,6 +538,12 @@ const messages = {
           warningDarkBeam: 'WARNING! Dark Beam — Cross Arms to Guard!'
         },
         banners: {
+          bannerBeamDyna: 'Solgent Ray!',
+          bannerSuperBeamDyna: 'Super Solgent Ray!',
+          bannerDiscDyna: 'Flash Slash!',
+          bannerBeamZeta: 'Zestium Beam!',
+          bannerSuperBeamZeta: 'Super Zestium Beam!',
+          bannerDiscZeta: 'Z Slash!',
           bannerWaveStart: 'KAIJU ALERT! BATTLE START!',
           bannerKick: 'ULTRA KICK!',
           bannerBeamTiga: 'ZEPELLION RAY!',
@@ -745,6 +777,14 @@ const messages = {
         instructionsHand: '左右の手を上げてレーン切り替え、両手上げでジャンプ'
       },
       ultramanView: {
+        split: '2人画面分割',
+        rotate: '横向きにしてください',
+        splitHelp: '左右に分かれて同じ怪獣に挑み、スコアを競おう。',
+        waitingPair: '2人が映るのを待っています',
+        splitKeyboard: '2人キーボード',
+        splitKeys: '移動 A/D・←/→、防御 S・↓。\nP1 拳 F/G・蹴 R・光輪 T・光線 V ／ P2 拳 J/K・蹴 I・光輪 U・光線 L',
+        music: '戦闘音楽',
+        sortie: '出撃 · オリジナル曲',
         reactions: { guarding: '防御中 · キックで崩せ', staggered: 'よろけた · 追撃！', roaring: '怒り · 攻撃が加速', recovering: '反撃のチャンス' },
         chainCue: '反対の手でパンチ',
         title: '光の戦士・体感バトル',
@@ -755,6 +795,8 @@ const messages = {
         selectArena: 'バトルステージ',
         selectHero: '光の戦士を選択',
         heroNames: {
+          dyna: 'ダイナ',
+          zeta: 'ゼット',
           tiga: 'ティガ',
           zero: 'ゼロ'
         },
@@ -835,6 +877,12 @@ const messages = {
           warningDarkBeam: '警告！闇の光線！両腕交差でガード！'
         },
         banners: {
+          bannerBeamDyna: 'ソルジェント光線!',
+          bannerSuperBeamDyna: '究極ソルジェント光線!',
+          bannerDiscDyna: 'フラッシュ光輪!',
+          bannerBeamZeta: 'ゼスティウム光線!',
+          bannerSuperBeamZeta: '究極ゼスティウム光線!',
+          bannerDiscZeta: 'ゼット光輪!',
           bannerWaveStart: '怪獣出現！バトル開始！',
           bannerKick: 'ウルトラキック！',
           bannerBeamTiga: 'ゼペリオン光線！',
@@ -1068,6 +1116,14 @@ const messages = {
         instructionsHand: '왼손/오른손을 들어 차선 변경, 양손을 들어 점프'
       },
       ultramanView: {
+        split: '2인 분할 화면',
+        rotate: '화면을 가로로 돌려 주세요',
+        splitHelp: '양쪽에 한 명씩 서서 같은 괴수에 도전하고 점수를 겨루세요.',
+        waitingPair: '두 플레이어를 기다리는 중',
+        splitKeyboard: '2인 키보드',
+        splitKeys: '이동 A/D 또는 ←/→, 방어 S 또는 ↓.\nP1 펀치 F/G · 킥 R · 광륜 T · 광선 V / P2 펀치 J/K · 킥 I · 광륜 U · 광선 L',
+        music: '전투 음악',
+        sortie: '출격 · 오리지널 음악',
         reactions: { guarding: '방어 중 · 킥으로 돌파', staggered: '휘청임 · 지금 공격', roaring: '격노 · 공격 가속', recovering: '빈틈 발생' },
         chainCue: '반대손으로 펀치',
         title: '빛의 전사 · 체감 배틀',
@@ -1078,6 +1134,8 @@ const messages = {
         selectArena: '전투 배경 선택',
         selectHero: '빛의 전사 선택',
         heroNames: {
+          dyna: '다이나',
+          zeta: '제트',
           tiga: '티가',
           zero: '제로'
         },
@@ -1158,6 +1216,12 @@ const messages = {
           warningDarkBeam: '경고! 암흑 광선 — 양팔 교차 방어!'
         },
         banners: {
+          bannerBeamDyna: '솔젠트 광선!',
+          bannerSuperBeamDyna: '궁극 솔젠트 광선!',
+          bannerDiscDyna: '플래시 광륜!',
+          bannerBeamZeta: '제스티움 광선!',
+          bannerSuperBeamZeta: '궁극 제스티움 광선!',
+          bannerDiscZeta: '제트 광륜!',
           bannerWaveStart: '괴수 출현! 전투 시작!',
           bannerKick: '울트라 킥!',
           bannerBeamTiga: '제페리온 광선!',
@@ -1391,6 +1455,14 @@ const messages = {
         instructionsHand: 'Levez la main gauche/droite pour changer de voie, les deux pour sauter'
       },
       ultramanView: {
+        split: 'Écran partagé',
+        rotate: 'Tournez votre écran en mode paysage',
+        splitHelp: 'Placez-vous de chaque côté et affrontez les mêmes vagues pour marquer des points.',
+        waitingPair: 'En attente des deux joueurs',
+        splitKeyboard: 'Clavier à deux',
+        splitKeys: 'Déplacement A/D ou ←/→, garde S ou ↓.\nJ1 poings F/G · pied R · disque T · rayon V. J2 poings J/K · pied I · disque U · rayon L.',
+        music: 'Musique',
+        sortie: 'Sortie · Musique de combat',
         reactions: { guarding: 'Garde · Brise-la du pied', staggered: 'Déséquilibré · Frappe', roaring: 'Furie · Attaques accélérées', recovering: 'Ouverture !' },
         chainCue: 'Change de poing',
         title: 'GUERRIER DE LUMIÈRE · COMBAT MOTION',
@@ -1401,6 +1473,8 @@ const messages = {
         selectArena: 'Choisir l’arène',
         selectHero: 'Choisir le guerrier',
         heroNames: {
+          dyna: 'Dyna',
+          zeta: 'Z',
           tiga: 'Tiga',
           zero: 'Zero'
         },
@@ -1481,6 +1555,12 @@ const messages = {
           warningDarkBeam: 'ALERTE ! Rayon noir — Bras en X !'
         },
         banners: {
+          bannerBeamDyna: 'Rayon Solgent!',
+          bannerSuperBeamDyna: 'Super Rayon Solgent!',
+          bannerDiscDyna: 'Disque Flash!',
+          bannerBeamZeta: 'Rayon Zestium!',
+          bannerSuperBeamZeta: 'Super Rayon Zestium!',
+          bannerDiscZeta: 'Disque Z!',
           bannerWaveStart: 'ALERTE KAIJU ! COMBAT !',
           bannerKick: 'ULTRA KICK !',
           bannerBeamTiga: 'RAYON ZEPELLION !',

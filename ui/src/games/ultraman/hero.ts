@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { releaseModel } from './releaseModel'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { FingerChain, HeroFormSpec, HeroProfile } from './heroes'
 import type { HeroAction, LiveBodyPose, Vec3Like } from './types'
@@ -92,11 +93,14 @@ export class HeroController {
   }
 
   public async load(loader: GLTFLoader, profile: HeroProfile): Promise<void> {
+    const gen = ++this.loadGen
     if (this.profile?.id === profile.id && this.model) return
     // 加载代际号：快速连续切换英雄时，只让最后一次加载生效
-    const gen = ++this.loadGen
     const gltf = await loader.loadAsync(profile.modelUrl)
-    if (gen !== this.loadGen) return
+    if (gen !== this.loadGen) {
+      releaseModel(gltf.scene)
+      return
+    }
     this.unloadModel()
     this.profile = profile
     const model = gltf.scene
@@ -254,14 +258,7 @@ export class HeroController {
   private unloadModel() {
     if (!this.model) return
     this.root.remove(this.model)
-    this.model.traverse((node) => {
-      if ((node as THREE.Mesh).isMesh) {
-        const mesh = node as THREE.Mesh
-        mesh.geometry.dispose()
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-        for (const m of mats) m.dispose()
-      }
-    })
+    releaseModel(this.model)
     this.model = null
     this.bones.clear()
     this.logical.clear()
@@ -274,6 +271,12 @@ export class HeroController {
     this.formMultiMaterials = []
     this.currentForm = null
   }
+
+  public dispose() {
+    this.loadGen++
+    this.unloadModel()
+  }
+
 
   public setLean(lean: number) {
     this.targetX = THREE.MathUtils.clamp(lean, -1, 1) * 5.6 * (this.currentForm?.moveMul ?? 1)
@@ -697,7 +700,7 @@ export class HeroController {
           footR.getWorldPosition(tmpV2).y,
         )
         const groundDelta = this.restAnkleY - minFootY
-        this.root.position.y = Math.max(0, this.root.position.y + groundDelta) + this.smJumpHeight
+        this.root.position.y += groundDelta + this.smJumpHeight
       }
     } else {
       const crouchFlex = THREE.MathUtils.clamp(this.smCrouchDepth * 0.28, 0, 0.72)

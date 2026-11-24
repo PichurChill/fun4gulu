@@ -1,4 +1,4 @@
-export type HeroId = 'tiga' | 'zero'
+export type HeroId = 'tiga' | 'zero' | 'dyna' | 'zeta'
 
 /** 迪迦形态 id：复合 → 强力 → 空中 循环切换 */
 export type TigaFormId = 'multi' | 'power' | 'sky'
@@ -84,7 +84,7 @@ export interface HeroProfile {
   discColor: number
   burstColor: number
   /** HUD 彩色计时器主题色（CSS） */
-  timerTheme: 'tiga' | 'zero'
+  timerTheme: HeroId
   /** 招式播报文案后缀（i18n banner key 拼接用） */
   bannerKey: string
   /** 形态系统（迪迦三形态；缺失表示该英雄无形态切换） */
@@ -95,44 +95,46 @@ export interface HeroProfile {
   relinkBones?: [string, string][]
 }
 
+const ultraBones: HeroBoneMap = {
+  hip: 'hip',
+  spineLower: 'spineLower',
+  spineUpper: 'spineUpper',
+  spineChest: 'spineChest',
+  neckUpper: 'neckUpper',
+  head: 'head',
+  upperArmL: 'UpperArm_L',
+  lowerArmL: 'LowerArm_L',
+  handL: 'Hand_L',
+  upperArmR: 'UpperArm_R',
+  lowerArmR: 'LowerArm_R',
+  handR: 'Hand_R',
+  thighL: 'Thigh_L',
+  shinL: 'Shin_L',
+  footL: 'Foot_L',
+  thighR: 'Thigh_R',
+  shinR: 'Shin_R',
+  footR: 'Foot_R',
+  fingersL: {
+    index: ['Index1_L', 'Index2_L', 'Index3_L'],
+    mid: ['Mid1_L', 'Mid2_L', 'Mid3_L'],
+    ring: ['Ring1_L', 'Ring2_L', 'Ring3_L'],
+    pinky: ['Pinky1_L', 'Pinky2_L', 'Pinky3_L'],
+    thumb: ['Thumb1_L', 'Thumb2_L'],
+  },
+  fingersR: {
+    index: ['Index1_R', 'Index2_R', 'Index3_R'],
+    mid: ['Mid1_R', 'Mid2_R', 'Mid3_R'],
+    ring: ['Ring1_R', 'Ring2_R', 'Ring3_R'],
+    pinky: ['Pinky1_R', 'Pinky2_R', 'Pinky3_R'],
+    thumb: ['Thumb1_R', 'Thumb2_R'],
+  },
+}
+
 export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
   tiga: {
     id: 'tiga',
     modelUrl: '/models/ultraman/tiga.glb',
-    bones: {
-      hip: 'hip',
-      spineLower: 'spineLower',
-      spineUpper: 'spineUpper',
-      spineChest: 'spineChest',
-      neckUpper: 'neckUpper',
-      head: 'head',
-      upperArmL: 'UpperArm_L',
-      lowerArmL: 'LowerArm_L',
-      handL: 'Hand_L',
-      upperArmR: 'UpperArm_R',
-      lowerArmR: 'LowerArm_R',
-      handR: 'Hand_R',
-      thighL: 'Thigh_L',
-      shinL: 'Shin_L',
-      footL: 'Foot_L',
-      thighR: 'Thigh_R',
-      shinR: 'Shin_R',
-      footR: 'Foot_R',
-      fingersL: {
-        index: ['Index1_L', 'Index2_L', 'Index3_L'],
-        mid: ['Mid1_L', 'Mid2_L', 'Mid3_L'],
-        ring: ['Ring1_L', 'Ring2_L', 'Ring3_L'],
-        pinky: ['Pinky1_L', 'Pinky2_L', 'Pinky3_L'],
-        thumb: ['Thumb1_L', 'Thumb2_L'],
-      },
-      fingersR: {
-        index: ['Index1_R', 'Index2_R', 'Index3_R'],
-        mid: ['Mid1_R', 'Mid2_R', 'Mid3_R'],
-        ring: ['Ring1_R', 'Ring2_R', 'Ring3_R'],
-        pinky: ['Pinky1_R', 'Pinky2_R', 'Pinky3_R'],
-        thumb: ['Thumb1_R', 'Thumb2_R'],
-      },
-    },
+    bones: ultraBones,
     facingYaw: 0,
     timerMaterialNames: ['Tiga color timer', 'TigaEnergy'],
     eyeMaterialNames: ['Tiga eyes', 'TigaEyes'],
@@ -183,6 +185,38 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
         burstColor: 0xc9a7ff,
       },
     ],
+  },
+  dyna: {
+    id: 'dyna',
+    modelUrl: '/models/ultraman/dyna.glb',
+    bones: ultraBones,
+    facingYaw: 0,
+    timerMaterialNames: ['Beacon'],
+    eyeMaterialNames: ['Lenses'],
+    timerIdleIntensity: 1.2,
+    timerTheme: 'dyna',
+    bannerKey: 'Dyna',
+    accentColor: 0xffbd49,
+    beamColor: 0x76ccff,
+    beamSuperColor: 0xfff3a8,
+    discColor: 0x77b9ff,
+    burstColor: 0xffd776,
+  },
+  zeta: {
+    id: 'zeta',
+    modelUrl: '/models/ultraman/zeta.glb',
+    bones: ultraBones,
+    facingYaw: 0,
+    timerMaterialNames: ['Beacon'],
+    eyeMaterialNames: ['Lenses'],
+    timerIdleIntensity: 1.2,
+    timerTheme: 'zeta',
+    bannerKey: 'Zeta',
+    accentColor: 0x57b8ff,
+    beamColor: 0x67edff,
+    beamSuperColor: 0xd4a2ff,
+    discColor: 0x6296ff,
+    burstColor: 0x74dfff,
   },
   zero: {
     id: 'zero',
@@ -253,4 +287,4 @@ export const HERO_PROFILES: Record<HeroId, HeroProfile> = {
   },
 }
 
-export const HERO_IDS: HeroId[] = ['tiga', 'zero']
+export const HERO_IDS: HeroId[] = ['tiga', 'zero', 'dyna', 'zeta']

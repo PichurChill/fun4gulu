@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { UltramanGameEngine } from '@/games/ultraman/engine'
+import UltraSoundtrack from '@/components/UltraSoundtrack.vue'
 import { HERO_IDS } from '@/games/ultraman/heroes'
 import { MONSTER_WAVES } from '@/games/ultraman/monsters'
 import type {
@@ -87,7 +88,7 @@ const currentMonsterName = computed(() => t(`message.ultramanView.monsters.${hud
 const heroHpLabel = computed(
   () => `${t(`message.ultramanView.heroNames.${hud.heroId}`)} ${t('message.ultramanView.heroHpSuffix')}`,
 )
-const heroBadge = computed(() => (hud.heroId === 'tiga' ? '3D MOTION · TIGA' : '3D MOTION · ZERO'))
+const heroBadge = computed(() => `3D MOTION · ${selectedHero.value.toUpperCase()}`)
 const isPlaying = computed(
   () =>
     hud.phase === 'intro' ||
@@ -461,6 +462,7 @@ onUnmounted(() => {
 
 <template>
   <div class="ultraman-page">
+    <UltraSoundtrack :class="{ 'active-soundtrack': isPlaying }" :playing="isPlaying" :muted="muted" />
     <!-- 3D 海港城市战斗舞台（全屏铺底） -->
     <div ref="stageRef" class="stage-canvas-wrap" />
 
@@ -517,6 +519,7 @@ onUnmounted(() => {
           <button class="arcade-btn ghost" @click="handleGoHome">
             &lt; {{ t('message.ultramanView.back') }}
           </button>
+          <button class="arcade-btn ghost" @click="router.push('/ultraman/split')">{{ t('message.ultramanView.split') }}</button>
           <span class="arcade-badge">{{ heroBadge }}</span>
         </div>
 
@@ -645,7 +648,7 @@ onUnmounted(() => {
             <div class="move-desc">{{ t('message.ultramanView.moves.discDesc') }}</div>
           </div>
 
-          <div class="move-card">
+          <div v-if="selectedHero === 'tiga'" class="move-card">
             <svg class="pose-svg" viewBox="0 0 64 64" fill="none">
               <circle cx="32" cy="20" r="6" stroke="#c084fc" stroke-width="3" />
               <path d="M32 26v14m0 0-8 16m8-16 8 16" stroke="#e2e8f0" stroke-width="3" stroke-linecap="round" />
@@ -993,6 +996,9 @@ onUnmounted(() => {
     transform: translate(-50%, -175%) scale(var(--fscale, 1));
   }
 }
+
+/* 战斗时给右下角的触屏招式与镜头预览让出空间。 */
+.active-soundtrack { bottom: auto; top: 39%; }
 
 /* ---- 迷你镜像摄像头 + 骨骼窗 ---- */
 .camera-pip {
