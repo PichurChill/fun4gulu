@@ -12,7 +12,7 @@
 战场使用 Poly Haven 的 CC0 实景全景与地表扫描素材，已转换为随游戏分发的 WebP。
 
 - 海港采用 [Simon's Town Harbour](https://polyhaven.com/a/simons_town_harbour)。
-- 都市采用 [Potsdamer Platz](https://polyhaven.com/a/potsdamer_platz)。
+- 都市采用 [Dresden Square](https://polyhaven.com/a/dresden_square)。
 - 山区采用 [Alps Field](https://polyhaven.com/a/alps_field)。
 - 火山口的远景取自 [Quarry 01](https://polyhaven.com/a/quarry_01)，岩壁使用 [Aerial Rocks 02](https://polyhaven.com/a/aerial_rocks_02) 的颜色与法线纹理。地形、熔流与光照由游戏绘制。
-- 码头和城市道路的近景铺装采用 [Asphalt 04](https://polyhaven.com/a/asphalt_04)。
+- 码头的近景铺装采用 [Asphalt 04](https://polyhaven.com/a/asphalt_04)。

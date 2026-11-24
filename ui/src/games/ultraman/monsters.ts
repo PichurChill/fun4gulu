@@ -83,6 +83,8 @@ interface MonsterRig {
   foreL: THREE.Bone | null
   foreR: THREE.Bone | null
   jaw: THREE.Bone | null
+  handL: THREE.Bone | null
+  handR: THREE.Bone | null
   clawL: THREE.Bone | null
   clawR: THREE.Bone | null
   thighL: THREE.Bone | null
@@ -113,6 +115,12 @@ export class KaijuController {
   public currentZ = -6
   private recoilSide = 0
   public hitFlash = 0
+  private readonly upperDirection = new THREE.Vector3()
+  private readonly foreDirection = new THREE.Vector3()
+  private readonly restDirection = new THREE.Vector3()
+  private readonly shoulderPoint = new THREE.Vector3()
+  private readonly parentInverse = new THREE.Matrix4()
+  private readonly alignment = new THREE.Quaternion()
   private stepPhase = 0
   private patrolPhase = 0
   private modelHeight = 17
@@ -205,6 +213,8 @@ export class KaijuController {
       foreL: pick('L_UDE', 'ひじ.L', '腕3.L', '腕2.L'),
       foreR: pick('R_UDE', 'ひじ.R', '腕3.R', '腕2.R'),
       jaw: pick('jaw', 'lowerjaw'),
+      handL: pick('L_TE', '手首.L'),
+      handR: pick('R_TE', '手首.R'),
       clawL: pick('L_TUME', 'pincer.L'),
       clawR: pick('R_TUME', 'pincer.R'),
       thighL: pick('L_MOMO', 'L_Thigh', '足.L'),
@@ -407,68 +417,9 @@ export class KaijuController {
       if (this.rig.clawL) this.rig.clawL.rotation.z += pincers * 0.55
       if (this.rig.clawR) this.rig.clawR.rotation.z -= pincers * 0.55
 
-      // 消除 MMD 默认平举 T-Pose：让双臂自然放下并略微前伸成战斗格斗架势
-      // 巴尔坦、杰顿、机械哥莫拉为人形双臂 T-Pose；加坦杰厄双钳原本水平张开更具压迫感只需微调
-      const isHumanoidTpose =
-        this.spec.id === 'baltan' ||
-        this.spec.id === 'zetton' ||
-        this.spec.id === 'gomora-mecha'
-      const baseDrop = isHumanoidTpose ? 0.92 : 0.12
-      const baseForward = isHumanoidTpose ? 0.32 : 0.08
-      const baseElbowBend = isHumanoidTpose ? 0.42 : 0.1
-
-      if (this.rig.armL) {
-        this.rig.armL.rotation.z -= baseDrop
-        this.rig.armL.rotation.x += baseForward
-      }
-      if (this.rig.armR) {
-        this.rig.armR.rotation.z += baseDrop
-        this.rig.armR.rotation.x += baseForward
-      }
-      if (this.rig.foreL) {
-        this.rig.foreL.rotation.x -= baseElbowBend
-      }
-      if (this.rig.foreR) {
-        this.rig.foreR.rotation.x -= baseElbowBend
-      }
-
-      if (this.state === 'roaring' || this.state === 'guarding' || this.state === 'staggered') {
-        const open = this.state === 'roaring'
-        const broken = this.state === 'staggered'
-        const pose = Math.min(1, this.stateTime * 7)
-        if (this.rig.head) this.rig.head.rotation.x += (open ? -0.5 : 0.32) * pose
-        if (this.rig.armL) this.rig.armL.rotation.z += (open || broken ? 0.9 : -0.42) * pose
-        if (this.rig.armR) this.rig.armR.rotation.z -= (open || broken ? 0.9 : -0.42) * pose
-        if (this.rig.foreL) this.rig.foreL.rotation.x -= (open ? 0.1 : 0.85) * pose
-        if (this.rig.foreR) this.rig.foreR.rotation.x -= (open ? 0.1 : 0.85) * pose
-      } else if (this.state === 'windup') {
-        const p = Math.min(1, this.stateTime / WINDUP_TIME)
-        if (this.rig.armL) {
-          this.rig.armL.rotation.z += p * (this.currentAttack === 'melee' ? 1.5 : 0.65)
-          this.rig.armL.rotation.x -= p * 0.65
-        }
-        if (this.rig.armR) {
-          this.rig.armR.rotation.z -= p * (this.currentAttack === 'melee' ? 0.2 : 0.65)
-          this.rig.armR.rotation.x -= p * 0.65
-        }
-      } else if (this.state === 'attack') {
-        const p = Math.sin(Math.min(1, this.stateTime / 0.65) * Math.PI)
-        if (this.rig.armL) {
-          this.rig.armL.rotation.x += p * 0.95
-          this.rig.armL.rotation.z += p * 0.35
-        }
-        if (this.rig.armR) {
-          this.rig.armR.rotation.x += p * 0.95
-          this.rig.armR.rotation.z -= p * 0.35
-        }
-      } else if (this.state === 'hit') {
-        const p = Math.sin(Math.min(1, this.stateTime / 0.38) * Math.PI)
-        if (this.rig.armL) this.rig.armL.rotation.z += p * 0.65
-        if (this.rig.armR) this.rig.armR.rotation.z -= p * 0.65
-      } else {
-        if (this.rig.armL) this.rig.armL.rotation.z += breath * 0.1
-        if (this.rig.armR) this.rig.armR.rotation.z -= breath * 0.1
-      }
+      // 从肩、肘、腕真实位置求出骨段方向，各套模型的本地旋转轴并不相同。
+      this.poseArm(this.rig.armL, this.rig.foreL, this.rig.handL, 1, breath)
+      this.poseArm(this.rig.armR, this.rig.foreR, this.rig.handR, -1, breath)
 
       // 尾巴与加坦杰厄触手柔性波动
       this.rig.tail.forEach((b, idx) => {
@@ -482,4 +433,46 @@ export class KaijuController {
 
     this.root.updateMatrixWorld(true)
   }
+  private poseArm(arm: THREE.Bone | null, fore: THREE.Bone | null, hand: THREE.Bone | null, side: number, breath: number) {
+    if (!arm || !fore || !hand) return
+    const upper = this.upperDirection.set(side * 0.58, -0.74, 0.32)
+    const lower = this.foreDirection.set(-side * 0.22, 0.35 + breath * 0.10, 0.96)
+    if (this.state === 'guarding') {
+      upper.set(side * 0.37, -0.45, 0.82)
+      lower.set(-side * 0.6, 0.8, 0.15)
+    } else if (this.state === 'windup') {
+      const p = Math.min(1, this.stateTime / WINDUP_TIME)
+      if (this.currentAttack !== 'melee' || side > 0) {
+        upper.y += p * 0.8
+        upper.z -= p * 0.75
+        lower.y += p * 0.65
+      }
+    } else if (this.state === 'attack') {
+      const p = Math.sin(Math.min(1, this.stateTime / 0.65) * Math.PI)
+      if (this.currentAttack !== 'melee' || side > 0) {
+        upper.set(side * (0.58 - p * 0.46), -0.74 + p * 0.87, 0.32 + p)
+        lower.set(-side * 0.12, 0.35 * (1 - p), 1)
+      }
+    } else if (this.state === 'roaring') {
+      const p = Math.sin(Math.PI * this.stateTime / 1.1)
+      upper.y += p * 1.35
+      lower.set(side * 0.6, 0.86, 0.35)
+    } else if (this.state === 'staggered' || this.state === 'dying') {
+      lower.set(side * 0.28, -0.8, 0.37)
+    }
+    this.aimSegment(arm, fore, upper)
+    this.aimSegment(fore, hand, lower)
+  }
+
+  private aimSegment(bone: THREE.Bone, tip: THREE.Bone, direction: THREE.Vector3) {
+    const parent = bone.parent!
+    bone.getWorldPosition(this.shoulderPoint)
+    tip.getWorldPosition(this.restDirection).sub(this.shoulderPoint)
+    if (this.restDirection.lengthSq() < 1e-8) return
+    this.parentInverse.copy(parent.matrixWorld).invert()
+    this.restDirection.transformDirection(this.parentInverse)
+    direction.transformDirection(this.root.matrixWorld).transformDirection(this.parentInverse)
+    bone.quaternion.premultiply(this.alignment.setFromUnitVectors(this.restDirection, direction))
+  }
+
 }

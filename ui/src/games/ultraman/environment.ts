@@ -5,7 +5,7 @@ import type { ConcreteSceneTheme } from './types'
 const ASSETS = '/models/ultraman/landscape'
 const STAGES = {
   seaside: { heading: 0.48, light: 0xffedcf, power: 2.0, sun: [0.8, 0.72, -0.28], dust: 0xaba498 },
-  city: { heading: 0.64, light: 0xe7efff, power: 1.2, sun: [-0.55, 0.9, 0.46], dust: 0xa29991 },
+  city: { heading: 0.92, light: 0xe7efff, power: 1.2, sun: [-0.55, 0.9, 0.46], dust: 0xa29991 },
   mountain: { heading: 0.52, light: 0xfff1d2, power: 2.1, sun: [0.53, 1, -0.68], dust: 0x978864 },
   volcano: {
     heading: 0.65,
@@ -76,7 +76,7 @@ export class ArenaManager {
   }
 
   private async load(theme: ConcreteSceneTheme, revision: number) {
-    const surface = theme === 'volcano' ? 'basalt' : theme === 'mountain' ? null : 'pavement'
+    const surface = theme === 'volcano' ? 'basalt' : theme === 'seaside' ? 'pavement' : null
     const names = surface ? [theme, surface, surface + '-normal'] : [theme]
     const results = await Promise.allSettled(
       names.map((name) => this.loader.loadAsync(`${ASSETS}/${name}.webp`)),
@@ -117,15 +117,14 @@ export class ArenaManager {
     this.sun.color.setHex(config.light)
     this.sun.intensity = config.power
     this.sun.position.fromArray(config.sun).normalize().multiplyScalar(65)
-    this.contact.visible = theme === 'mountain'
+    this.contact.visible = theme === 'mountain' || theme === 'city'
     if (theme === 'volcano') this.buildCrater(maps[1]!, maps[2]!)
-    else if (theme !== 'mountain') this.buildPavement(theme, maps[1]!, maps[2]!)
+    else if (theme === 'seaside') this.buildQuay(maps[1]!, maps[2]!)
   }
 
-  private buildPavement(theme: 'seaside' | 'city', map: THREE.Texture, normal: THREE.Texture) {
-    const quay = theme === 'seaside'
-    const width = quay ? 150 : 24
-    const length = quay ? 106 : 160
+  private buildQuay(map: THREE.Texture, normal: THREE.Texture) {
+    const width = 150
+    const length = 106
     for (const tex of [map, normal]) {
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping
       tex.repeat.set(width / 4, length / 4)
@@ -137,52 +136,37 @@ export class ArenaManager {
       normalMap: normal,
       normalScale: new THREE.Vector2(0.55, 0.55),
       roughness: 0.88,
-      color: quay ? 0xcac3b8 : 0x95999b,
+      color: 0xcac3b8,
     })
     const geometry = new THREE.PlaneGeometry(width, length)
     geometry.rotateX(-Math.PI / 2)
     this.ground = new THREE.Mesh(geometry, surface)
-    this.ground.position.z = quay ? 8 : -10
+    this.ground.position.z = 8
     this.ground.receiveShadow = true
     this.root.add(this.ground)
 
-    if (quay) {
-      const metal = new THREE.MeshStandardMaterial({
-        color: 0x5d5650,
-        metalness: 0.6,
-        roughness: 0.65,
-      })
-      const post = new THREE.LatheGeometry(
-        [
-          new THREE.Vector2(0.64, 0),
-          new THREE.Vector2(0.64, 0.13),
-          new THREE.Vector2(0.34, 0.18),
-          new THREE.Vector2(0.31, 0.72),
-          new THREE.Vector2(0.46, 0.78),
-          new THREE.Vector2(0.46, 0.87),
-          new THREE.Vector2(0, 0.91),
-        ],
-        16,
-      )
-      const bollards = new THREE.InstancedMesh(post, metal, 13)
-      for (let i = 0; i < 13; i++)
-        bollards.setMatrixAt(i, new THREE.Matrix4().makeTranslation((i - 6) * 11, 0, -44))
-      bollards.castShadow = true
-      this.fixtures.add(bollards)
-    } else {
-      const paint = new THREE.MeshStandardMaterial({ color: 0xcec9b9, roughness: 0.96 })
-      const marks = new THREE.InstancedMesh(
-        new THREE.PlaneGeometry(0.15, 3).rotateX(-Math.PI / 2),
-        paint,
-        40,
-      )
-      for (let i = 0; i < 40; i++)
-        marks.setMatrixAt(
-          i,
-          new THREE.Matrix4().makeTranslation(i % 2 ? 4 : -4, 0.013, -84 + Math.floor(i / 2) * 8),
-        )
-      this.fixtures.add(marks)
-    }
+    const metal = new THREE.MeshStandardMaterial({
+      color: 0x5d5650,
+      metalness: 0.6,
+      roughness: 0.65,
+    })
+    const post = new THREE.LatheGeometry(
+      [
+        new THREE.Vector2(0.64, 0),
+        new THREE.Vector2(0.64, 0.13),
+        new THREE.Vector2(0.34, 0.18),
+        new THREE.Vector2(0.31, 0.72),
+        new THREE.Vector2(0.46, 0.78),
+        new THREE.Vector2(0.46, 0.87),
+        new THREE.Vector2(0, 0.91),
+      ],
+      16,
+    )
+    const bollards = new THREE.InstancedMesh(post, metal, 13)
+    for (let i = 0; i < 13; i++)
+      bollards.setMatrixAt(i, new THREE.Matrix4().makeTranslation((i - 6) * 11, 0, -44))
+    bollards.castShadow = true
+    this.fixtures.add(bollards)
   }
 
   /** 实体火山口围住平坦战斗区，岩面凹处的两条熔流沿坡脚延伸。 */
