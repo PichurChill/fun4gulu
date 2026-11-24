@@ -100,11 +100,10 @@ const messages = {
       },
       ultramanView: {
         split: '双人分屏',
-        rotate: '请将屏幕横过来',
-        splitHelp: '各站在画面的一侧，各自挑战同一组怪兽，比比谁得分高。',
+        splitHelp: '镜头左边是 P1，右边是 P2。竖屏时 P1 在上、P2 在下，各自挑战同一组怪兽。',
         waitingPair: '等两位战士入镜',
         splitKeyboard: '双人键盘',
-        splitKeys: '移动 A/D 或 ←/→，防御 S 或 ↓。\n左边 F/G 拳、R 踢、T 光轮、V 光线；右边 J/K 拳、I 踢、U 光轮、L 光线。',
+        splitKeys: '移动 A/D 或 ←/→，防御 S 或 ↓。\nP1 用 F/G 拳、R 踢、T 光轮、V 光线；P2 用 J/K 拳、I 踢、U 光轮、L 光线。',
         music: '战斗音乐',
         sortie: '出击 · 原创战斗曲',
         reactions: { guarding: '架起防御 · 飞踢破防', staggered: '失衡 · 快追击', roaring: '狂暴 · 攻势加快', recovering: '露出破绽' },
@@ -439,8 +438,7 @@ const messages = {
       },
       ultramanView: {
         split: 'Split screen',
-        rotate: 'Turn your screen sideways',
-        splitHelp: 'Stand on opposite sides and race the same monster waves for points.',
+        splitHelp: 'P1 stands on the left of the camera preview and P2 on the right. In portrait, P1 plays on top and P2 below. Race the same monster waves for points.',
         waitingPair: 'Waiting for both players',
         splitKeyboard: 'Two-player keyboard',
         splitKeys: 'Move A/D or ←/→, guard S or ↓.\nP1 F/G punch · R kick · T disc · V beam. P2 J/K punch · I kick · U disc · L beam.',
@@ -778,8 +776,7 @@ const messages = {
       },
       ultramanView: {
         split: '2人画面分割',
-        rotate: '横向きにしてください',
-        splitHelp: '左右に分かれて同じ怪獣に挑み、スコアを競おう。',
+        splitHelp: 'カメラ画面の左が P1、右が P2。縦画面では上が P1、下が P2。同じ怪獣に挑んでスコアを競おう。',
         waitingPair: '2人が映るのを待っています',
         splitKeyboard: '2人キーボード',
         splitKeys: '移動 A/D・←/→、防御 S・↓。\nP1 拳 F/G・蹴 R・光輪 T・光線 V ／ P2 拳 J/K・蹴 I・光輪 U・光線 L',
@@ -1117,8 +1114,7 @@ const messages = {
       },
       ultramanView: {
         split: '2인 분할 화면',
-        rotate: '화면을 가로로 돌려 주세요',
-        splitHelp: '양쪽에 한 명씩 서서 같은 괴수에 도전하고 점수를 겨루세요.',
+        splitHelp: '카메라 화면 왼쪽은 P1, 오른쪽은 P2입니다. 세로 화면에서는 P1이 위, P2가 아래에서 같은 괴수에 도전합니다.',
         waitingPair: '두 플레이어를 기다리는 중',
         splitKeyboard: '2인 키보드',
         splitKeys: '이동 A/D 또는 ←/→, 방어 S 또는 ↓.\nP1 펀치 F/G · 킥 R · 광륜 T · 광선 V / P2 펀치 J/K · 킥 I · 광륜 U · 광선 L',
@@ -1456,8 +1452,7 @@ const messages = {
       },
       ultramanView: {
         split: 'Écran partagé',
-        rotate: 'Tournez votre écran en mode paysage',
-        splitHelp: 'Placez-vous de chaque côté et affrontez les mêmes vagues pour marquer des points.',
+        splitHelp: 'P1 se place à gauche et P2 à droite dans l’image de la caméra. En mode portrait, P1 joue en haut et P2 en bas. Affrontez les mêmes vagues de monstres.',
         waitingPair: 'En attente des deux joueurs',
         splitKeyboard: 'Clavier à deux',
         splitKeys: 'Déplacement A/D ou ←/→, garde S ou ↓.\nJ1 poings F/G · pied R · disque T · rayon V. J2 poings J/K · pied I · disque U · rayon L.',

@@ -10,8 +10,6 @@ import UltraSoundtrack from '@/components/UltraSoundtrack.vue'
 
 const { t } = useI18n()
 const msg = (key: string) => t('message.ultramanView.' + key)
-const orientation = matchMedia('(orientation: landscape)')
-const landscape = ref(orientation.matches)
 const foreground = ref(!document.hidden)
 const stage = ref<'setup' | 'loading' | 'battle'>('setup')
 const mode = ref<ControlMode>('camera')
@@ -30,7 +28,7 @@ let session = 0
 const ended = (state?: BattleHudState) => state?.phase === 'victory' || state?.phase === 'defeat'
 const bothDone = computed(() => hud.every(h => ended(h.value)))
 const pairReady = computed(() => mode.value !== 'camera' || slots.every(i => tracked.value[i] || ended(hud[i].value)))
-const running = computed(() => stage.value === 'battle' && landscape.value && foreground.value && pairReady.value && !bothDone.value)
+const running = computed(() => stage.value === 'battle' && foreground.value && pairReady.value && !bothDone.value)
 const held = new Set<string>()
 function clearControls() {
   held.clear()
@@ -63,7 +61,7 @@ function fail(reason: unknown) {
 camera.onError = fail
 camera.onPoses = (poses, now) => {
   const input = video.value
-  if (!input || !landscape.value || !foreground.value) return
+  if (!input || !foreground.value) return
   // 每人拥有固定站位。另一侧暂时离开镜头时，仍保留在场玩家的编号。
   const lanes = slots.map(i => poses.filter(p => (p.mirroredCenterX < 0.5 ? 0 : 1) === i))
   tracked.value = lanes.map(p => p.length === 1)
@@ -77,7 +75,7 @@ camera.onPoses = (poses, now) => {
   })
 }
 async function start() {
-  if (!landscape.value || stage.value !== 'setup') return
+  if (stage.value !== 'setup') return
   const id = ++session
   error.value = ''
   stage.value = 'loading'
@@ -107,10 +105,9 @@ async function start() {
     if (session === id) fail(e)
   }
 }
-function syncScreen() {
-  landscape.value = orientation.matches
+function syncVisibility() {
   foreground.value = !document.hidden
-  if (!landscape.value || !foreground.value) tracked.value = [false, false]
+  if (!foreground.value) tracked.value = [false, false]
 }
 function toggleMute() {
   muted.value = !muted.value
@@ -140,15 +137,13 @@ function key(event: KeyboardEvent) {
   })
 }
 onMounted(() => {
-  orientation.addEventListener('change', syncScreen)
-  document.addEventListener('visibilitychange', syncScreen)
+  document.addEventListener('visibilitychange', syncVisibility)
   window.addEventListener('blur', clearControls)
   window.addEventListener('keydown', key)
   window.addEventListener('keyup', key)
 })
 onBeforeUnmount(() => {
-  orientation.removeEventListener('change', syncScreen)
-  document.removeEventListener('visibilitychange', syncScreen)
+  document.removeEventListener('visibilitychange', syncVisibility)
   window.removeEventListener('blur', clearControls)
   window.removeEventListener('keydown', key)
   window.removeEventListener('keyup', key)
@@ -185,8 +180,7 @@ onBeforeUnmount(() => {
         </template>
       </section>
     </div>
-    <div v-if="!landscape" class="sheet"><h1>{{ msg('rotate') }}</h1></div>
-    <div v-else-if="stage === 'setup'" class="sheet">
+    <div v-if="stage === 'setup'" class="sheet">
       <div class="briefing">
         <h1>{{ msg('split') }}</h1><p>{{ msg('splitHelp') }}</p>
         <div class="roster">
@@ -204,7 +198,7 @@ onBeforeUnmount(() => {
       <h2>{{ msg(stage === 'loading' ? 'loadingModel' : 'waitingPair') }}</h2>
       <p v-if="stage === 'battle'">P1 {{ tracked[0] ? '✓' : '…' }}　·　P2 {{ tracked[1] ? '✓' : '…' }}</p>
     </div>
-    <video v-show="landscape && mode === 'camera' && stage !== 'setup' && !pairReady" ref="video" muted autoplay playsinline />
+    <video v-show="mode === 'camera' && stage !== 'setup' && !pairReady" ref="video" muted autoplay playsinline />
     <button v-if="stage === 'battle'" class="mute" @click="toggleMute">{{ msg(muted ? 'mute' : 'unmute') }}</button>
     <UltraSoundtrack :playing="running" :muted="muted" />
   </main>
@@ -219,6 +213,9 @@ button, select { background: #172c3e; border: 1px solid #63859b; border-radius: 
 a { text-decoration: none; }
 .boards,.sheet { position: absolute; inset: 40px 0 0; }
 .boards { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px; background: #a8d4db; }
+@media (orientation: portrait) {
+  .boards { grid-template-columns: minmax(0,1fr); grid-template-rows: repeat(2,minmax(0,1fr)); }
+}
 .board { position: relative; overflow: hidden; }
 .renderer { position: absolute; inset: 0; }
 .sheet { display: grid; place-content: center; text-align: center; background: radial-gradient(ellipse at top,#253e59,#0b1420 74%); padding: 14px; overflow: auto; }
