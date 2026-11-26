@@ -48,7 +48,141 @@ async function loadVisionRuntime(): Promise<{ vision: TasksVisionModule; fileset
 }
 
 /**
- * 统一现代姿态追踪器（单人 / 双人共用 MediaPipe Tasks Vision PoseLandmarker）
+ * 一欧元自适应低通滤波器（One-Euro Filter）：
+ * 静止时强抑抖动，高速挥拳/踢腿/闪避时瞬间拉高截止频率，兼顾极致稳定与零延迟跟手。
+ */
+class OneEuroScalar {
+  private xPrev: number | null = null
+  private dxPrev = 0
+  private tPrev: number | null = null
+
+  constructor(
+    private readonly minCutoff: number,
+    private readonly beta: number,
+    private readonly dCutoff = 1.0,
+  ) {}
+
+  private smoothingFactor(dt: number, cutoff: number): number {
+    const r = 2 * Math.PI * cutoff * dt
+    return r / (r + 1)
+  }
+
+  public filter(value: number, tSec: number): number {
+    if (this.xPrev === null || this.tPrev === null) {
+      this.xPrev = value
+      this.tPrev = tSec
+      this.dxPrev = 0
+      return value
+    }
+    const dt = Math.max(1 / 240, Math.min(0.15, tSec - this.tPrev))
+    this.tPrev = tSec
+
+    const dx = (value - this.xPrev) / dt
+    const aD = this.smoothingFactor(dt, this.dCutoff)
+    const dxHat = aD * dx + (1 - aD) * this.dxPrev
+    this.dxPrev = dxHat
+
+    const cutoff = this.minCutoff + this.beta * Math.abs(dxHat)
+    const a = this.smoothingFactor(dt, cutoff)
+    const xHat = a * value + (1 - a) * this.xPrev
+    this.xPrev = xHat
+    return xHat
+  }
+
+  public reset() {
+    this.xPrev = null
+    this.dxPrev = 0
+    this.tPrev = null
+  }
+}
+
+/** 单人 33 点 2D+3D 关节一欧元滤波组 */
+class PoseLandmarkFilterBank {
+  private filters2D: [OneEuroScalar, OneEuroScalar, OneEuroScalar][] = []
+  private filters3D: [OneEuroScalar, OneEuroScalar, OneEuroScalar][] = []
+  private lastT = -Infinity
+
+  constructor() {
+    for (let i = 0; i < 33; i++) {
+      // 四肢末端（肘、腕、指、膝、踝）给更高的动态响应系数 beta，确保快速挥拳与踢腿零拖影
+      const isLimb = (i >= 13 && i <= 22) || (i >= 25 && i <= 32)
+      const minCutoff2D = isLimb ? 2.4 : 1.5
+      const beta2D = isLimb ? 22.0 : 9.0
+      const minCutoff3D = isLimb ? 2.2 : 1.35
+      const beta3D = isLimb ? 16.0 : 7.5
+      this.filters2D.push([
+        new OneEuroScalar(minCutoff2D, beta2D),
+        new OneEuroScalar(minCutoff2D, beta2D),
+        new OneEuroScalar(minCutoff2D * 0.75, beta2D * 0.65),
+      ])
+      this.filters3D.push([
+        new OneEuroScalar(minCutoff3D, beta3D),
+        new OneEuroScalar(minCutoff3D, beta3D),
+        new OneEuroScalar(minCutoff3D * 0.75, beta3D * 0.6),
+      ])
+    }
+  }
+
+  public apply(
+    raw2D: PoseLandmark[],
+    raw3D: PoseLandmark[],
+    nowMs: number,
+  ): { landmarks: PoseLandmark[]; worldLandmarks: PoseLandmark[] } {
+    const tSec = nowMs * 0.001
+    if (nowMs - this.lastT > 450 || nowMs < this.lastT) {
+      this.reset()
+    }
+    this.lastT = nowMs
+
+    const landmarks: PoseLandmark[] = raw2D.map((p, idx) => {
+      const f = this.filters2D[idx]
+      if (!f || (p.visibility ?? 1) < 0.18) {
+        return { x: p.x, y: p.y, z: p.z ?? 0, visibility: p.visibility ?? 1 }
+      }
+      return {
+        x: f[0].filter(p.x, tSec),
+        y: f[1].filter(p.y, tSec),
+        z: f[2].filter(p.z ?? 0, tSec),
+        visibility: p.visibility ?? 1,
+      }
+    })
+
+    const worldLandmarks: PoseLandmark[] =
+      raw3D.length >= 33
+        ? raw3D.map((p, idx) => {
+            const f = this.filters3D[idx]
+            const vis = p.visibility ?? landmarks[idx]?.visibility ?? 1
+            if (!f || vis < 0.18) {
+              return { x: p.x, y: p.y, z: p.z ?? 0, visibility: vis }
+            }
+            return {
+              x: f[0].filter(p.x, tSec),
+              y: f[1].filter(p.y, tSec),
+              z: f[2].filter(p.z ?? 0, tSec),
+              visibility: vis,
+            }
+          })
+        : []
+
+    return { landmarks, worldLandmarks }
+  }
+
+  public reset() {
+    for (const tri of this.filters2D) {
+      tri[0].reset()
+      tri[1].reset()
+      tri[2].reset()
+    }
+    for (const tri of this.filters3D) {
+      tri[0].reset()
+      tri[1].reset()
+      tri[2].reset()
+    }
+  }
+}
+
+/**
+ * 统一现代姿态追踪器（MediaPipe Tasks Vision PoseLandmarker + One-Euro 自适应去抖 + 短暂丢帧平滑保持）
  */
 export class UltraPoseTracker {
   private landmarker: PoseLandmarkerLike | null = null
@@ -57,6 +191,12 @@ export class UltraPoseTracker {
   private rafId = 0
   private lastVideoTime = -1
   private lastDetectTimestamp = 0
+  private filterBanks: [PoseLandmarkFilterBank, PoseLandmarkFilterBank] = [
+    new PoseLandmarkFilterBank(),
+    new PoseLandmarkFilterBank(),
+  ]
+  private lastValidPoses: TrackedPose[] = []
+  private lastValidTime = -Infinity
 
   public onPoses: ((poses: TrackedPose[], now: number, width: number, height: number) => void) | null =
     null
@@ -65,18 +205,39 @@ export class UltraPoseTracker {
   public async start(video: HTMLVideoElement, maxPoses: 1 | 2 = 1): Promise<void> {
     if (!video) throw new Error('Video element unavailable')
     const session = ++this.session
+    this.filterBanks[0].reset()
+    this.filterBanks[1].reset()
+    this.lastValidPoses = []
+    this.lastValidTime = -Infinity
+
+    const isPortraitViewport =
+      typeof window !== 'undefined' && window.innerHeight > window.innerWidth
+    const idealW = isPortraitViewport ? 480 : 640
+    const idealH = isPortraitViewport ? 640 : 480
+
+    const openCameraStream = async (): Promise<MediaStream> => {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'user' },
+            width: { ideal: idealW },
+            height: { ideal: idealH },
+            frameRate: { ideal: 60, min: 24 },
+          },
+          audio: false,
+        })
+      } catch {
+        // 兼容部分移动浏览器不接受高帧率或特定分辨率约束的情况
+        return await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false,
+        })
+      }
+    }
 
     const [{ vision, fileset }, stream] = await Promise.all([
       loadVisionRuntime(),
-      navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: maxPoses === 2 ? 640 : 560 },
-          height: { ideal: maxPoses === 2 ? 480 : 420 },
-          frameRate: { ideal: 30 },
-        },
-        audio: false,
-      }),
+      openCameraStream(),
     ])
 
     if (session !== this.session) {
@@ -87,9 +248,9 @@ export class UltraPoseTracker {
     const baseOpts = {
       runningMode: 'VIDEO',
       numPoses: maxPoses,
-      minPoseDetectionConfidence: 0.45,
-      minPosePresenceConfidence: 0.45,
-      minTrackingConfidence: 0.45,
+      minPoseDetectionConfidence: 0.38,
+      minPosePresenceConfidence: 0.38,
+      minTrackingConfidence: 0.38,
     }
 
     let landmarker: PoseLandmarkerLike
@@ -147,7 +308,7 @@ export class UltraPoseTracker {
     const res = lm.detectForVideo(video, ts)
     const lmSets = res.landmarks ?? []
     const worldSets = res.worldLandmarks ?? []
-    const poses: TrackedPose[] = []
+    const rawPoses: TrackedPose[] = []
 
     for (let i = 0; i < lmSets.length; i++) {
       const raw = lmSets[i]!
@@ -171,11 +332,36 @@ export class UltraPoseTracker {
       const ls = raw[11]!
       const rs = raw[12]!
       const mirroredCenterX = 1 - (ls.x + rs.x) * 0.5
-      poses.push({ landmarks, worldLandmarks, mirroredCenterX })
+      rawPoses.push({ landmarks, worldLandmarks, mirroredCenterX })
     }
 
-    poses.sort((a, b) => a.mirroredCenterX - b.mirroredCenterX)
-    this.onPoses?.(poses, now, video.videoWidth, video.videoHeight)
+    rawPoses.sort((a, b) => a.mirroredCenterX - b.mirroredCenterX)
+
+    if (rawPoses.length === 0) {
+      // 快速动作瞬时遮挡（<= 160ms）保留上一帧平滑姿态，避免角色突然弹回僵直
+      if (this.lastValidPoses.length > 0 && now - this.lastValidTime <= 160) {
+        this.onPoses?.(this.lastValidPoses, now, video.videoWidth, video.videoHeight)
+        return
+      }
+      this.onPoses?.([], now, video.videoWidth, video.videoHeight)
+      return
+    }
+
+    const filteredPoses: TrackedPose[] = rawPoses.map((pose, idx) => {
+      const bank = this.filterBanks[Math.min(idx, 1)]!
+      const smoothed = bank.apply(pose.landmarks, pose.worldLandmarks, now)
+      const ls = smoothed.landmarks[11]!
+      const rs = smoothed.landmarks[12]!
+      return {
+        landmarks: smoothed.landmarks,
+        worldLandmarks: smoothed.worldLandmarks,
+        mirroredCenterX: 1 - (ls.x + rs.x) * 0.5,
+      }
+    })
+
+    this.lastValidPoses = filteredPoses
+    this.lastValidTime = now
+    this.onPoses?.(filteredPoses, now, video.videoWidth, video.videoHeight)
   }
 
   public stop(video: HTMLVideoElement | null) {
@@ -185,6 +371,9 @@ export class UltraPoseTracker {
       this.rafId = 0
     }
     this.lastVideoTime = -1
+    this.lastValidPoses = []
+    this.filterBanks[0].reset()
+    this.filterBanks[1].reset()
     if (this.landmarker) {
       try {
         this.landmarker.close()
@@ -231,7 +420,6 @@ export function drawTacticalSkeleton(
 ) {
   ctx.clearRect(0, 0, width, height)
 
-  // 绘制战术中心参考虚线
   ctx.save()
   ctx.strokeStyle = splitDivider ? 'rgba(250, 204, 21, 0.45)' : 'rgba(56, 232, 255, 0.25)'
   ctx.lineWidth = 1
@@ -250,7 +438,6 @@ export function drawTacticalSkeleton(
   ]
 
   ctx.save()
-  // 水平镜像以严格对齐镜像视频画面
   ctx.translate(width, 0)
   ctx.scale(-1, 1)
 
@@ -258,7 +445,6 @@ export function drawTacticalSkeleton(
     if (!lms || lms.length < 29) return
     const theme = palette[slotIdx % palette.length]!
 
-    // 骨骼连线
     ctx.strokeStyle = theme.bone
     ctx.lineWidth = 2.4
     ctx.lineCap = 'round'
@@ -268,15 +454,14 @@ export function drawTacticalSkeleton(
     for (const [aIdx, bIdx] of TACTICAL_LINKS) {
       const a = lms[aIdx]
       const b = lms[bIdx]
-      if (!a || !b || (a.visibility ?? 1) < 0.32 || (b.visibility ?? 1) < 0.32) continue
+      if (!a || !b || (a.visibility ?? 1) < 0.3 || (b.visibility ?? 1) < 0.3) continue
       ctx.moveTo(a.x * width, a.y * height)
       ctx.lineTo(b.x * width, b.y * height)
     }
     ctx.stroke()
 
-    // 头部战术定位环
     const nose = lms[0]
-    if (nose && (nose.visibility ?? 1) >= 0.35) {
+    if (nose && (nose.visibility ?? 1) >= 0.32) {
       ctx.beginPath()
       ctx.strokeStyle = theme.joint
       ctx.lineWidth = 1.6
@@ -284,24 +469,22 @@ export function drawTacticalSkeleton(
       ctx.stroke()
     }
 
-    // 常规关节锚点
     ctx.shadowBlur = 0
     ctx.fillStyle = theme.joint
     for (const idx of [11, 12, 13, 14, 23, 24, 25, 26]) {
       const p = lms[idx]
-      if (!p || (p.visibility ?? 1) < 0.35) continue
+      if (!p || (p.visibility ?? 1) < 0.32) continue
       ctx.beginPath()
       ctx.arc(p.x * width, p.y * height, 2.6, 0, Math.PI * 2)
       ctx.fill()
     }
 
-    // 双拳与双脚高能打击点高亮
     ctx.fillStyle = theme.strike
     ctx.shadowColor = theme.strike
     ctx.shadowBlur = 8
     for (const idx of [15, 16, 27, 28]) {
       const p = lms[idx]
-      if (!p || (p.visibility ?? 1) < 0.3) continue
+      if (!p || (p.visibility ?? 1) < 0.28) continue
       ctx.beginPath()
       ctx.arc(p.x * width, p.y * height, 4.2, 0, Math.PI * 2)
       ctx.fill()

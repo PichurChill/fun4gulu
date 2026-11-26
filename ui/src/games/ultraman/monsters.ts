@@ -6,68 +6,68 @@ import type { MonsterSpec } from './types'
 
 export const MONSTER_WAVES: MonsterSpec[] = [
   {
-    id: 'baltan',
-    modelUrl: '/models/ultraman/baltan.glb',
-    maxHp: 340,
-    targetHeight: 16.2,
-    baseZ: -2.2,
-    accentColor: 0xff6b35,
-    attacks: ['fireball', 'melee'],
+    id: 'gomora-mecha',
+    modelUrl: '/models/ultraman/gomora-mecha.glb',
+    maxHp: 1100,
+    targetHeight: 16.8,
+    baseZ: -1.4,
+    accentColor: 0xff5a2c,
+    attacks: ['melee', 'fireball', 'dark-beam'],
     attackDamage: 14,
     attackInterval: 4.0,
-    defaultTheme: 'seaside',
+    defaultTheme: 'city',
     facingOffsetY: 0,
   },
   {
-    id: 'ganq',
-    modelUrl: '/models/ultraman/ganq.glb',
-    maxHp: 440,
-    targetHeight: 17.2,
-    baseZ: -2.8,
-    accentColor: 0xb048ff,
-    attacks: ['fireball', 'dark-beam'],
-    attackDamage: 16,
-    attackInterval: 3.8,
-    defaultTheme: 'city',
-    isStaticMesh: true,
+    id: 'baltan',
+    modelUrl: '/models/ultraman/baltan.glb',
+    maxHp: 1240,
+    targetHeight: 16.0,
+    baseZ: -1.4,
+    accentColor: 0xff6b35,
+    attacks: ['fireball', 'melee'],
+    attackDamage: 15,
+    attackInterval: 3.9,
+    defaultTheme: 'seaside',
     facingOffsetY: 0,
   },
   {
     id: 'zetton',
     modelUrl: '/models/ultraman/zetton.glb',
-    maxHp: 560,
-    targetHeight: 17.8,
-    baseZ: -3.0,
+    maxHp: 1420,
+    targetHeight: 17.2,
+    baseZ: -1.6,
     accentColor: 0xff9f1c,
     attacks: ['fireball', 'melee', 'dark-beam'],
-    attackDamage: 18,
-    attackInterval: 3.5,
-    defaultTheme: 'mountain',
+    attackDamage: 17,
+    attackInterval: 3.7,
+    defaultTheme: 'city',
     facingOffsetY: 0,
   },
   {
-    id: 'gomora-mecha',
-    modelUrl: '/models/ultraman/gomora-mecha.glb',
-    maxHp: 720,
-    targetHeight: 18.4,
-    baseZ: -3.4,
-    accentColor: 0xff3b5c,
-    attacks: ['melee', 'dark-beam', 'fireball'],
-    attackDamage: 20,
-    attackInterval: 3.3,
-    defaultTheme: 'city',
+    id: 'ganq',
+    modelUrl: '/models/ultraman/ganq.glb',
+    maxHp: 1580,
+    targetHeight: 16.8,
+    baseZ: -1.8,
+    accentColor: 0xb048ff,
+    attacks: ['fireball', 'dark-beam'],
+    attackDamage: 18,
+    attackInterval: 3.6,
+    defaultTheme: 'mountain',
+    isStaticMesh: true,
     facingOffsetY: 0,
   },
   {
     id: 'gatanothor',
     modelUrl: '/models/ultraman/gatanothor.glb',
-    maxHp: 940,
-    targetHeight: 20.2,
-    baseZ: -4.4,
+    maxHp: 1860,
+    targetHeight: 19.2,
+    baseZ: -2.4,
     accentColor: 0xa855f7,
     attacks: ['dark-beam', 'fireball', 'melee'],
-    attackDamage: 22,
-    attackInterval: 3.1,
+    attackDamage: 20,
+    attackInterval: 3.4,
     defaultTheme: 'volcano',
     facingOffsetY: 0,
   },
@@ -98,7 +98,9 @@ interface MonsterRig {
 
 /**
  * 怪兽 3D 模型与特摄物理光效控制器：
- * 采用 Fresnel 轮廓辉光 Shader 注入替代全表面自发光，保留 100% 皮肤甲壳纹理与明暗体积
+ * - Fresnel 轮廓辉光 Shader（含 pow 安全下限防 NaN 污染 Bloom）
+ * - 支持近身肉搏、远程高台炮击、正面角力僵持、被过肩摔抛飞与残血终结受击演出
+ * - 全骨骼四元数阻尼插值，彻底消除状态切换瞬移僵硬感
  */
 export class KaijuController {
   public readonly root = new THREE.Group()
@@ -107,9 +109,10 @@ export class KaijuController {
   private spec: MonsterSpec | null = null
   private rig: MonsterRig | null = null
   private restQuats = new Map<THREE.Bone, THREE.Quaternion>()
+  private smoothQuats = new Map<THREE.Bone, THREE.Quaternion>()
   private meshes: THREE.Mesh[] = []
 
-  // 共享着色器 Uniform（驱动轮廓能量气场与受击高光脉冲，不刷白纹理）
+  // 共享着色器 Uniform（驱动轮廓能量气场与受击橙白闪光，不刷白纹理）
   private readonly uRimColor = { value: new THREE.Color(0xff6b35) }
   private readonly uRimStrength = { value: 0 }
   private readonly uHitFlash = { value: 0 }
@@ -125,7 +128,10 @@ export class KaijuController {
     return this.encounter.attack
   }
   public currentX = 0
-  public currentZ = -2.5
+  public currentZ = -1.6
+  public stageTargetZ: number | null = null
+  public stageTargetX: number | null = null
+  private smoothStageZ = -1.6
   private recoilSide = 0
   public hitFlash = 0
   private readonly upperDirection = new THREE.Vector3()
@@ -137,11 +143,32 @@ export class KaijuController {
   private stepPhase = 0
   private patrolPhase = 0
   private modelHeight = 17
+  /** 怪兽归一化缩放后向 +Z（英雄方向）探出的真实物理前端距离，用于全链路防穿模 */
+  public frontExtentZ = 3.8
   private lungeOffsetZ = 0
+  private heroAnchorZ = 8.6
 
   constructor(private readonly scene: THREE.Scene) {
     this.root.name = 'KaijuRoot'
     this.scene.add(this.root)
+  }
+
+  public setStageAnchor(targetZ: number | null, heroZ = 8.4, targetX: number | null = null) {
+    this.stageTargetZ = targetZ
+    this.heroAnchorZ = heroZ
+    this.stageTargetX = targetX
+  }
+
+  /** 电影切场时瞬间对齐怪兽世界站位，消除过场瞬间主体落在画外导致的空镜头 */
+  public snapToPosition(x: number, z: number) {
+    this.currentX = x
+    this.currentZ = z
+    this.smoothStageZ = z
+    this.stageTargetZ = z
+    this.stageTargetX = x
+    this.lungeOffsetZ = 0
+    this.root.position.set(x, 0, z)
+    this.root.updateMatrixWorld(true)
   }
 
   public async spawn(loader: GLTFLoader, spec: MonsterSpec): Promise<void> {
@@ -189,6 +216,7 @@ export class KaijuController {
         const bone = node as THREE.Bone
         nodeMap.set(normalizeBoneKey(bone.name), bone)
         this.restQuats.set(bone, bone.quaternion.clone())
+        this.smoothQuats.set(bone, bone.quaternion.clone())
         if (/^(tail|尻尾|しっぽ)\d*$/i.test(bone.name)) {
           tailBones.push(bone)
         }
@@ -205,7 +233,7 @@ export class KaijuController {
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
         for (const m of mats) {
           if (m instanceof THREE.MeshStandardMaterial) {
-            m.roughness = THREE.MathUtils.clamp(m.roughness, 0.42, 0.82)
+            m.roughness = THREE.MathUtils.clamp(m.roughness, 0.38, 0.78)
             m.metalness = Math.min(0.45, m.metalness)
             this.injectKaijuRimShader(m)
           }
@@ -242,8 +270,32 @@ export class KaijuController {
       tentacles: tentacleBones,
     }
 
+    // 关键防穿模归中：长尾怪兽（如机械哥莫拉）用 Box3 居中会把躯干大幅推向 +Z；
+    // 改为按真实躯干骨骼（hips/chest）将身体重心精准对齐到 root 原点 Z=0，再实测真实最前沿距离！
+    const torsoAnchor = this.rig.hips ?? this.rig.chest
+    if (torsoAnchor) {
+      this.root.updateMatrixWorld(true)
+      const anchorWorld = torsoAnchor.getWorldPosition(new THREE.Vector3())
+      model.position.x -= anchorWorld.x
+      model.position.z -= anchorWorld.z
+      this.root.updateMatrixWorld(true)
+    }
+
+    // 实测归中后怪兽面向奥特曼侧（+Z）的真实无截断最前沿距离（综合 Box3 与头/爪骨骼位置）
+    const alignedBox = new THREE.Box3().setFromObject(model)
+    let measuredFrontZ = alignedBox.max.z
+    for (const b of [this.rig.head, this.rig.handL, this.rig.handR, this.rig.clawL, this.rig.clawR]) {
+      if (!b) continue
+      const wz = b.getWorldPosition(new THREE.Vector3()).z + 1.6
+      if (wz > measuredFrontZ) measuredFrontZ = wz
+    }
+    this.frontExtentZ = Math.max(3.2, measuredFrontZ)
+
     this.currentX = 0
     this.currentZ = spec.baseZ
+    this.smoothStageZ = spec.baseZ
+    this.stageTargetZ = null
+    this.stageTargetX = null
     this.lungeOffsetZ = 0
     this.hitFlash = 0
     this.patrolPhase = 0
@@ -256,7 +308,7 @@ export class KaijuController {
   }
 
   private injectKaijuRimShader(mat: THREE.MeshStandardMaterial) {
-    mat.customProgramCacheKey = () => 'kaiju-fresnel-rim-v1'
+    mat.customProgramCacheKey = () => 'kaiju-fresnel-rim-v2'
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uRimColor = this.uRimColor
       shader.uniforms.uRimStrength = this.uRimStrength
@@ -266,12 +318,13 @@ export class KaijuController {
         shader.fragmentShader.replace(
           '#include <opaque_fragment>',
           `
-          vec3 kViewDir = normalize( vViewPosition );
-          float kFresnel = pow( 1.0 - clamp( abs( dot( normal, kViewDir ) ), 0.0, 1.0 ), 2.25 );
+          vec3 kViewDir = normalize( vViewPosition + vec3( 0.0001 ) );
+          float kNdotV = clamp( abs( dot( normalize( normal ), kViewDir ) ), 0.0, 1.0 );
+          float kFresnel = pow( max( 1.0 - kNdotV, 0.0001 ), 2.2 );
           outgoingLight += uRimColor * ( kFresnel * uRimStrength );
           outgoingLight = mix(
             outgoingLight,
-            outgoingLight * 1.48 + vec3( 0.34, 0.38, 0.45 ) * ( 0.25 + 0.75 * kFresnel ),
+            outgoingLight * 1.45 + vec3( 0.58, 0.36, 0.24 ) * ( 0.28 + 0.72 * kFresnel ),
             uHitFlash
           );
           #include <opaque_fragment>
@@ -288,6 +341,7 @@ export class KaijuController {
       this.model = null
     }
     this.restQuats.clear()
+    this.smoothQuats.clear()
     this.meshes = []
     this.rig = null
   }
@@ -295,6 +349,24 @@ export class KaijuController {
   public triggerHitFlash(strength = 1, side?: 'left' | 'right') {
     this.recoilSide = side === 'left' ? 1 : side === 'right' ? -1 : 0
     this.hitFlash = Math.min(1, Math.max(this.hitFlash, strength))
+  }
+
+  /** 返回当前帧怪兽面向英雄一侧的实时最前沿世界 Z 坐标（同时取真实骨骼位置与包围盒最大值，杜绝任何穿模） */
+  public getFrontSurfaceZ(): number {
+    const pitchForward =
+      this.root.rotation.x > 0
+        ? Math.sin(this.root.rotation.x) * this.modelHeight * 0.34
+        : 0
+    let frontZ = this.root.position.z + this.frontExtentZ + pitchForward
+    if (this.rig) {
+      const tmp = new THREE.Vector3()
+      for (const b of [this.rig.head, this.rig.handL, this.rig.handR, this.rig.clawL, this.rig.clawR]) {
+        if (!b) continue
+        b.getWorldPosition(tmp)
+        if (tmp.z + 1.5 > frontZ) frontZ = tmp.z + 1.5
+      }
+    }
+    return frontZ
   }
 
   /** 获取怪兽胸口受击中心世界坐标 */
@@ -311,7 +383,7 @@ export class KaijuController {
     if (this.rig?.head) {
       this.rig.head.updateWorldMatrix(true, false)
       const p = this.rig.head.getWorldPosition(new THREE.Vector3())
-      p.z += 2.0
+      p.z += 2.2
       return p
     }
     return new THREE.Vector3(
@@ -330,25 +402,38 @@ export class KaijuController {
       bone.quaternion.copy(quat)
     }
 
-    // 更新轮廓辉光与受击脉冲（保持纹理清晰立体）
-    this.hitFlash = Math.max(0, this.hitFlash - dt * 5.2)
+    this.hitFlash = Math.max(0, this.hitFlash - dt * 5.0)
     this.uHitFlash.value = this.hitFlash
     this.uRimColor.value.setHex(this.spec.accentColor)
 
     if (this.state === 'windup') {
-      const pulse = 0.55 + 0.45 * Math.sin(elapsedTime * 18)
-      this.uRimStrength.value = 1.15 + pulse * 1.65
+      const pulse = 0.55 + 0.45 * Math.sin(elapsedTime * 22)
+      this.uRimColor.value.setHex(0xff521b)
+      this.uRimStrength.value = 1.45 + pulse * 1.85
+    } else if (this.state === 'finisher-hit') {
+      const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 36)
+      this.uRimColor.value.setHex(0xff2e4c)
+      this.uRimStrength.value = 2.1 + pulse * 1.4
+    } else if (this.state === 'grapple') {
+      this.uRimColor.value.setHex(0xff6b2b)
+      this.uRimStrength.value = 1.15 + Math.sin(elapsedTime * 18) * 0.35
     } else if (this.state === 'roaring' || this.encounter.enraged) {
       const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 8)
-      this.uRimStrength.value = this.state === 'roaring' ? 2.2 : 0.35 + pulse * 0.45
+      this.uRimStrength.value = this.state === 'roaring' ? 2.2 : 0.42 + pulse * 0.48
     } else if (this.state === 'guarding') {
       this.uRimColor.value.setHex(0x60a5fa)
       this.uRimStrength.value = 1.4
+    } else if (this.state === 'stunned') {
+      this.uRimColor.value.setHex(0xfacc15)
+      this.uRimStrength.value = 0.65 + Math.sin(elapsedTime * 12) * 0.35
     } else {
-      this.uRimStrength.value = 0.12
+      this.uRimStrength.value = 0.24
     }
 
-    const baseZ = this.spec.baseZ
+    const desiredBaseZ = this.stageTargetZ ?? this.spec.baseZ
+    this.smoothStageZ += (desiredBaseZ - this.smoothStageZ) * (1 - Math.exp(-dt * 5.5))
+    const baseZ = this.smoothStageZ
+
     let stride = 0
     let posY = 0
     let pitchX = 0
@@ -367,62 +452,106 @@ export class KaijuController {
       pitchX = -1.43 * t * t
       rollZ = 0.27 * Math.sin((t * Math.PI) / 2)
       posY = 0.6 * t
+    } else if (this.state === 'grapple') {
+      // 正面贴身角力抵推：控制温和前倾角防止头角越界穿模，双爪与奥特曼双掌精准对抵
+      const targetX = this.stageTargetX ?? heroX
+      this.currentX += (targetX - this.currentX) * (1 - Math.exp(-dt * 12))
+      const tremble = Math.sin(elapsedTime * 34) * 0.035
+      this.lungeOffsetZ += (0 - this.lungeOffsetZ) * (1 - Math.exp(-dt * 12))
+      this.currentZ = baseZ + Math.sin(elapsedTime * 22) * 0.12
+      posY = Math.abs(Math.sin(elapsedTime * 14)) * 0.18
+      pitchX = 0.12 + Math.sin(elapsedTime * 16) * 0.03
+      rollZ = tremble
+      yawY = 0
+    } else if (this.state === 'thrown') {
+      // 被奥特曼霸气过肩摔砸飞到后方废墟（视频 2 1:12-1:15）
+      const t = Math.min(1, this.stateTime / 1.05)
+      const fly = Math.min(1, t / 0.72)
+      const easeOut = 1 - Math.pow(1 - fly, 2.5)
+      const bounce = t > 0.72 ? Math.sin(((t - 0.72) / 0.28) * Math.PI) * 1.4 : 0
+      this.currentZ = THREE.MathUtils.lerp(baseZ, baseZ - 14.5, easeOut)
+      posY = Math.sin(fly * Math.PI) * 7.8 + bounce
+      pitchX = -0.95 * easeOut - Math.sin(fly * Math.PI) * 0.55
+      rollZ = 0.32 * easeOut
+      yawY = 0.25 * easeOut
+    } else if (this.state === 'stunned') {
+      const sway = Math.sin(elapsedTime * 4.2)
+      this.lungeOffsetZ *= Math.exp(-6 * dt)
+      this.currentZ = baseZ + this.lungeOffsetZ
+      pitchX = 0.36 + sway * 0.06
+      rollZ = sway * 0.14
+      posY = -1.25
+      yawY = Math.atan2(heroX - this.currentX, Math.max(4, this.heroAnchorZ - this.currentZ))
+    } else if (this.state === 'finisher-hit') {
+      const shake = Math.sin(elapsedTime * 42)
+      this.lungeOffsetZ = Math.max(-5.5, this.lungeOffsetZ - dt * 2.2)
+      this.currentZ = baseZ + this.lungeOffsetZ
+      pitchX = -0.34 + shake * 0.08
+      rollZ = Math.cos(elapsedTime * 37) * 0.16
+      posY = 0.35 + Math.abs(shake) * 0.35
+      yawY = Math.atan2(heroX - this.currentX, Math.max(4, this.heroAnchorZ - this.currentZ))
     } else {
-      const breath = Math.sin(elapsedTime * 2.2)
-      const flank = this.spec.id === 'baltan' ? 4.8 : this.spec.id === 'ganq' ? 3.6 : 2.0
-      const stalkingX = heroX * 0.55 + Math.cos(this.patrolPhase * 0.52) * flank
+      const breath = Math.sin(elapsedTime * 2.4)
+      const flank = this.stageTargetX !== null ? 0 : this.spec.id === 'baltan' ? 3.2 : 1.6
+      const stalkingX =
+        this.stageTargetX !== null
+          ? this.stageTargetX
+          : heroX * 0.48 + Math.cos(this.patrolPhase * 0.52) * flank
       const targetPatrolX =
         this.state === 'attack' || this.state === 'windup'
-          ? this.encounter.targetX
+          ? this.stageTargetX !== null
+            ? this.stageTargetX
+            : this.encounter.targetX * 0.55
           : this.state === 'idle'
             ? stalkingX
             : this.currentX
-      const dx = (targetPatrolX - this.currentX) * (1 - Math.exp(-dt * 2.6))
+      const dx = (targetPatrolX - this.currentX) * (1 - Math.exp(-dt * 3.0))
       this.currentX += dx
       this.stepPhase += Math.abs(dx) * 1.85
       stride = Math.min(1, Math.abs(dx) / Math.max(1e-4, dt * 2.8))
       posY = this.spec.isStaticMesh
         ? Math.sin(elapsedTime * 2.4) * 0.55 + 0.3
-        : Math.abs(breath) * 0.18
-      yawY = Math.atan2(heroX - this.currentX, 13.2 - this.currentZ)
+        : Math.abs(breath) * 0.2
+      yawY = Math.atan2(heroX - this.currentX, Math.max(4.5, this.heroAnchorZ - this.currentZ))
 
       if (this.state === 'hit') {
-        const p = Math.sin(Math.min(1, this.stateTime / 0.38) * Math.PI)
-        pitchX = -0.26 * p
-        this.lungeOffsetZ = -2.4 * p
-        rollZ = Math.sin(this.stateTime * 35) * 0.09 * p
+        const p = Math.sin(Math.min(1, this.stateTime / 0.34) * Math.PI)
+        pitchX = -0.32 * p
+        this.lungeOffsetZ = -2.2 * p
+        rollZ = Math.sin(this.stateTime * 38) * 0.12 * p
       } else if (this.state === 'staggered' || this.state === 'recovering') {
         const broken = this.state === 'staggered'
-        const duration = broken ? 1.65 : 0.85
+        const duration = broken ? 1.65 : 0.78
         const bend = Math.sin(Math.PI * Math.min(1, this.stateTime / duration)) ** 0.55
-        pitchX = (broken ? 0.54 : 0.25) * bend
+        pitchX = (broken ? 0.54 : 0.24) * bend
         rollZ = (broken ? 0.18 : -0.08) * bend
-        posY -= bend * (broken ? 1.6 : 0.55)
+        posY -= bend * (broken ? 1.6 : 0.5)
         this.lungeOffsetZ *= Math.exp(-7 * dt)
       } else if (this.state === 'roaring' || this.state === 'guarding') {
         const roar = this.state === 'roaring'
-        const lift = Math.sin(Math.PI * Math.min(1, this.stateTime / (roar ? 1.1 : 1.4)))
+        const lift = Math.sin(Math.PI * Math.min(1, this.stateTime / (roar ? 1.05 : 1.35)))
         pitchX = (roar ? -0.34 : 0.2) * lift
         posY += lift * (roar ? 0.65 : -0.6)
         this.lungeOffsetZ *= Math.exp(-7 * dt)
       } else if (this.state === 'windup') {
         const p = Math.min(1, this.stateTime / WINDUP_TIME)
-        pitchX = -0.2 * p
-        this.lungeOffsetZ = -1.6 * p
-        rollZ = Math.sin(elapsedTime * 22) * 0.04 * p
+        pitchX = -0.22 * p
+        this.lungeOffsetZ = -1.5 * p
+        rollZ = Math.sin(elapsedTime * 24) * 0.05 * p
       } else if (this.state === 'attack') {
-        const p = Math.sin(Math.min(1, this.stateTime / 0.65) * Math.PI)
+        const p = Math.sin(Math.min(1, this.stateTime / 0.62) * Math.PI)
         if (this.currentAttack === 'melee') {
-          // 突进猛扑至奥特曼面前（13.2 - 3.6 = 9.6）
-          const meleeReach = Math.max(8.5, 9.6 - baseZ)
+          // 按怪兽真实前探深度计算安全扑击止点，利爪停在英雄身前护盾面外，绝对零穿模！
+          const maxSafeZ = this.heroAnchorZ - (this.frontExtentZ + 3.6)
+          const meleeReach = Math.max(1.2, Math.min(4.8, maxSafeZ - baseZ))
           this.lungeOffsetZ = p * meleeReach
-          pitchX = p * 0.3
+          pitchX = p * 0.2
         } else {
-          this.lungeOffsetZ = p * 2.6
-          pitchX = p * 0.14
+          this.lungeOffsetZ = p * 1.6
+          pitchX = p * 0.12
         }
       } else {
-        this.lungeOffsetZ += (0 - this.lungeOffsetZ) * Math.min(1, dt * 6)
+        this.lungeOffsetZ += (0 - this.lungeOffsetZ) * Math.min(1, dt * 6.5)
       }
       this.currentZ = baseZ + this.lungeOffsetZ
     }
@@ -430,8 +559,8 @@ export class KaijuController {
     this.root.position.set(this.currentX, posY, this.currentZ)
     this.root.rotation.set(
       pitchX,
-      yawY + this.recoilSide * this.hitFlash * 0.24,
-      rollZ + this.recoilSide * this.hitFlash * 0.14,
+      yawY + this.recoilSide * this.hitFlash * 0.28,
+      rollZ + this.recoilSide * this.hitFlash * 0.16,
     )
 
     if (this.rig) {
@@ -444,12 +573,23 @@ export class KaijuController {
       }
 
       const step = Math.sin(this.stepPhase) * stride
-      const crouch = this.state === 'staggered' ? 0.52 : this.state === 'guarding' ? 0.32 : 0.12
+      const crouch =
+        this.state === 'staggered' || this.state === 'stunned'
+          ? 0.52
+          : this.state === 'guarding' || this.state === 'grapple'
+            ? 0.34
+            : 0.12
       if (this.rig.thighL) this.rig.thighL.rotation.x += crouch + step * 0.28
       if (this.rig.thighR) this.rig.thighR.rotation.x += crouch - step * 0.28
       if (this.rig.shinL) this.rig.shinL.rotation.x -= crouch + Math.max(0, step) * 0.44
       if (this.rig.shinR) this.rig.shinR.rotation.x -= crouch + Math.max(0, -step) * 0.44
-      const open = this.state === 'roaring' ? Math.sin((Math.PI * this.stateTime) / 1.1) : 0
+
+      const open =
+        this.state === 'roaring'
+          ? Math.sin((Math.PI * this.stateTime) / 1.05)
+          : this.state === 'grapple' || this.state === 'finisher-hit'
+            ? 0.75 + 0.25 * Math.sin(elapsedTime * 18)
+            : 0
       if (this.rig.jaw) this.rig.jaw.rotation.x += open * 0.55
       const pincers = this.state === 'windup' ? this.stateTime / WINDUP_TIME : open
       if (this.rig.clawL) this.rig.clawL.rotation.z += pincers * 0.55
@@ -465,6 +605,13 @@ export class KaijuController {
         b.rotation.z += Math.sin(elapsedTime * 3.1 + idx * 0.6) * 0.09
         b.rotation.x += Math.cos(elapsedTime * 2.5 + idx * 0.4) * 0.07
       })
+
+      // 骨骼帧间四元数平滑阻尼，消除状态切换硬跳
+      const blend = 1 - Math.exp(-dt * 18)
+      for (const [bone, prevQ] of this.smoothQuats) {
+        prevQ.slerp(bone.quaternion, blend)
+        bone.quaternion.copy(prevQ)
+      }
     }
 
     this.root.updateMatrixWorld(true)
@@ -480,7 +627,14 @@ export class KaijuController {
     if (!arm || !fore || !hand) return
     const upper = this.upperDirection.set(side * 0.58, -0.74, 0.32)
     const lower = this.foreDirection.set(-side * 0.22, 0.35 + breath * 0.1, 0.96)
-    if (this.state === 'guarding') {
+    if (this.state === 'grapple') {
+      // 双爪前倾下压，精准对抵奥特曼胸前双掌高度形成正面角力胶着
+      upper.set(side * 0.24, -0.16, 0.96)
+      lower.set(side * 0.08, -0.18, 0.98)
+    } else if (this.state === 'thrown' || this.state === 'finisher-hit') {
+      upper.set(side * 0.85, 0.48, 0.22)
+      lower.set(side * 0.72, 0.62, 0.32)
+    } else if (this.state === 'guarding') {
       upper.set(side * 0.37, -0.45, 0.82)
       lower.set(-side * 0.6, 0.8, 0.15)
     } else if (this.state === 'windup') {
@@ -491,16 +645,16 @@ export class KaijuController {
         lower.y += p * 0.65
       }
     } else if (this.state === 'attack') {
-      const p = Math.sin(Math.min(1, this.stateTime / 0.65) * Math.PI)
+      const p = Math.sin(Math.min(1, this.stateTime / 0.62) * Math.PI)
       if (this.currentAttack !== 'melee' || side > 0) {
         upper.set(side * (0.58 - p * 0.46), -0.74 + p * 0.87, 0.32 + p)
         lower.set(-side * 0.12, 0.35 * (1 - p), 1)
       }
     } else if (this.state === 'roaring') {
-      const p = Math.sin((Math.PI * this.stateTime) / 1.1)
+      const p = Math.sin((Math.PI * this.stateTime) / 1.05)
       upper.y += p * 1.35
       lower.set(side * 0.6, 0.86, 0.35)
-    } else if (this.state === 'staggered' || this.state === 'dying') {
+    } else if (this.state === 'staggered' || this.state === 'stunned' || this.state === 'dying') {
       lower.set(side * 0.28, -0.8, 0.37)
     }
     this.aimSegment(arm, fore, upper)

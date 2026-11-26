@@ -6,11 +6,33 @@ export type { HeroId }
 export type GamePhase =
   | 'menu'
   | 'loading'
+  | 'transform'
   | 'intro'
   | 'fighting'
   | 'wave-clear'
   | 'victory'
   | 'defeat'
+
+/** 单人电影式五幕战斗阶段 */
+export type BattleStage =
+  | 'melee'
+  | 'transition-ranged'
+  | 'ranged'
+  | 'grapple'
+  | 'grapple-finish'
+  | 'finisher-spread'
+  | 'finisher-beam'
+
+/** 右下角动态动作教学指令卡类型 */
+export type ActionGuideKind =
+  | 'transform'
+  | 'punch'
+  | 'guard'
+  | 'dodge-shoot'
+  | 'grapple'
+  | 'beam-spread'
+  | 'beam-fire'
+  | 'kick-break'
 
 export type ControlMode = 'camera' | 'keyboard'
 
@@ -20,14 +42,29 @@ export type SceneTheme = 'auto' | ConcreteSceneTheme
 export type HeroAction =
   | 'idle'
   | 'pose-intro'
+  | 'transform'
   | 'punch-left'
   | 'punch-right'
   | 'punch-heavy'
+  | 'combo-1'
+  | 'combo-2'
+  | 'combo-3'
+  | 'combo-4'
+  | 'combo-5'
+  | 'palm-left'
+  | 'palm-right'
+  | 'dodge-left'
+  | 'dodge-right'
   | 'jump-kick'
   | 'kick-left'
   | 'kick-right'
   | 'guard'
   | 'disc'
+  | 'grapple'
+  | 'grapple-throw'
+  | 'backflip-land'
+  | 'cinematic-taunt'
+  | 'beam-spread'
   | 'beam'
   | 'hit'
   | 'defeat'
@@ -112,12 +149,16 @@ export interface GestureSnapshot {
   coverage: 'none' | 'upper' | 'full'
   /** 左右位移/倾身偏移 [-1, 1]，负数为左，正数为右 */
   lean: number
+  /** 横向跨步瞬时速度（用于触发侧滑/闪步动画） */
+  lateralVelocity: number
   /** 双臂胸前交叉防御 */
   guard: boolean
   /** 本帧刚进入防御架势的时间戳（用于精准防御判定） */
   guardJustStarted: boolean
   /** 本帧触发的拳击 */
   punch: 'left' | 'right' | null
+  /** 出拳动作风格（直拳/横摆/上勾） */
+  punchStyle: 'jab' | 'hook' | 'uppercut'
   /** 本帧触发的抬腿飞踢 */
   kick: 'left' | 'right' | null
   /** 举手蓄力光轮进度 [0, 1] */
@@ -137,6 +178,16 @@ export interface GestureSnapshot {
   beamHolding: boolean
   /** 光线发射时的主竖臂侧 */
   beamArmSide: 'left' | 'right'
+  /** 单手高举神光棒变身进度 [0, 1] */
+  transformProgress: number
+  /** 本帧变身完成触发 */
+  transformTrigger: boolean
+  /** 双臂平展蓄力进度 [0, 1] */
+  spreadProgress: number
+  /** 当前是否保持双臂展开蓄力姿态 */
+  isSpreading: boolean
+  /** 角力阶段摆臂/原地快跑推力脉冲强度 [0, 1] */
+  strugglePower: number
   /** 归一化站位水平比例 [0, 1]（镜像后，0.5 为正中，供体感雷达绘制） */
   mirroredCenterX: number
   /** 实时全身骨骼重定向数据 */
@@ -160,6 +211,7 @@ export interface FloatingDamageEvent {
 
 export interface BattleHudState {
   phase: GamePhase
+  battleStage: BattleStage
   controlMode: ControlMode
   loadingProgress: number
   heroId: HeroId
@@ -184,12 +236,18 @@ export interface BattleHudState {
   defeatedCount: number
   warningTextKey: string | null
   warningUrgency: number
-  chargeKind: 'beam' | 'disc' | 'guard' | 'type' | null
+  chargeKind: 'beam' | 'disc' | 'guard' | 'type' | 'spread' | 'transform' | null
   chargeProgress: number
   discCooldownRatio: number
   beamCooldownRatio: number
   beamClashActive: boolean
   beamClashProgress: number
+  grappleActive: boolean
+  grappleProgress: number
+  transformProgress: number
+  finisherPhase: 'none' | 'spread' | 'beam'
+  finisherProgress: number
+  actionGuide: ActionGuideKind | null
   activeSkillBannerKey: string | null
   tracking: boolean
   bodyCoverage: 'none' | 'upper' | 'full'

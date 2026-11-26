@@ -1,504 +1,473 @@
+import type { HeroId } from './types'
+
+export type TransformSfxKind = 'rise' | 'open' | 'type'
+
+type SfxKey =
+  | 'transform-open'
+  | 'transform-rise'
+  | 'type-change'
+  | 'voice-tiga'
+  | 'voice-shuwat'
+  | 'voice-taro'
+  | 'voice-heisei-a'
+  | 'voice-heisei-b'
+  | 'swing'
+  | 'dodge'
+  | 'punch-1'
+  | 'punch-2'
+  | 'heavy-impact'
+  | 'clash-impact'
+  | 'hero-hurt'
+  | 'beam-normal'
+  | 'beam-super'
+  | 'beam-clash'
+  | 'palm-shot'
+  | 'disc'
+  | 'guard-block'
+  | 'deflect'
+  | 'roar-gomora'
+  | 'roar-baltan'
+  | 'roar-kaiju-a'
+  | 'roar-kaiju-b'
+  | 'explosion-1'
+  | 'explosion-2'
+  | 'timer-classic'
+  | 'timer-heisei'
+  | 'rainbow-charge'
+  | 'victory'
+  | 'shutter'
+
+const SFX_URLS: Record<SfxKey, string> = {
+  'transform-open': '/audio/ultraman/sfx/transform-open.mp3',
+  'transform-rise': '/audio/ultraman/sfx/transform-rise.mp3',
+  'type-change': '/audio/ultraman/sfx/type-change.mp3',
+  'voice-tiga': '/audio/ultraman/sfx/voice-tiga.mp3',
+  'voice-shuwat': '/audio/ultraman/sfx/voice-shuwat.mp3',
+  'voice-taro': '/audio/ultraman/sfx/voice-taro.mp3',
+  'voice-heisei-a': '/audio/ultraman/sfx/voice-heisei-a.mp3',
+  'voice-heisei-b': '/audio/ultraman/sfx/voice-heisei-b.mp3',
+  swing: '/audio/ultraman/sfx/swing.mp3',
+  dodge: '/audio/ultraman/sfx/dodge.mp3',
+  'punch-1': '/audio/ultraman/sfx/punch-1.mp3',
+  'punch-2': '/audio/ultraman/sfx/punch-2.mp3',
+  'heavy-impact': '/audio/ultraman/sfx/heavy-impact.mp3',
+  'clash-impact': '/audio/ultraman/sfx/clash-impact.mp3',
+  'hero-hurt': '/audio/ultraman/sfx/hero-hurt.mp3',
+  'beam-normal': '/audio/ultraman/sfx/beam-normal.mp3',
+  'beam-super': '/audio/ultraman/sfx/beam-super.mp3',
+  'beam-clash': '/audio/ultraman/sfx/beam-clash.mp3',
+  'palm-shot': '/audio/ultraman/sfx/palm-shot.mp3',
+  disc: '/audio/ultraman/sfx/disc.mp3',
+  'guard-block': '/audio/ultraman/sfx/guard-block.mp3',
+  deflect: '/audio/ultraman/sfx/deflect.mp3',
+  'roar-gomora': '/audio/ultraman/sfx/roar-gomora.mp3',
+  'roar-baltan': '/audio/ultraman/sfx/roar-baltan.mp3',
+  'roar-kaiju-a': '/audio/ultraman/sfx/roar-kaiju-a.mp3',
+  'roar-kaiju-b': '/audio/ultraman/sfx/roar-kaiju-b.mp3',
+  'explosion-1': '/audio/ultraman/sfx/explosion-1.mp3',
+  'explosion-2': '/audio/ultraman/sfx/explosion-2.mp3',
+  'timer-classic': '/audio/ultraman/sfx/timer-classic.mp3',
+  'timer-heisei': '/audio/ultraman/sfx/timer-heisei.mp3',
+  'rainbow-charge': '/audio/ultraman/sfx/rainbow-charge.mp3',
+  victory: '/audio/ultraman/sfx/victory.mp3',
+  shutter: '/audio/ultraman/sfx/shutter.mp3',
+}
+
+interface PlaySampleOptions {
+  volume?: number
+  rate?: number
+  rateJitter?: number
+  pan?: number
+  delay?: number
+  offset?: number
+  duration?: number
+}
+
 /**
- * 特摄战斗合成音效引擎（纯 WebAudio，零外部音频依赖）
+ * 电视特摄真实多轨采样音效引擎（预解码全套圆谷原声变身/战吼/光波/打击/怪兽/计时器素材）
  */
 export class UltraAudio {
   private ctx: AudioContext | null = null
+  private masterGain: GainNode | null = null
+  private compressor: DynamicsCompressorNode | null = null
+  private buffers = new Map<SfxKey, AudioBuffer>()
+  private loading = new Map<SfxKey, Promise<AudioBuffer | null>>()
+  private preloaded = false
+  private disposed = false
+
   public muted = false
-  private alarmTimer: number | null = null
+  private heroId: HeroId = 'tiga'
+  private monsterId = 'gomora-mecha'
+  private punchCounter = 0
+  private lastVoiceAt = -Infinity
+  private alarmSource: AudioBufferSourceNode | null = null
+  private alarmGain: GainNode | null = null
+  private alarmDesired = false
 
   private ensureContext(): AudioContext | null {
-    if (this.muted) return null
-    try {
-      if (!this.ctx) {
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-        this.ctx = new AudioCtx()
-      }
-      if (this.ctx.state === 'suspended') {
-        void this.ctx.resume()
-      }
-      return this.ctx
-    } catch {
-      return null
+    if (this.disposed) return null
+    if (!this.ctx) {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      if (!AudioCtx) return null
+      this.ctx = new AudioCtx()
+      // 广播级软限幅母线：确保连招、战吼、光波与爆炸并发叠加时扎实饱满不削波破音
+      this.compressor = this.ctx.createDynamicsCompressor()
+      this.compressor.threshold.value = -10
+      this.compressor.knee.value = 18
+      this.compressor.ratio.value = 6
+      this.compressor.attack.value = 0.003
+      this.compressor.release.value = 0.14
+      this.masterGain = this.ctx.createGain()
+      this.masterGain.gain.value = 0.92
+      this.compressor.connect(this.masterGain)
+      this.masterGain.connect(this.ctx.destination)
     }
+    if (this.ctx.state === 'suspended') {
+      void this.ctx.resume()
+    }
+    return this.ctx
   }
 
   public unlock() {
     this.ensureContext()
+    void this.preload()
   }
 
-  /** 变身闪光音效 */
-  public playTransform() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const freqs = [261.63, 392.0, 523.25, 783.99, 1046.5]
-    freqs.forEach((f, idx) => {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = idx % 2 === 0 ? 'triangle' : 'sine'
-      osc.frequency.setValueAtTime(f * 0.75, now + idx * 0.055)
-      osc.frequency.exponentialRampToValueAtTime(f * 1.45, now + 0.52 + idx * 0.05)
-      gain.gain.setValueAtTime(0.001, now + idx * 0.055)
-      gain.gain.linearRampToValueAtTime(0.09, now + 0.14 + idx * 0.055)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.92)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(now + idx * 0.055)
-      osc.stop(now + 0.96)
-    })
+  public setHero(id: HeroId) {
+    this.heroId = id
   }
 
-  /** 拳风从出招侧掠向中央，飞踢的扫频更低、尾音更长 */
-  public playSwing(side: 'left' | 'right', kick: boolean) {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const duration = kick ? 0.14 : 0.09
-    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
-    const wind = ctx.createBufferSource()
-    wind.buffer = buffer
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.setValueAtTime(kick ? 650 : 1050, now)
-    filter.frequency.exponentialRampToValueAtTime(kick ? 1650 : 2900, now + duration)
-    const gain = ctx.createGain()
-    gain.gain.setValueAtTime(0.001, now)
-    gain.gain.linearRampToValueAtTime(0.38, now + duration * 0.4)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + duration)
-    const pan = ctx.createStereoPanner()
-    pan.pan.setValueAtTime(side === 'left' ? -0.65 : 0.65, now)
-    pan.pan.linearRampToValueAtTime(0, now + duration)
-    wind.connect(filter).connect(gain).connect(pan).connect(ctx.destination)
-    wind.start(now)
+  public setMonster(id: string) {
+    this.monsterId = id
   }
 
-  /** 出拳呼啸与命中重击 */
-  public playPunch(hit = true) {
+  /** 并行预解码全套 33 条电视特摄真实音效至内存，保障战斗出招零延迟 */
+  public preload(): Promise<void> {
+    if (this.preloaded || this.disposed) return Promise.resolve()
+    this.preloaded = true
     const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'triangle'
-    osc.frequency.setValueAtTime(hit ? 230 : 320, now)
-    osc.frequency.exponentialRampToValueAtTime(48, now + 0.16)
-    gain.gain.setValueAtTime(hit ? 0.3 : 0.14, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18)
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.19)
-
-    if (hit) {
-      const sub = ctx.createOscillator()
-      const subGain = ctx.createGain()
-      sub.type = 'sine'
-      sub.frequency.setValueAtTime(88, now)
-      sub.frequency.exponentialRampToValueAtTime(34, now + 0.14)
-      subGain.gain.setValueAtTime(0.36, now)
-      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16)
-      sub.connect(subGain)
-      subGain.connect(ctx.destination)
-      sub.start(now)
-      sub.stop(now + 0.17)
-      this.playNoiseBurst(0.12, 0.24, 1050)
+    if (!ctx) {
+      this.preloaded = false
+      return Promise.resolve()
     }
+    const keys = Object.keys(SFX_URLS) as SfxKey[]
+    return Promise.all(keys.map((k) => this.loadSample(k))).then(() => undefined)
   }
 
-  /** 重招劈斩命中（飞踢 / 光轮 / 三连重拳） */
-  public playHeavyImpact() {
+  private loadSample(key: SfxKey): Promise<AudioBuffer | null> {
+    const cached = this.buffers.get(key)
+    if (cached) return Promise.resolve(cached)
+    const pending = this.loading.get(key)
+    if (pending) return pending
+
     const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
+    if (!ctx) return Promise.resolve(null)
 
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'square'
-    osc.frequency.setValueAtTime(1750, now)
-    osc.frequency.exponentialRampToValueAtTime(320, now + 0.12)
-    gain.gain.setValueAtTime(0.16, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14)
-    const hp = ctx.createBiquadFilter()
-    hp.type = 'highpass'
-    hp.frequency.value = 420
-    osc.connect(hp)
-    hp.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.15)
+    const url = SFX_URLS[key]
+    const task = fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`[UltraAudio] 加载音效失败 (${res.status}): ${url}`)
+        return res.arrayBuffer()
+      })
+      .then((raw) => ctx.decodeAudioData(raw))
+      .then((decoded) => {
+        if (!this.disposed) this.buffers.set(key, decoded)
+        return decoded
+      })
+      .catch((err) => {
+        console.error(`[UltraAudio] 真实音效解码失败: ${key}`, err)
+        return null
+      })
+      .finally(() => {
+        this.loading.delete(key)
+      })
 
-    const sub = ctx.createOscillator()
-    const subGain = ctx.createGain()
-    sub.type = 'sine'
-    sub.frequency.setValueAtTime(98, now)
-    sub.frequency.exponentialRampToValueAtTime(28, now + 0.22)
-    subGain.gain.setValueAtTime(0.42, now)
-    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24)
-    sub.connect(subGain)
-    subGain.connect(ctx.destination)
-    sub.start(now)
-    sub.stop(now + 0.25)
-
-    this.playNoiseBurst(0.16, 0.28, 1450)
+    this.loading.set(key, task)
+    return task
   }
 
-  /** 挥拳击碎/弹反怪兽火球的清脆金属爆鸣 */
-  public playDeflect() {
+  private playSample(key: SfxKey, opts: PlaySampleOptions = {}) {
+    if (this.muted || this.disposed) return
     const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const freqs = [880, 1320, 1980]
-    freqs.forEach((f, idx) => {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(f, now + idx * 0.02)
-      osc.frequency.exponentialRampToValueAtTime(f * 1.4, now + 0.22)
-      gain.gain.setValueAtTime(0.14, now + idx * 0.02)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(now + idx * 0.02)
-      osc.stop(now + 0.3)
-    })
-    this.playNoiseBurst(0.12, 0.2, 2200)
-  }
+    if (!ctx || !this.compressor) return
 
-  /** 极速侧闪成功风声与充能音 */
-  public playDodge() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'triangle'
-    osc.frequency.setValueAtTime(420, now)
-    osc.frequency.exponentialRampToValueAtTime(980, now + 0.16)
-    gain.gain.setValueAtTime(0.14, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2)
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.22)
-  }
+    const trigger = (buffer: AudioBuffer) => {
+      if (this.muted || this.disposed || !this.ctx || !this.compressor) return
+      const src = this.ctx.createBufferSource()
+      src.buffer = buffer
 
-  /** 双光线宿命对波能量轰鸣 */
-  public playBeamClash() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const osc1 = ctx.createOscillator()
-    const osc2 = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc1.type = 'sawtooth'
-    osc2.type = 'square'
-    osc1.frequency.setValueAtTime(140, now)
-    osc1.frequency.linearRampToValueAtTime(240, now + 1.4)
-    osc2.frequency.setValueAtTime(283, now)
-    osc2.frequency.linearRampToValueAtTime(486, now + 1.4)
-    gain.gain.setValueAtTime(0.16, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.45)
-    const lp = ctx.createBiquadFilter()
-    lp.type = 'lowpass'
-    lp.frequency.value = 1600
-    osc1.connect(lp)
-    osc2.connect(lp)
-    lp.connect(gain)
-    gain.connect(ctx.destination)
-    osc1.start(now)
-    osc2.start(now)
-    osc1.stop(now + 1.5)
-    osc2.stop(now + 1.5)
-  }
+      const baseRate = opts.rate ?? 1
+      const jitter = opts.rateJitter ? (Math.random() * 2 - 1) * opts.rateJitter : 0
+      src.playbackRate.value = Math.max(0.5, baseRate + jitter)
 
-  /** 八分光轮嗡鸣飞斩 */
-  public playDisc() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const osc = ctx.createOscillator()
-    const lfo = ctx.createOscillator()
-    const lfoGain = ctx.createGain()
-    const gain = ctx.createGain()
+      const gain = this.ctx.createGain()
+      gain.gain.value = opts.volume ?? 0.8
 
-    osc.type = 'sawtooth'
-    osc.frequency.setValueAtTime(620, now)
-    osc.frequency.exponentialRampToValueAtTime(1180, now + 0.25)
-    osc.frequency.exponentialRampToValueAtTime(460, now + 0.6)
-
-    lfo.frequency.value = 34
-    lfoGain.gain.value = 90
-    lfo.connect(lfoGain)
-    lfoGain.connect(osc.frequency)
-
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value = 1400
-    filter.Q.value = 2.4
-
-    gain.gain.setValueAtTime(0.18, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.62)
-
-    osc.connect(filter)
-    filter.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(now)
-    lfo.start(now)
-    osc.stop(now + 0.64)
-    lfo.stop(now + 0.64)
-  }
-
-  /** 必杀光线发射轰鸣 */
-  public playBeam(isSuper = false) {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const dur = isSuper ? 1.85 : 1.35
-
-    const osc1 = ctx.createOscillator()
-    const osc2 = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc1.type = 'sawtooth'
-    osc2.type = 'sine'
-    osc1.frequency.setValueAtTime(340, now)
-    osc1.frequency.exponentialRampToValueAtTime(isSuper ? 960 : 720, now + 0.22)
-    osc1.frequency.linearRampToValueAtTime(520, now + dur)
-
-    osc2.frequency.setValueAtTime(680, now)
-    osc2.frequency.exponentialRampToValueAtTime(isSuper ? 1560 : 1180, now + 0.24)
-    osc2.frequency.linearRampToValueAtTime(880, now + dur)
-
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.setValueAtTime(2800, now)
-    filter.frequency.linearRampToValueAtTime(1200, now + dur)
-
-    gain.gain.setValueAtTime(0.01, now)
-    gain.gain.linearRampToValueAtTime(isSuper ? 0.24 : 0.18, now + 0.12)
-    gain.gain.setValueAtTime(isSuper ? 0.22 : 0.16, now + dur - 0.35)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + dur)
-
-    osc1.connect(filter)
-    osc2.connect(filter)
-    filter.connect(gain)
-    gain.connect(ctx.destination)
-    osc1.start(now)
-    osc2.start(now)
-    osc1.stop(now + dur + 0.05)
-    osc2.stop(now + dur + 0.05)
-
-    this.playNoiseBurst(dur * 0.7, isSuper ? 0.18 : 0.12, 650)
-  }
-
-  /** 奥特屏障格挡成功 */
-  public playGuardBlock() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(540, now)
-    osc.frequency.exponentialRampToValueAtTime(1320, now + 0.16)
-    gain.gain.setValueAtTime(0.22, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26)
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.28)
-
-    for (const detune of [1318, 1332]) {
-      const ring = ctx.createOscillator()
-      const ringGain = ctx.createGain()
-      ring.type = 'sine'
-      ring.frequency.value = detune
-      ringGain.gain.setValueAtTime(0.07, now)
-      ringGain.gain.exponentialRampToValueAtTime(0.001, now + 0.34)
-      ring.connect(ringGain)
-      ringGain.connect(ctx.destination)
-      ring.start(now)
-      ring.stop(now + 0.36)
-    }
-  }
-
-  /** 英雄受击沉闷冲击 */
-  public playHeroHurt() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'sawtooth'
-    osc.frequency.setValueAtTime(160, now)
-    osc.frequency.exponentialRampToValueAtTime(42, now + 0.28)
-    gain.gain.setValueAtTime(0.26, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3)
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.32)
-
-    const sub = ctx.createOscillator()
-    const subGain = ctx.createGain()
-    sub.type = 'sine'
-    sub.frequency.setValueAtTime(72, now)
-    sub.frequency.exponentialRampToValueAtTime(30, now + 0.24)
-    subGain.gain.setValueAtTime(0.36, now)
-    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.26)
-    sub.connect(subGain)
-    subGain.connect(ctx.destination)
-    sub.start(now)
-    sub.stop(now + 0.27)
-
-    this.playNoiseBurst(0.22, 0.25, 420)
-  }
-
-  /** 怪兽狂暴咆哮 */
-  public playRoar() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const t = ctx.currentTime
-    const voice = ctx.createOscillator()
-    const throat = ctx.createBiquadFilter()
-    const gain = ctx.createGain()
-    voice.type = 'sawtooth'
-    voice.frequency.setValueAtTime(48, t)
-    voice.frequency.exponentialRampToValueAtTime(92, t + 0.19)
-    voice.frequency.exponentialRampToValueAtTime(36, t + 0.85)
-    throat.type = 'bandpass'
-    throat.frequency.setValueAtTime(390, t)
-    throat.frequency.exponentialRampToValueAtTime(770, t + 0.22)
-    throat.frequency.exponentialRampToValueAtTime(250, t + 0.84)
-    throat.Q.value = 1.4
-    gain.gain.setValueAtTime(0.001, t)
-    gain.gain.linearRampToValueAtTime(0.38, t + 0.14)
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9)
-    voice.connect(throat).connect(gain).connect(ctx.destination)
-    voice.start(t)
-    voice.stop(t + 0.92)
-    this.playNoiseBurst(0.55, 0.19, 550)
-  }
-
-  public playWarning() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    for (let i = 0; i < 2; i++) {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'square'
-      osc.frequency.setValueAtTime(580, now + i * 0.14)
-      osc.frequency.linearRampToValueAtTime(440, now + i * 0.14 + 0.1)
-      gain.gain.setValueAtTime(0.09, now + i * 0.14)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.14 + 0.11)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(now + i * 0.14)
-      osc.stop(now + i * 0.14 + 0.12)
-    }
-  }
-
-  /** 怪兽被击败大爆炸 */
-  public playExplosion() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'sawtooth'
-    osc.frequency.setValueAtTime(120, now)
-    osc.frequency.exponentialRampToValueAtTime(24, now + 0.75)
-    gain.gain.setValueAtTime(0.32, now)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8)
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.82)
-    this.playNoiseBurst(0.75, 0.34, 380)
-  }
-
-  /** 胜利凯旋音阶 */
-  public playVictory() {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const now = ctx.currentTime
-    const notes = [523.25, 659.25, 783.99, 1046.5]
-    notes.forEach((n, i) => {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'triangle'
-      osc.frequency.setValueAtTime(n, now + i * 0.12)
-      gain.gain.setValueAtTime(0.16, now + i * 0.12)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.45)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(now + i * 0.12)
-      osc.stop(now + i * 0.12 + 0.48)
-    })
-  }
-
-  /** 经典彩色计时器红灯“叮咚”闪烁警报 */
-  public setDangerAlarm(active: boolean) {
-    if (!active) {
-      if (this.alarmTimer !== null) {
-        window.clearInterval(this.alarmTimer)
-        this.alarmTimer = null
+      if (opts.pan !== undefined && typeof this.ctx.createStereoPanner === 'function') {
+        const panner = this.ctx.createStereoPanner()
+        panner.pan.value = Math.max(-1, Math.min(1, opts.pan))
+        src.connect(gain).connect(panner).connect(this.compressor)
+      } else {
+        src.connect(gain).connect(this.compressor)
       }
+
+      const startAt = this.ctx.currentTime + (opts.delay ?? 0)
+      const offset = opts.offset ?? 0
+      if (opts.duration !== undefined) {
+        src.start(startAt, offset, opts.duration)
+      } else {
+        src.start(startAt, offset)
+      }
+    }
+
+    const ready = this.buffers.get(key)
+    if (ready) {
+      trigger(ready)
       return
     }
-    if (this.alarmTimer !== null) return
-    const ping = () => {
-      const ctx = this.ensureContext()
-      if (!ctx) return
-      const now = ctx.currentTime
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(988, now)
-      gain.gain.setValueAtTime(0.08, now)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(now)
-      osc.stop(now + 0.2)
-    }
-    ping()
-    this.alarmTimer = window.setInterval(ping, 720)
+    void this.loadSample(key).then((buf) => {
+      if (buf) trigger(buf)
+    })
   }
 
-  private playNoiseBurst(duration: number, volume: number, cutoffHz: number) {
-    const ctx = this.ensureContext()
-    if (!ctx) return
-    const sampleCount = Math.floor(ctx.sampleRate * duration)
-    const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < sampleCount; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / sampleCount)
+  /** 播放英雄原版电视战吼（带冷却节流，避免高频连拳人声重叠） */
+  private playHeroVoice(style: 'light' | 'heavy' | 'signature', delay = 0, minGapMs = 380) {
+    const now = performance.now()
+    if (now - this.lastVoiceAt < minGapMs) return
+    this.lastVoiceAt = now
+
+    let key: SfxKey
+    if (style === 'signature') {
+      key = this.heroId === 'tiga' ? 'voice-tiga' : 'voice-shuwat'
+    } else if (style === 'heavy') {
+      key = this.heroId === 'tiga' ? 'voice-tiga' : 'voice-taro'
+    } else {
+      const pool: SfxKey[] =
+        this.heroId === 'tiga'
+          ? ['voice-heisei-a', 'voice-heisei-b', 'voice-tiga']
+          : ['voice-heisei-a', 'voice-heisei-b', 'voice-shuwat']
+      key = pool[this.punchCounter % pool.length]!
     }
-    const source = ctx.createBufferSource()
-    source.buffer = buffer
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.value = cutoffHz
-    const gain = ctx.createGain()
-    gain.gain.setValueAtTime(volume, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration)
-    source.connect(filter)
-    filter.connect(gain)
-    gain.connect(ctx.destination)
-    source.start()
+    this.playSample(key, {
+      volume: style === 'light' ? 0.56 : 0.78,
+      rateJitter: 0.04,
+      delay,
+    })
+  }
+
+  /** 变身器闪烁展开 / 巨大化变身登场 / 三形态切换原版电视音效 */
+  public playTransform(kind: TransformSfxKind = 'rise') {
+    if (kind === 'open') {
+      this.playSample('transform-open', { volume: 0.84 })
+      return
+    }
+    if (kind === 'type') {
+      this.playSample('type-change', { volume: 0.88 })
+      return
+    }
+    this.playSample('transform-rise', { volume: 0.92 })
+    this.playHeroVoice('signature', 0.24, 0)
+  }
+
+  /** 拳风与飞踢破空呼啸（立体声定向 + 飞踢附带原声战吼） */
+  public playSwing(side: 'left' | 'right', kick: boolean) {
+    this.playSample('swing', {
+      volume: kick ? 0.68 : 0.52,
+      rate: kick ? 0.84 : 1.04,
+      rateJitter: 0.06,
+      pan: side === 'left' ? -0.55 : 0.55,
+    })
+    if (kick) {
+      this.playHeroVoice('heavy', 0.03, 320)
+    }
+  }
+
+  /** 电视肉搏打击音效（双采样交替防机械重复 + 节奏穿插奥特曼原声战吼） */
+  public playPunch(hit = true) {
+    this.punchCounter++
+    if (!hit) {
+      this.playSample('swing', { volume: 0.45, rate: 1.08, rateJitter: 0.06 })
+      return
+    }
+    const key: SfxKey = this.punchCounter % 2 === 0 ? 'punch-2' : 'punch-1'
+    this.playSample(key, {
+      volume: 0.82,
+      rateJitter: 0.06,
+    })
+    if (this.punchCounter % 3 === 1) {
+      this.playHeroVoice('light', 0.01, 460)
+    }
+  }
+
+  /** 飞踢 / 终结连击 / 破防重击特摄爆火星重砸 */
+  public playHeavyImpact() {
+    this.playSample('heavy-impact', { volume: 0.92, rateJitter: 0.04 })
+    this.playSample('clash-impact', { volume: 0.68, delay: 0.02, rateJitter: 0.04 })
+    this.playHeroVoice('heavy', 0.02, 420)
+  }
+
+  /** 挥拳击碎/弹反怪兽火球的清脆高能爆鸣 */
+  public playDeflect() {
+    this.playSample('deflect', { volume: 0.85, rateJitter: 0.05 })
+  }
+
+  /** 极速侧闪破空风声 */
+  public playDodge() {
+    this.playSample('dodge', { volume: 0.64, rateJitter: 0.06 })
+  }
+
+  /** 双光线宿命对波持续高能轰鸣 */
+  public playBeamClash() {
+    this.playSample('beam-clash', { volume: 0.9 })
+  }
+
+  /** 八分光轮高压电光飞斩 */
+  public playDisc() {
+    this.playSample('disc', { volume: 0.86, rateJitter: 0.04 })
+    this.playHeroVoice('light', 0.02, 260)
+  }
+
+  /** 电视原版必杀光线 / 终极超级光线轰射（附带英雄原声战吼） */
+  public playBeam(isSuper = false) {
+    if (isSuper) {
+      this.playSample('beam-super', { volume: 0.96 })
+      this.playSample('beam-normal', { volume: 0.72, delay: 0.14 })
+      this.playHeroVoice('signature', 0.04, 0)
+    } else {
+      this.playSample('beam-normal', { volume: 0.9 })
+      this.playHeroVoice('heavy', 0.02, 200)
+    }
+  }
+
+  /** 立体球形奥特屏障格挡弹反原声 */
+  public playGuardBlock() {
+    this.playSample('guard-block', { volume: 0.9, rateJitter: 0.04 })
+  }
+
+  /** 英雄受击沉重冲击 */
+  public playHeroHurt() {
+    this.playSample('hero-hurt', { volume: 0.86, rate: 0.9, rateJitter: 0.05 })
+  }
+
+  /** 按当前怪兽精准触发电视原版怪兽咆哮（哥莫拉 / 巴尔坦 / 超兽 / 巨兽） */
+  public playRoar(monsterId = this.monsterId) {
+    let key: SfxKey = 'roar-kaiju-a'
+    if (monsterId === 'gomora-mecha') key = 'roar-gomora'
+    else if (monsterId === 'baltan') key = 'roar-baltan'
+    else if (monsterId === 'gatanothor') key = 'roar-kaiju-b'
+    this.playSample(key, { volume: 0.9, rateJitter: 0.03 })
+  }
+
+  /** 怪兽攻击前摇高能警报（复用平成计时器清脆短脉冲，告别刺耳电子方波） */
+  public playWarning() {
+    this.playSample('timer-heisei', { volume: 0.42, rate: 1.18, duration: 0.34 })
+  }
+
+  /** 电视特摄微缩都市连环大爆炸（双轨错位叠加震撼低频） */
+  public playExplosion() {
+    this.playSample('explosion-1', { volume: 0.92 })
+    this.playSample('explosion-2', { volume: 0.86, delay: 0.14 })
+  }
+
+  /** 远程阶段掌心奥特光弹高速射击 */
+  public playPalmShot() {
+    this.playSample('palm-shot', { volume: 0.74, rateJitter: 0.08 })
+  }
+
+  /** 幕 3 角力推力胶着震动撞击 */
+  public playGrapplePush() {
+    this.playSample('clash-impact', {
+      volume: 0.62,
+      rate: 1.18,
+      rateJitter: 0.08,
+      duration: 0.36,
+    })
+  }
+
+  /** 幕 4A 双臂展翼七彩棱镜聚能神圣共鸣 */
+  public playRainbowCharge() {
+    this.playSample('rainbow-charge', { volume: 0.82 })
+  }
+
+  /** 胜利合影清脆单反快门 */
+  public playShutter() {
+    this.playSample('shutter', { volume: 0.88 })
+  }
+
+  /** 胜利凯旋光辉 + 英雄招牌战吼 */
+  public playVictory() {
+    this.playSample('victory', { volume: 0.88 })
+    this.playHeroVoice('signature', 0.18, 0)
+  }
+
+  /** 电视原版红灯彩色计时器“叮咚！叮咚！”循环警报 */
+  public setDangerAlarm(active: boolean) {
+    this.alarmDesired = active
+    if (!active || this.muted || this.disposed) {
+      this.stopAlarmLoop()
+      return
+    }
+    if (this.alarmSource) return
+
+    const key: SfxKey = 'timer-classic'
+    const startLoop = (buffer: AudioBuffer) => {
+      if (!this.alarmDesired || this.muted || this.disposed || this.alarmSource) return
+      const ctx = this.ensureContext()
+      if (!ctx || !this.compressor) return
+      const src = ctx.createBufferSource()
+      src.buffer = buffer
+      src.loop = true
+      const gain = ctx.createGain()
+      gain.gain.value = 0.42
+      src.connect(gain).connect(this.compressor)
+      src.start()
+      this.alarmSource = src
+      this.alarmGain = gain
+    }
+
+    const ready = this.buffers.get(key)
+    if (ready) {
+      startLoop(ready)
+      return
+    }
+    void this.loadSample(key).then((buf) => {
+      if (buf) startLoop(buf)
+    })
+  }
+
+  private stopAlarmLoop() {
+    if (this.alarmSource) {
+      try {
+        this.alarmSource.stop()
+        this.alarmSource.disconnect()
+      } catch {
+        // 节点已停止时忽略
+      }
+      this.alarmSource = null
+    }
+    if (this.alarmGain) {
+      try {
+        this.alarmGain.disconnect()
+      } catch {
+        // 忽略断开异常
+      }
+      this.alarmGain = null
+    }
   }
 
   public dispose() {
-    this.setDangerAlarm(false)
+    this.disposed = true
+    this.alarmDesired = false
+    this.stopAlarmLoop()
+    this.buffers.clear()
+    this.loading.clear()
     if (this.ctx) {
       void this.ctx.close()
       this.ctx = null
+      this.masterGain = null
+      this.compressor = null
     }
   }
 }
