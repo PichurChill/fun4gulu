@@ -672,8 +672,8 @@ export class HeroController {
         adductBoneToward(fingerRig.index[0], fingerRig.index[1], 0.88)
         adductBoneToward(fingerRig.ring[0], fingerRig.ring[1], 0.88)
         adductBoneToward(fingerRig.pinky[0], fingerRig.pinky[1], 0.9)
-        adductBoneToward(fingerRig.thumb[0], fingerRig.thumb[1], 0.68)
-        adductBoneToward(fingerRig.thumb[1], fingerRig.thumb[2], 0.72)
+        // 保留拇指第一掌骨自然虎口位置，仅温和收拢近节指骨，避免拉扯虎口或握拳时拇指外翘
+        adductBoneToward(fingerRig.thumb[1], fingerRig.thumb[2], 0.25)
         handBone.updateWorldMatrix(false, true)
       }
 
@@ -685,8 +685,8 @@ export class HeroController {
       const indexToPinky = pinkyToIndex.clone().negate()
       const thumbTargetWorld = palmInWorld
         .clone()
-        .multiplyScalar(0.58)
-        .addScaledVector(indexToPinky, 0.42)
+        .multiplyScalar(0.34)
+        .addScaledVector(indexToPinky, 0.88)
         .normalize()
       this.calibrateFingerChainAxes(fingerRig.thumb, thumbTargetWorld)
 
@@ -1051,7 +1051,7 @@ export class HeroController {
       [map.mid, THREE.MathUtils.clamp(fingers.mid, 0, 1), [0.92, 1.06, 0.75]],
       [map.ring, THREE.MathUtils.clamp(fingers.ring, 0, 1), [0.94, 1.04, 0.75]],
       [map.pinky, THREE.MathUtils.clamp(fingers.pinky, 0, 1), [0.96, 1.02, 0.75]],
-      [map.thumb, THREE.MathUtils.clamp(fingers.thumb, 0, 1), [0.38, 0.56, 0.46]],
+      [map.thumb, THREE.MathUtils.clamp(fingers.thumb, 0, 1), [0.36, 0.62, 0.54]],
     ]
 
     for (const [chain, curl, jointAngles] of chains) {
@@ -1941,7 +1941,12 @@ export class HeroController {
 
     if (this.action === 'transform') {
       // 正面向 +Z 镜头变身仪式：右手（此时在世界 -X 侧）高举火花棱镜直指苍穹，左手（世界 +X 侧）收腰蓄势
-      this.aimBoneArena(b.upperArmR, new THREE.Vector3(-0.16, 0.96, 0.22))
+      this.aimBoneArena(
+        b.upperArmR,
+        new THREE.Vector3(-0.16, 0.96, 0.22),
+        1,
+        new THREE.Vector3(0.35, 0, 0.9),
+      )
       this.aimBoneArena(
         b.lowerArmR,
         new THREE.Vector3(-0.06, 0.99, 0.12),

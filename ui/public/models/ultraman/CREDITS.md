@@ -2,7 +2,7 @@
 
 本目录内所有 3D 模型仅用于个人非商业学习与家庭娱乐体验。
 
-- **迪迦奥特曼 (`tiga.glb`)**：改编自 BlendSwap 社区创作者 Extrazhang 的粉丝作品 *Ultraman Tiga*（CC-BY-NC，非商用），并在 Blender 中按 1996 原版皮套比例与细节重制（2K 全通道 PBR 皮套拼缝法线/ORM 贴图、高光冷钛银头盔与 24K 香槟金胸甲、原生贴面雕刻六角晶格复眼/眉心水晶/尖菱盾牌彩色计时器，保留 52 根骨骼与 30 指骨）。
+- **迪迦奥特曼 (`tiga.glb`)**：基于 MMD 创作者 鏑木リンドウ 公开分享的非商用模型 *リンドウ式ウルトラマンティガ Ver3.1*（`マルチタイプ.pmx`），经 Blender 标准化骨骼映射至 `ultraBones`（含 51 根骨骼与 30 根 3 节指骨）、保留原模锐边法线并校色重制全通道 PBR 材质后导出为网页 GLB 资源。
 - **戴拿、泽塔、赛罗奥特曼（`dyna.glb`、`zeta.glb`、`zero.glb`）**：源自 DeviantArt 社区创作者 PrasBlacker 公开分享的非商用官方游戏移植模型（*Ultraman Dyna Flash Type*、*Ultraman Z* 与 *Ultraman Zero*），经 Blender 标准化完整 `Bip001` 骨骼（含双锁骨与 20 根独立指骨）并重制 2K 全通道 PBR 漫反射/金属粗糙度/法线与 1K 高锐度自发光贴图导出为网页 GLB 资源。
 - **经典怪兽 (`baltan.glb`, `ganq.glb`, `zetton.glb`, `gomora-mecha.glb`, `gatanothor.glb`)**：源自公开社区非商用粉丝 MMD / Sketchfab 模型转换产物（源自 `adoin/IAmUltraman` 开源仓库）。
 - **城市建筑 (`city/*.glb`, `city/Textures/colormap.png`)**：Kenney City Kit Commercial（CC0 公共领域许可，见 `city/License.txt`）。
