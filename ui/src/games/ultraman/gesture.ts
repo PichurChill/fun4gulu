@@ -1,4 +1,14 @@
-import type { GestureSnapshot, LiveBodyPose, LiveHandFingers, PoseLandmark, Vec3Like } from './types'
+import type {
+  DistanceHint,
+  GestureActiveCue,
+  GestureSnapshot,
+  LiveBodyPose,
+  LiveHandFingers,
+  PoseLandmark,
+  PunchStyle,
+  StrikeHeight,
+  Vec3Like,
+} from './types'
 
 export interface HandLandmarksInput {
   left?: PoseLandmark[] | null
@@ -30,13 +40,12 @@ interface MotionSample {
   z3: number
 }
 
-/** 单臂一阶速度 + 二阶爆发加速度与有效击打行程动力学状态 */
+/** 单臂速度 + 爆发加速度与有效击打行程动力学状态 */
 interface WristKinematics {
   prev2: { x: number; y: number } | null
   prev3: { x: number; y: number; z: number } | null
   prevElbowDeg: number | null
   prevRadial2D: number | null
-  // 一阶平滑速度（单位：肩宽/秒；角速度单位：度/秒）
   vx2: number
   vy2: number
   speed2D: number
@@ -44,22 +53,21 @@ interface WristKinematics {
   speed3D: number
   elbowVel: number
   radialVel2D: number
-  // 140ms 短窗内捕获的二阶正向爆发加速度峰值（单位：肩宽/秒²）
   peakAccel2D: number
   peakAccel2DAt: number
   peakUpAccel: number
   peakUpAccelAt: number
+  peakDownAccel: number
+  peakDownAccelAt: number
   peakFwdAccel: number
   peakFwdAccelAt: number
   peakSpeed3DAccel: number
   peakSpeed3DAccelAt: number
   peakElbowAccel: number
   peakElbowAccelAt: number
-  // 近 160ms 轨迹点缓存，用于计算有效出拳行程，过滤原地抖动
   trail: MotionSample[]
 }
 
-/** 单腿飞踢上提速度与爆发加速度状态 */
 interface KickKinematics {
   prevAnkleRelY: number | null
   prevKneeRelY: number | null
@@ -86,6 +94,8 @@ function createWristKinematics(): WristKinematics {
     peakAccel2DAt: -Infinity,
     peakUpAccel: 0,
     peakUpAccelAt: -Infinity,
+    peakDownAccel: 0,
+    peakDownAccelAt: -Infinity,
     peakFwdAccel: 0,
     peakFwdAccelAt: -Infinity,
     peakSpeed3DAccel: 0,
@@ -136,7 +146,6 @@ function segmentDistance(p: Vec3, a: Vec3, b: Vec3): number {
 }
 
 function segmentsCross(a: Vec3, b: Vec3, c: Vec3, d: Vec3): boolean {
-  // 包围盒快速排斥：防止双臂水平一字共线（如标准 T 字展臂）时叉积为 0 被误判为交叉
   if (
     Math.max(a.x, b.x) < Math.min(c.x, d.x) ||
     Math.max(c.x, d.x) < Math.min(a.x, b.x) ||
@@ -176,9 +185,7 @@ function cross3(a: Vec3Like, b: Vec3Like): Vec3Like | null {
 }
 
 /**
- * 从 MediaPipe HandLandmarker 的 21 关节 3D 坐标精确解算五指独立弯曲度、五指张开度与真实 3D 掌心朝向：
- * - 基于相邻指骨段 3D 折角，完全无视手部距离摄像头远近或视角旋转；
- * - 通过手性叉积严格计算真实掌心法线，支持翻腕、推掌、手刀、比耶、点赞与握拳 1:1 实时驱动。
+ * 从 MediaPipe HandLandmarker 的 21 关节 3D 坐标解算五指弯曲度、张开度与掌心朝向
  */
 export function extractHandFingers(
   handWorld: PoseLandmark[] | null | undefined,
@@ -195,7 +202,6 @@ export function extractHandFingers(
   const wrist = p(0)
   const idxMcp = p(5)
   const midMcp = p(9)
-  const ringMcp = p(13)
   const pnkMcp = p(17)
 
   const fingerCurl = (mcpIdx: number, pipIdx: number, dipIdx: number, tipIdx: number): number => {
@@ -203,7 +209,6 @@ export function extractHandFingers(
     const pi = p(pipIdx)
     const d = p(dipIdx)
     const ti = p(tipIdx)
-    // 三节指关节相对上一节的折弯角（伸直 ≈ 0°，满握 ≈ 80°~95°）
     const bendMcp = vecAngleDeg(m.x - wrist.x, m.y - wrist.y, m.z - wrist.z, pi.x - m.x, pi.y - m.y, pi.z - m.z)
     const bendPip = vecAngleDeg(pi.x - m.x, pi.y - m.y, pi.z - m.z, d.x - pi.x, d.y - pi.y, d.z - pi.z)
     const bendDip = vecAngleDeg(d.x - pi.x, d.y - pi.y, d.z - pi.z, ti.x - d.x, ti.y - d.y, ti.z - d.z)
@@ -211,7 +216,6 @@ export function extractHandFingers(
     return clamp((weightedBend - 14) / 70, 0, 1)
   }
 
-  // 大拇指：融合关节折角 + 拇指尖向小指根的收拢距离（精准区分竖大拇指与握紧拳头）
   const tCmc = p(1)
   const tMcp = p(2)
   const tIp = p(3)
@@ -229,7 +233,6 @@ export function extractHandFingers(
   const ring = fingerCurl(13, 14, 15, 16)
   const pinky = fingerCurl(17, 18, 19, 20)
 
-  // 五指外展张开度（仅在手指较直时有效，握拳时自动收归 0）
   const fDir = (a: number, b: number) => {
     const pa = p(a)
     const pb = p(b)
@@ -247,7 +250,6 @@ export function extractHandFingers(
   const openFactor = clamp(1 - (index + mid + ring + pinky) * 0.3, 0, 1)
   const splay = clamp((avgSpreadDeg - 7.5) / 13.5, 0, 1) * openFactor
 
-  // 将掌面两基底向量转至奥特曼世界空间，按严格解剖手性求真实掌心法线
   const vIndex = mpDirToWorld(wrist, idxMcp, 1.0)
   const vPinky = mpDirToWorld(wrist, pnkMcp, 1.0)
   const handDir = mpDirToWorld(wrist, midMcp, 1.0)
@@ -309,12 +311,10 @@ class SmoothHold {
 }
 
 /**
- * 物理动力学驱动的全向奥特曼体感识别引擎：
- * 1) 基于肩宽归一化的一阶平滑速度 + 二阶正向脉冲加速度 + 有效击打行程四重门控：
- *    正常慢速/常速抬手与摆臂只 1:1 驱动奥特曼骨骼跟随摆动，绝不误触发攻击；
- *    唯有具备明显爆发加速度与击打速度的真实发力出拳/飞踢/挥劈才触发攻击判定，并过滤收拳回拉二次误触。
- * 2) 高灵敏度横向走位识别（融合双肩与骨盆中心），远程火球大步闪避跟手流畅。
- * 3) 兼容横屏与手机竖屏的举手变身、双臂展翼蓄力、胸前 X 护盾与 L/十字必杀光线识别。
+ * 物理动力学与动作意图体感引擎：
+ * - 自适应短窗动量积分 + 爆发加速度识别 5 种打击意图（直拳 / 摆拳 / 上勾 / 推掌 / 手刀劈）及发力强度/击打高度
+ * - 消除拳击抱架误开护盾，严格区分“胸前交叉静架护盾”与“活跃出拳备战”
+ * - 完整输出横移速度、深蹲、起跳、客厅站距提示与雷达实时高亮反馈
  */
 export class UltraGestureRecognizer {
   private centerOffset = 0
@@ -337,13 +337,14 @@ export class UltraGestureRecognizer {
   private discRaiseStart: [number | null, number | null] = [null, null]
   private discArmed: [DiscArmedState | null, DiscArmedState | null] = [null, null]
 
-  // 左右独立运动学追踪器（速度 + 加速度峰值 + 轨迹行程）
   private wristKin: [WristKinematics, WristKinematics] = [
     createWristKinematics(),
     createWristKinematics(),
   ]
   private punchLast: [number, number] = [-Infinity, -Infinity]
   private punchPeakLock: [boolean, boolean] = [false, false]
+  private lastCue: GestureActiveCue = 'none'
+  private lastCueUntil = -Infinity
 
   private kickLast: [number, number] = [-Infinity, -Infinity]
   private kickKin: [KickKinematics, KickKinematics] = [
@@ -378,12 +379,19 @@ export class UltraGestureRecognizer {
     this.kickKin = [createKickKinematics(), createKickKinematics()]
     this.smoothLean = 0
     this.smoothStruggle = 0
+    this.lastCue = 'none'
+    this.lastCueUntil = -Infinity
   }
 
   public recenter() {
     this.centerOffset = this.lastMidXRatio - 0.5
     this.baseShoulderY = null
     this.prevMidY = null
+  }
+
+  private holdCue(cue: GestureActiveCue, now: number, durationMs = 220) {
+    this.lastCue = cue
+    this.lastCueUntil = now + durationMs
   }
 
   public update(
@@ -399,12 +407,19 @@ export class UltraGestureRecognizer {
     const out: GestureSnapshot = {
       tracking: false,
       coverage: 'none',
+      distanceHint: 'off-center',
+      activeCue: now < this.lastCueUntil ? this.lastCue : 'none',
       lean: this.smoothLean * 0.9,
       lateralVelocity: 0,
+      crouching: false,
+      crouchDepth: 0,
+      jumping: false,
       guard: false,
       guardJustStarted: false,
       punch: null,
       punchStyle: 'jab',
+      punchPower: 0.7,
+      punchHeight: 'mid',
       kick: null,
       discCharge: 0,
       discSide: null,
@@ -477,30 +492,49 @@ export class UltraGestureRecognizer {
 
     const shoulderWidth = dist2D(lsRaw, rsRaw)
     if (shoulderWidth < width * 0.036) {
+      out.distanceHint = 'too-far'
       return out
     }
     const scale = Math.max(shoulderWidth, height * 0.068)
 
-    // 1. 高灵敏度身体重心横向位移（融合双肩与骨盆中心，大步左右闪避零延迟）
+    // 1. 客厅站距与居中检测 + 非线性死区横移（微晃不滑冰、跨步极速闪避）
     const lhRaw = rawPts[23]
     const rhRaw = rawPts[24]
     const hasRawHips = isVisible(lhRaw, 0.35) && isVisible(rhRaw, 0.35)
     const shoulderMidX = (lsRaw.x + rsRaw.x) * 0.5
-    const midX = hasRawHips ? shoulderMidX * 0.65 + ((lhRaw.x + rhRaw.x) * 0.5) * 0.35 : shoulderMidX
+    const midX = hasRawHips ? shoulderMidX * 0.62 + ((lhRaw.x + rhRaw.x) * 0.5) * 0.38 : shoulderMidX
     const midY = (lsRaw.y + rsRaw.y) * 0.5
     this.lastMidXRatio = midX / width
     out.mirroredCenterX = 1 - this.lastMidXRatio
 
+    const shoulderWidthRatio = shoulderWidth / width
+    let distHint: DistanceHint = 'ok'
+    if (shoulderWidthRatio > 0.39) distHint = 'too-close'
+    else if (shoulderWidthRatio < 0.088) distHint = 'too-far'
+    else if (laneCenter === undefined && Math.abs(this.lastMidXRatio - (0.5 + this.centerOffset)) > 0.28) {
+      distHint = 'off-center'
+    }
+    out.distanceHint = distHint
+
     const offsetFromCenter = this.lastMidXRatio - (0.5 + this.centerOffset)
-    // 扩大体感走位灵敏区间（0.21 画面宽度即可拉满横向躲避行程，更适合客厅电视前走位）
-    const rawLean = clamp(-offsetFromCenter / 0.21, -1, 1)
+    const deadzone = laneCenter === undefined ? 0.042 : 0.025
+    const signedOffset =
+      Math.abs(offsetFromCenter) <= deadzone
+        ? 0
+        : Math.sign(offsetFromCenter) * (Math.abs(offsetFromCenter) - deadzone)
+    const rawLeanLinear = clamp(-signedOffset / 0.185, -1, 1)
+    // 轻度非线性加速曲线：小偏平稳，迈出半步迅速到位
+    const rawLean = Math.sign(rawLeanLinear) * Math.pow(Math.abs(rawLeanLinear), 0.88)
     const lean =
       laneCenter === undefined ? rawLean : clamp((laneCenter - midX / width) / 0.14, -1, 1)
-    this.smoothLean += (lean - this.smoothLean) * -Math.expm1(-18 * deltaSeconds)
-    const filteredLean = Math.abs(this.smoothLean) < 0.04 ? 0 : this.smoothLean
+    this.smoothLean += (lean - this.smoothLean) * -Math.expm1(-19 * deltaSeconds)
+    const filteredLean = Math.abs(this.smoothLean) < 0.045 ? 0 : this.smoothLean
     out.lateralVelocity = clamp((filteredLean - this.prevLean) / deltaSeconds, -8, 8)
     this.prevLean = filteredLean
     out.lean = filteredLean
+    if (Math.abs(out.lateralVelocity) > 2.15) {
+      this.holdCue('dodge', now, 220)
+    }
 
     let verticalRunEnergy = 0
     if (this.baseShoulderY === null) {
@@ -510,29 +544,36 @@ export class UltraGestureRecognizer {
       const verticalSpeed = Math.abs(midY - (this.prevMidY ?? midY)) / (scale * deltaSeconds)
       verticalRunEnergy = clamp((verticalSpeed - 0.35) * 0.45, 0, 1)
       this.prevMidY = midY
-      if (verticalSpeed < 0.9) {
-        const adaptRate = Math.abs(this.baseShoulderY - midY) < scale * 0.22 ? 1.8 : 0.75
-        this.baseShoulderY += (midY - this.baseShoulderY) * Math.min(1, deltaSeconds * adaptRate)
+      // 仅在站立平稳小幅变动时慢速跟踪基线，防止深蹲持续期间把蹲姿学成新站姿
+      const curDelta = (this.baseShoulderY - midY) / scale
+      if (verticalSpeed < 0.75 && Math.abs(curDelta) < 0.18) {
+        this.baseShoulderY += (midY - this.baseShoulderY) * Math.min(1, deltaSeconds * 1.4)
       }
     }
 
     const deltaY = (this.baseShoulderY - midY) / scale
-    const jumpHeight = deltaY > 0.17 ? clamp((deltaY - 0.17) * 5.2, 0, 5.2) : 0
-    const crouchDepth = deltaY < -0.12 ? clamp((-deltaY - 0.12) * 3.4, 0, 2.8) : 0
+    const jumpHeight = deltaY > 0.16 ? clamp((deltaY - 0.16) * 5.2, 0, 5.2) : 0
+    const crouchDepthWorld = deltaY < -0.14 ? clamp((-deltaY - 0.14) * 3.6, 0, 2.8) : 0
+    out.crouchDepth = clamp(crouchDepthWorld / 2.2, 0, 1)
+    out.crouching = out.crouchDepth >= 0.36
+    out.jumping = jumpHeight >= 0.75
+    if (out.crouching) this.holdCue('crouch', now, 160)
+    else if (out.jumping) this.holdCue('jump', now, 180)
 
-    // 2. 构建实时全身 3D 骨骼映射包（融合双手 21 点独立十指弯曲度与真实 3D 掌心朝向）
-    const livePose = this.extractLiveBodyPose(worldPts, jumpHeight, crouchDepth, hands)
+    // 2. 构建实时全身 3D 骨骼映射包
+    const livePose = this.extractLiveBodyPose(worldPts, jumpHeight, crouchDepthWorld, hands)
     out.livePose = livePose
     out.tracking = true
     out.coverage = livePose.coverage
     out.hintKey = 'hintReady'
 
-    // 3. 检测发力抬腿飞踢（带速度与正向加速度门控）
+    // 3. 抬腿飞踢检测
     if (livePose.coverage === 'full') {
       this.detectKick(rawPts, now, deltaSeconds, scale, out)
+      if (out.kick) this.holdCue('kick', now, 260)
     }
 
-    // 4. 双肩水平校正后的 2D 坐标用于招式几何判定
+    // 4. 双肩水平校正 2D 坐标用于手势几何判定
     const pts: Vec3[] = rawPts.map((p) => ({ ...p }))
     const dx = rsRaw.x - lsRaw.x
     const dy = rsRaw.y - lsRaw.y
@@ -554,14 +595,16 @@ export class UltraGestureRecognizer {
     const lw = pts[15]
     const rw = pts[16]
 
-    // 无论当前处于哪个招式分支，始终实时累积角力推力能量（双臂挥动速度 + 原地踏步冲刺）
-    const armAgitation = this.sampleStruggleAgitation(pts, deltaSeconds, scale)
+    // 实时更新双臂运动学，确保所有姿态分支均可准确获知当前手速（防抱架误触防御的关键）
+    this.updateWristKinematics(pts, worldPts, now, deltaSeconds, scale, armScale)
+
+    const armAgitation = this.sampleStruggleAgitation()
     const instantStruggle = clamp(armAgitation * 0.8 + verticalRunEnergy * 0.45, 0, 1)
     this.smoothStruggle +=
       (instantStruggle - this.smoothStruggle) * -Math.expm1(-12 * deltaSeconds)
     out.strugglePower = this.smoothStruggle
 
-    // 优先检测：单手高举变身（高举神光棒过头顶）
+    // 单手高举神光棒变身检测
     const nose = pts[0]
     const centerY = (ls.y + rs.y) * 0.5
     const headTopY =
@@ -569,38 +612,30 @@ export class UltraGestureRecognizer {
         ? nose.y - scale * 0.28
         : centerY - scale * 0.58
 
-    const leftRaisedHigh = isVisible(lw, 0.24) && lw.y < headTopY - scale * 0.14
-    const rightRaisedHigh = isVisible(rw, 0.24) && rw.y < headTopY - scale * 0.14
-    const isTransformPose =
-      (leftRaisedHigh && !rightRaisedHigh) ||
-      (rightRaisedHigh && !leftRaisedHigh) ||
-      (leftRaisedHigh && rightRaisedHigh)
+    const leftRaisedHigh = isVisible(lw, 0.24) && lw.y < headTopY - scale * 0.12
+    const rightRaisedHigh = isVisible(rw, 0.24) && rw.y < headTopY - scale * 0.12
+    const isTransformPose = leftRaisedHigh || rightRaisedHigh
     const transformElapsed = this.transformHold.update(isTransformPose, now)
     if (isTransformPose || this.transformHold.isRecent(now)) {
-      out.transformProgress = clamp(transformElapsed / 560, 0, 1)
+      out.transformProgress = clamp(transformElapsed / 520, 0, 1)
       if (out.transformProgress >= 1 && !this.transformFired) {
         out.transformTrigger = true
         this.transformFired = true
       }
+      if (out.transformProgress > 0.25) this.holdCue('transform', now, 160)
     } else {
       this.transformFired = false
     }
 
-    // 手机竖屏或近距离时，双臂真正水平平举（T 字）可能令手腕贴出左右边缘；
-    // 严格要求双肘抬至肩平线内（|e.y - centerY| < 0.40 * scale）且双肘大幅外扩（span > 1.75），彻底避免自然垂臂误判！
-    const elbowsVisible = isVisible(le, 0.26) && isVisible(re, 0.26)
+    const elbowsVisible = isVisible(le, 0.25) && isVisible(re, 0.25)
     const elbowSpanRaw = elbowsVisible ? Math.abs(le.x - re.x) / scale : 0
     const elbowsAtShoulderLevel =
       elbowsVisible &&
-      Math.abs(le.y - centerY) < scale * 0.4 &&
-      Math.abs(re.y - centerY) < scale * 0.4
-    const elbowsWideSpread = elbowsAtShoulderLevel && elbowSpanRaw > 1.75
+      Math.abs(le.y - centerY) < scale * 0.42 &&
+      Math.abs(re.y - centerY) < scale * 0.42
+    const elbowsWideSpread = elbowsAtShoulderLevel && elbowSpanRaw > 1.72
 
-    if (
-      !elbowsVisible ||
-      !isVisible(lw, 0.2) ||
-      !isVisible(rw, 0.2)
-    ) {
+    if (!elbowsVisible || !isVisible(lw, 0.2) || !isVisible(rw, 0.2)) {
       this.beamHold.reset()
       this.typeHold.reset()
       this.discRaiseStart = [null, null]
@@ -610,11 +645,13 @@ export class UltraGestureRecognizer {
       const partialSpreadElapsed = this.spreadHold.update(elbowsWideSpread, now)
       if (elbowsWideSpread || this.spreadHold.isRecent(now)) {
         out.isSpreading = elbowsWideSpread
-        out.spreadProgress = clamp(partialSpreadElapsed / 420, 0, 1)
+        out.spreadProgress = clamp(partialSpreadElapsed / 400, 0, 1)
+        this.holdCue('spread', now, 150)
       }
       if (!elbowsWideSpread && armScale > 0) {
-        this.detectPunchOmnidirectional(pts, worldPts, now, deltaSeconds, scale, armScale, out)
+        this.evaluatePunchFromKinematics(pts, now, scale, livePose, out)
       }
+      out.activeCue = now < this.lastCueUntil ? this.lastCue : out.activeCue
       out.hintKey = out.punch ? 'hintPunch' : 'hintShowArms'
       return out
     }
@@ -629,66 +666,71 @@ export class UltraGestureRecognizer {
     const minAngle = Math.min(angles[0]!, angles[1]!)
     const maxAngle = Math.max(angles[0]!, angles[1]!)
     const avgWristY = (lw.y + rw.y) * 0.5
-    const inChestZone = avgWristY > centerY - scale * 0.95 && avgWristY < centerY + scale * 1.85
+    const inChestZone = avgWristY > centerY - scale * 0.92 && avgWristY < centerY + scale * 1.75
     const forearmsCross = segmentsCross(le, lw, re, rw)
     const crossedWrists = (lw.x - rw.x) * (ls.x - rs.x) < 0
-    const wristsNearCenter =
-      Math.abs(lw.x - rw.x) < scale * 0.52 &&
-      Math.abs((lw.x + rw.x) * 0.5 - midX) < scale * 0.65
 
-    // 招式 S：双臂水平展开蓄力（严格 T 字平展：双肘与双腕均处于肩平带且向外大幅拉开）
+    // 招式 S：双臂水平展翼蓄力（T 字平展）
     const wristSpan = Math.abs(lw.x - rw.x) / scale
     const elbowSpan = elbowSpanRaw
     const wristsShoulderBand =
       Math.abs(lw.y - centerY) < scale * 0.58 && Math.abs(rw.y - centerY) < scale * 0.58
     const isSpreadPose =
       elbowsAtShoulderLevel &&
-      elbowSpan > 1.55 &&
-      wristSpan > 2.25 &&
-      wristSpan > elbowSpan + 0.45 &&
+      elbowSpan > 1.52 &&
+      wristSpan > 2.2 &&
+      wristSpan > elbowSpan + 0.4 &&
       wristsShoulderBand &&
       !crossedWrists &&
       !forearmsCross
     const spreadElapsed = this.spreadHold.update(isSpreadPose, now)
     if (isSpreadPose || this.spreadHold.isRecent(now)) {
       out.isSpreading = isSpreadPose
-      out.spreadProgress = clamp(spreadElapsed / 420, 0, 1)
+      out.spreadProgress = clamp(spreadElapsed / 380, 0, 1)
+      this.holdCue('spread', now, 150)
     }
 
-    // 招式 A：胸前 X 双臂交叉防御（40ms 秒开，宽容度更高）
-    const strictGuard =
+    // 招式 A：胸前 X 双臂交叉防御（严防拳击抱架误触！必须双前臂明确交叉叠合且手腕未处于高速挥拳中）
+    const maxWristSpd = Math.max(this.wristKin[0].speed2D, this.wristKin[1].speed2D)
+    const armsCalmForGuard = maxWristSpd < 2.6
+    const wristDist = dist2D(lw, rw) / scale
+    const strictCrossGuard =
       crossedWrists &&
+      forearmsCross &&
       inChestZone &&
-      angles[0]! > 16 &&
-      angles[0]! < 85 &&
-      angles[1]! > 16 &&
-      angles[1]! < 85 &&
-      forearmsCross
-    const compactGuard =
-      wristsNearCenter &&
+      angles[0]! > 18 &&
+      angles[0]! < 84 &&
+      angles[1]! > 18 &&
+      angles[1]! < 84
+    // 双臂贴胸紧合护盾（必须双手腕贴得极近 < 0.28 肩宽且两手明显高于手肘，彻底区分双拳抱胸备战！）
+    const tightShieldGuard =
+      armsCalmForGuard &&
+      wristDist < 0.28 &&
+      Math.abs((lw.x + rw.x) * 0.5 - midX) < scale * 0.42 &&
       inChestZone &&
-      angles[0]! > 28 &&
-      angles[1]! > 28 &&
-      Math.abs(lw.y - rw.y) < scale * 0.55 &&
-      lw.y < le.y + scale * 0.15 &&
-      rw.y < re.y + scale * 0.15
-    const isGuardPose = strictGuard || compactGuard
+      angles[0]! > 45 &&
+      angles[1]! > 45 &&
+      lw.y < le.y - scale * 0.25 &&
+      rw.y < re.y - scale * 0.25
+    const isGuardPose = strictCrossGuard || tightShieldGuard
 
     if (isGuardPose) {
       this.beamHold.reset()
       this.discRaiseStart = [null, null]
       this.discArmed = [null, null]
       if (this.guardSince === null) this.guardSince = now
-      out.guard = now - this.guardSince >= 40
+      out.guard = now - this.guardSince >= 45
       out.guardJustStarted = out.guard && !this.prevGuardActive
       this.prevGuardActive = out.guard
       out.hintKey = out.guard ? 'hintGuardActive' : 'hintGuardPrep'
+      this.holdCue('guard', now, 140)
+      out.activeCue = 'guard'
       return out
     }
     this.guardSince = null
     this.prevGuardActive = false
 
-    // 招式 A2：双手交叉举过头顶 1.0 秒切换形态（迪迦 / 戴拿）
+    // 招式 A2：双手交叉举过头顶 0.9s 切换形态（迪迦 / 戴拿）
     const elbowsHigh = le.y < centerY - scale * 0.22 && re.y < centerY - scale * 0.22
     const wristsAboveHead = lw.y < headTopY && rw.y < headTopY
     const wristsCloseOrCrossed =
@@ -697,7 +739,7 @@ export class UltraGestureRecognizer {
 
     const typeElapsed = this.typeHold.update(isTypePose, now)
     if (isTypePose || this.typeHold.isRecent(now)) {
-      out.typeCharge = clamp(typeElapsed / 1000, 0, 1)
+      out.typeCharge = clamp(typeElapsed / 900, 0, 1)
       out.hintKey = 'hintTypeCharge'
       if (out.typeCharge >= 1 && !this.typeFired) {
         out.typeTrigger = true
@@ -708,13 +750,14 @@ export class UltraGestureRecognizer {
         this.discRaiseStart = [null, null]
         this.discArmed = [null, null]
         this.beamHold.reset()
+        out.activeCue = 'transform'
         return out
       }
       return out
     }
     this.typeFired = false
 
-    // 招式 B：必杀光线（经典 L 字或十字 + 姿势，宽容度升级，280ms 迅捷触发）
+    // 招式 B：必杀光线（经典 L 字或十字 + 手势，260ms 迅捷稳定触发）
     const forearmGap =
       Math.min(
         segmentDistance(lw, re, rw),
@@ -722,8 +765,8 @@ export class UltraGestureRecognizer {
         segmentDistance(le, re, rw),
         segmentDistance(re, le, lw),
       ) / scale
-    const leftUpward = angles[0]! > 44 && lw.y < le.y - scale * 0.12
-    const rightUpward = angles[1]! > 44 && rw.y < re.y - scale * 0.12
+    const leftUpward = angles[0]! > 42 && lw.y < le.y - scale * 0.12
+    const rightUpward = angles[1]! > 42 && rw.y < re.y - scale * 0.12
     const oneUpward = leftUpward || rightUpward
     const beamSide: 'left' | 'right' = leftUpward && !rightUpward ? 'left' : 'right'
     out.beamArmSide = beamSide
@@ -732,21 +775,23 @@ export class UltraGestureRecognizer {
     const isBeamPose =
       !this.discArmed[0] &&
       !this.discArmed[1] &&
-      minAngle < 46 &&
-      maxAngle > 44 &&
-      maxAngle - minAngle > 22 &&
-      forearmGap < 0.78 &&
+      minAngle < 48 &&
+      maxAngle > 42 &&
+      maxAngle - minAngle > 20 &&
+      forearmGap < 0.82 &&
       inChestZone &&
       oneUpward
 
     const beamElapsed = this.beamHold.update(isBeamPose, now)
-    const beamRequiredMs = 280
+    const beamRequiredMs = 260
     if (isBeamPose || (beamElapsed > 0 && this.beamHold.isRecent(now))) {
       this.discRaiseStart = [null, null]
       this.discArmed = [null, null]
       out.beamHolding = isBeamPose
       out.beamCharge = clamp(beamElapsed / beamRequiredMs, 0, 1)
       out.hintKey = 'hintBeamCharge'
+      this.holdCue('beam', now, 180)
+      out.activeCue = 'beam'
       if (out.beamCharge >= 1 && !this.beamFired) {
         out.beamTrigger = true
         this.beamFired = true
@@ -757,7 +802,7 @@ export class UltraGestureRecognizer {
       this.beamFired = false
     }
 
-    // 招式 C：光轮斩（单手高举凝聚 → 发力向下/向前挥劈；慢速放手自动取消蓄力而不误丢）
+    // 招式 C：光轮斩（单手高举凝聚 → 发力向下/向前挥劈）
     for (let side = 0; side < 2; side++) {
       const wrist = side === 0 ? lw : rw
       const shoulder = side === 0 ? ls : rs
@@ -765,12 +810,12 @@ export class UltraGestureRecognizer {
       const relX = (wrist.x - shoulder.x) / scale
       const relY = (wrist.y - shoulder.y) / scale
       const relZ = (wrist.z - shoulder.z) / scale
-      const isHigh = wrist.y < headTopY && angles[side]! > 46
+      const isHigh = wrist.y < headTopY && angles[side]! > 44
       const kin = this.wristKin[side]!
 
       const armed = this.discArmed[side]
       if (armed) {
-        if (now - armed.time > 2000) {
+        if (now - armed.time > 2100) {
           this.discArmed[side] = null
           this.discRaiseStart[side] = null
           continue
@@ -779,22 +824,23 @@ export class UltraGestureRecognizer {
         const forward = armed.relZ - relZ
         const outward = (relX - armed.relX) * (shoulder.x < midX ? -1 : 1)
         const slashFast =
-          kin.vy2 > 2.1 ||
-          kin.speed2D > 2.85 ||
-          kin.forwardVel3D > 1.45 ||
-          (now - kin.peakAccel2DAt <= 160 && kin.peakAccel2D > 14.5)
+          kin.vy2 > 1.85 ||
+          kin.speed2D > 2.45 ||
+          kin.forwardVel3D > 1.25 ||
+          (now - kin.peakAccel2DAt <= 170 && kin.peakAccel2D > 11.5)
         out.discSide = sideName
         out.discCharge = 1
         out.hintKey = 'hintDiscThrow'
-        if (drop > 0.34 && (forward > 0.05 || outward > 0.3 || drop > 0.58)) {
+        this.holdCue('disc', now, 150)
+        if (drop > 0.3 && (forward > 0.04 || outward > 0.25 || drop > 0.52)) {
           if (slashFast) {
             out.discTrigger = sideName
             out.hintKey = 'hintDiscFire'
             this.discArmed = [null, null]
             this.discRaiseStart = [null, null]
+            out.activeCue = 'disc'
             return out
           }
-          // 慢速放下手臂：平滑取消光轮准备态，不误扔
           if (drop > 0.72) {
             this.discArmed[side] = null
             this.discRaiseStart[side] = null
@@ -805,10 +851,12 @@ export class UltraGestureRecognizer {
         }
       } else if (isHigh) {
         if (this.discRaiseStart[side] === null) this.discRaiseStart[side] = now
-        const progress = clamp((now - this.discRaiseStart[side]!) / 260, 0, 1)
+        const progress = clamp((now - this.discRaiseStart[side]!) / 240, 0, 1)
         out.discSide = sideName
         out.discCharge = progress
         out.hintKey = 'hintDiscCharge'
+        this.holdCue('disc', now, 150)
+        out.activeCue = 'disc'
         if (progress >= 1) {
           this.discArmed[side] = { time: now, relX, relY, relZ }
         }
@@ -818,35 +866,19 @@ export class UltraGestureRecognizer {
       }
     }
 
-    // 招式 D：基于速度 + 加速度物理发力判定的全向左右挥拳
+    // 招式 D：全向 5 种打击意图判定（直拳 / 摆拳 / 上勾 / 推掌 / 手刀劈）
     if (!isSpreadPose && armScale > 0) {
-      this.detectPunchOmnidirectional(pts, worldPts, now, deltaSeconds, scale, armScale, out)
+      this.evaluatePunchFromKinematics(pts, now, scale, livePose, out)
     }
+
+    out.activeCue = now < this.lastCueUntil ? this.lastCue : out.activeCue
     return out
   }
 
-  /** 采样双臂往复发力挥动强度（用于近身角力推力 QTE，过滤慢速微摆） */
-  private sampleStruggleAgitation(pts: Vec3[], dt: number, scale: number): number {
-    const ls = pts[11]!
-    const rs = pts[12]!
-    const lw = pts[15]
-    const rw = pts[16]
-    let totalSpeed = 0
-    let count = 0
-
-    for (let side = 0; side < 2; side++) {
-      const s = side === 0 ? ls : rs
-      const w = side === 0 ? lw : rw
-      const prev = this.wristKin[side]!.prev2
-      if (!isVisible(w, 0.2) || !prev) continue
-      const rx = (w.x - s.x) / scale
-      const ry = (w.y - s.y) / scale
-      const spd = Math.hypot(rx - prev.x, ry - prev.y) / dt
-      totalSpeed += spd
-      count++
-    }
-    if (count === 0) return 0
-    return clamp((totalSpeed / count - 1.85) / 4.0, 0, 1)
+  private sampleStruggleAgitation(): number {
+    const s = Math.max(this.wristKin[0].speed2D, this.wristKin[1].speed2D)
+    const avg = (this.wristKin[0].speed2D + this.wristKin[1].speed2D) * 0.5
+    return clamp(((s * 0.6 + avg * 0.4) - 1.5) / 3.6, 0, 1)
   }
 
   private extractLiveBodyPose(
@@ -870,13 +902,13 @@ export class UltraGestureRecognizer {
 
     const torsoRoll = clamp(
       Math.atan2(shoulderAxis.y, Math.abs(shoulderAxis.x) + 0.15) * 0.85,
-      -0.48,
-      0.48,
+      -0.46,
+      0.46,
     )
     const torsoPitch = clamp(
       Math.atan2(-torsoDir.z, Math.max(0.25, torsoDir.y)) * 0.8,
-      -0.42,
-      0.55,
+      -0.38,
+      0.52,
     )
     const torsoYaw = clamp(
       Math.atan2(-shoulderAxis.z, Math.max(0.2, shoulderAxis.x)) * 0.85,
@@ -893,8 +925,8 @@ export class UltraGestureRecognizer {
     if (isVisible(earL, 0.32) && isVisible(earR, 0.32)) {
       const earAxis = mpDirToWorld(earL, earR, 0.82)
       if (earAxis) {
-        headRoll = clamp(Math.atan2(earAxis.y, Math.abs(earAxis.x) + 0.1) - torsoRoll, -0.4, 0.4)
-        headYaw = clamp(Math.atan2(-earAxis.z, Math.max(0.2, earAxis.x)) - torsoYaw, -0.6, 0.6)
+        headRoll = clamp(Math.atan2(earAxis.y, Math.abs(earAxis.x) + 0.1) - torsoRoll, -0.38, 0.38)
+        headYaw = clamp(Math.atan2(-earAxis.z, Math.max(0.2, earAxis.x)) - torsoYaw, -0.58, 0.58)
       }
       if (isVisible(nose, 0.36)) {
         const earMid = avgVec(earL, earR)
@@ -902,8 +934,8 @@ export class UltraGestureRecognizer {
         if (noseDir) {
           headPitch = clamp(
             Math.atan2(-noseDir.y, Math.abs(noseDir.z) + 0.35) * 0.7,
-            -0.36,
-            0.36,
+            -0.34,
+            0.34,
           )
         }
       }
@@ -959,12 +991,8 @@ export class UltraGestureRecognizer {
     }
   }
 
-  /**
-   * 速度 + 正向加速度门控飞踢检测：
-   * 缓慢抬腿/调整站姿仅驱动 3D 腿骨实时跟随摆动，只有爆发向上踢出才触发飞踢攻击。
-   */
   private detectKick(pts: Vec3[], now: number, dt: number, scale: number, out: GestureSnapshot) {
-    const velAlpha = 1 - Math.exp(-dt / 0.032)
+    const velAlpha = 1 - Math.exp(-dt / 0.025)
     for (let side = 0; side < 2; side++) {
       const hip = pts[side === 0 ? 23 : 24]
       const knee = pts[side === 0 ? 25 : 26]
@@ -986,7 +1014,7 @@ export class UltraGestureRecognizer {
         const prevVel = kin.upVel
         kin.upVel += (rawUpVel - kin.upVel) * velAlpha
         const upAccel = (kin.upVel - prevVel) / dt
-        if (upAccel > kin.peakUpAccel || now - kin.peakUpAccelAt > 160) {
+        if (upAccel > kin.peakUpAccel || now - kin.peakUpAccelAt > 170) {
           kin.peakUpAccel = Math.max(0, upAccel)
           kin.peakUpAccelAt = now
         }
@@ -994,13 +1022,13 @@ export class UltraGestureRecognizer {
       kin.prevAnkleRelY = ankleRelY
       kin.prevKneeRelY = kneeRelY
 
-      const kneeRaised = kneeRelY > -0.7
-      const ankleRaised = ankleRelY > -1.36
+      const kneeRaised = kneeRelY > -0.74
+      const ankleRaised = ankleRelY > -1.42
       const isKickHigh = kneeRaised && ankleRaised
       const hasKickBurst =
-        kin.upVel > 1.85 && now - kin.peakUpAccelAt <= 180 && kin.peakUpAccel > 11.5
+        kin.upVel > 1.55 && now - kin.peakUpAccelAt <= 190 && kin.peakUpAccel > 9.0
 
-      if (isKickHigh && !kin.wasHigh && hasKickBurst && now - this.kickLast[side]! > 480) {
+      if (isKickHigh && !kin.wasHigh && hasKickBurst && now - this.kickLast[side]! > 440) {
         this.kickLast[side] = now
         out.kick = side === 0 ? 'left' : 'right'
         out.hintKey = 'hintKick'
@@ -1009,29 +1037,19 @@ export class UltraGestureRecognizer {
     }
   }
 
-  /**
-   * 物理速度 + 二阶正向加速度脉冲 + 行程 + 反回缩四重门控出拳检测：
-   * - 慢速/常速抬手、放手、调整姿势或自然摆臂（低速度 / 低加速度）仅通过 livePose 驱动角色手臂跟随，0 误触攻击；
-   * - 真实发力出拳在 140ms 窗口内必然呈现显著正向爆发加速度峰值 + 高击打线速度 + 有效前推/挥摆行程；
-   * - 过滤收拳回胸与手臂自然下坠，并通过回落滞回锁彻底防止单拳余震连响。
-   */
-  private detectPunchOmnidirectional(
+  /** 每帧持续更新左右腕动力学（确保任何分支切换回来都没有跳变基线） */
+  private updateWristKinematics(
     pts2D: Vec3[],
     pts3D: Vec3[],
     now: number,
     dt: number,
     scale2D: number,
     scale3D: number,
-    out: GestureSnapshot,
   ) {
-    let bestSide: 'left' | 'right' | null = null
-    let bestStyle: 'jab' | 'hook' | 'uppercut' = 'jab'
-    let bestScore = -Infinity
-
-    // 对一阶速度施加轻度指数低通（τ = 30ms），在零感知延迟下压制单帧检测毛刺对二阶加速度的放大
-    const velAlpha = 1 - Math.exp(-dt / 0.03)
-    const ACCEL_WINDOW_MS = 145
-    const STROKE_WINDOW_MS = 170
+    // 较短的 τ=18ms 避免 30fps 摄像头下的短促直拳被削峰
+    const velAlpha = 1 - Math.exp(-dt / 0.018)
+    const ACCEL_WINDOW_MS = 155
+    const STROKE_WINDOW_MS = 165
 
     for (let side = 0; side < 2; side++) {
       const s2 = pts2D[side === 0 ? 11 : 12]!
@@ -1041,7 +1059,13 @@ export class UltraGestureRecognizer {
       const w3 = pts3D[side === 0 ? 15 : 16]
       const kin = this.wristKin[side]!
 
-      if (!isVisible(w2, 0.2) || !isVisible(s3, 0.3) || !isVisible(e3, 0.28) || !isVisible(w3, 0.2)) {
+      if (
+        scale3D <= 1e-4 ||
+        !isVisible(w2, 0.2) ||
+        !isVisible(s3, 0.3) ||
+        !isVisible(e3, 0.26) ||
+        !isVisible(w3, 0.2)
+      ) {
         this.wristKin[side] = createWristKinematics()
         this.punchPeakLock[side] = false
         continue
@@ -1055,9 +1079,8 @@ export class UltraGestureRecognizer {
       const radial2D = Math.hypot(relX2, relY2)
       const elbowDeg = elbowAngleDeg(s3, e3, w3)
 
-      // 若刚从防御/光线/展臂等其他姿态切回（采样中断 > 180ms），重置运动学基线防止跨状态跳变误触发
       const lastSampleT = kin.trail.length > 0 ? kin.trail[kin.trail.length - 1]!.t : -Infinity
-      if (now - lastSampleT > 180) {
+      if (now - lastSampleT > 220) {
         this.wristKin[side] = createWristKinematics()
         const fresh = this.wristKin[side]!
         fresh.prev2 = { x: relX2, y: relY2 }
@@ -1092,9 +1115,9 @@ export class UltraGestureRecognizer {
         kin.elbowVel += (rawElbowVel - kin.elbowVel) * velAlpha
         kin.radialVel2D += (rawRadialVel - kin.radialVel2D) * velAlpha
 
-        // 计算二阶正向爆发加速度（仅在发力加速段上升，匀速或减速段不产生正峰值）
         const accel2D = (kin.speed2D - prevSpeed2D) / dt
         const upAccel = (prevVy2 - kin.vy2) / dt
+        const downAccel = (kin.vy2 - prevVy2) / dt
         const fwdAccel = (kin.forwardVel3D - prevFwdVel) / dt
         const speed3DAccel = (kin.speed3D - prevSpeed3D) / dt
         const elbowAccel = (kin.elbowVel - prevElbowVel) / dt
@@ -1106,6 +1129,10 @@ export class UltraGestureRecognizer {
         if (upAccel >= kin.peakUpAccel || now - kin.peakUpAccelAt > ACCEL_WINDOW_MS) {
           kin.peakUpAccel = Math.max(0, upAccel)
           kin.peakUpAccelAt = now
+        }
+        if (downAccel >= kin.peakDownAccel || now - kin.peakDownAccelAt > ACCEL_WINDOW_MS) {
+          kin.peakDownAccel = Math.max(0, downAccel)
+          kin.peakDownAccelAt = now
         }
         if (fwdAccel >= kin.peakFwdAccel || now - kin.peakFwdAccelAt > ACCEL_WINDOW_MS) {
           kin.peakFwdAccel = Math.max(0, fwdAccel)
@@ -1130,68 +1157,146 @@ export class UltraGestureRecognizer {
       while (kin.trail.length > 1 && now - kin.trail[0]!.t > STROKE_WINDOW_MS) {
         kin.trail.shift()
       }
-      const oldest = kin.trail[0]!
-      const stroke2D = Math.hypot(relX2 - oldest.x2, relY2 - oldest.y2)
-      const stroke3D = Math.hypot(relX3 - oldest.x3, relY3 - oldest.y3, relZ3 - oldest.z3)
-      const forwardStroke3D = oldest.z3 - relZ3
 
-      // 当手腕回落至正常慢速区或明显进入收拳回撤时，解除本次出拳波峰锁
-      const isRetracting = kin.forwardVel3D < -0.55 && kin.radialVel2D < -0.75
-      if ((kin.speed2D < 1.85 && kin.forwardVel3D < 0.7) || isRetracting) {
+      const isRetracting = kin.forwardVel3D < -0.45 && kin.radialVel2D < -0.6
+      if ((kin.speed2D < 1.55 && kin.forwardVel3D < 0.55) || isRetracting) {
         this.punchPeakLock[side] = false
       }
+    }
+  }
 
-      const inStrikeZone = relY2 > -0.88 && relY2 < 1.2
-      const cooldownOk = now - this.punchLast[side]! > 260 && !this.punchPeakLock[side]
+  /**
+   * 基于短窗动量积分 + 爆发加速度 + 手形判定 5 种真实招式意图与击打力度/高度
+   */
+  private evaluatePunchFromKinematics(
+    pts2D: Vec3[],
+    now: number,
+    scale2D: number,
+    livePose: LiveBodyPose,
+    out: GestureSnapshot,
+  ) {
+    let bestSide: 'left' | 'right' | null = null
+    let bestStyle: PunchStyle = 'jab'
+    let bestPower = 0.65
+    let bestHeight: StrikeHeight = 'mid'
+    let bestScore = -Infinity
+
+    const ACCEL_WINDOW_MS = 160
+
+    for (let side = 0; side < 2; side++) {
+      const s2 = pts2D[side === 0 ? 11 : 12]!
+      const w2 = pts2D[side === 0 ? 15 : 16]
+      const kin = this.wristKin[side]!
+      if (!isVisible(w2, 0.2) || kin.trail.length < 2 || kin.prevElbowDeg === null) continue
+
+      const relX2 = (w2.x - s2.x) / scale2D
+      const relY2 = (w2.y - s2.y) / scale2D
+      const latest = kin.trail[kin.trail.length - 1]!
+      const oldest = kin.trail[0]!
+
+      const stroke2D = Math.hypot(latest.x2 - oldest.x2, latest.y2 - oldest.y2)
+      const stroke3D = Math.hypot(
+        latest.x3 - oldest.x3,
+        latest.y3 - oldest.y3,
+        latest.z3 - oldest.z3,
+      )
+      const forwardStroke3D = oldest.z3 - latest.z3
+      const downStroke2D = latest.y2 - oldest.y2
+      const elbowDeg = kin.prevElbowDeg
+
+      const inStrikeZone = relY2 > -0.92 && relY2 < 1.25
+      // 降低单手重复冷却至 210ms，连拳衔接更畅快跟手
+      const cooldownOk = now - this.punchLast[side]! > 210 && !this.punchPeakLock[side]
       if (!cooldownOk || !inStrikeZone) continue
 
-      const hasRecentFwdAccel = now - kin.peakFwdAccelAt <= ACCEL_WINDOW_MS && kin.peakFwdAccel >= 13.5
-      const hasRecent3DAccel = now - kin.peakSpeed3DAccelAt <= ACCEL_WINDOW_MS && kin.peakSpeed3DAccel >= 16.0
-      const hasRecent2DAccel = now - kin.peakAccel2DAt <= ACCEL_WINDOW_MS && kin.peakAccel2D >= 18.5
-      const hasRecentUpAccel = now - kin.peakUpAccelAt <= ACCEL_WINDOW_MS && kin.peakUpAccel >= 18.0
+      // 针对 30fps 摄像头的自适应短窗动量门控：慢速抬手/摆臂绝不误触，发力出拳干净利落
+      const hasRecentFwdAccel =
+        now - kin.peakFwdAccelAt <= ACCEL_WINDOW_MS && kin.peakFwdAccel >= 9.5
+      const hasRecent3DAccel =
+        now - kin.peakSpeed3DAccelAt <= ACCEL_WINDOW_MS && kin.peakSpeed3DAccel >= 11.5
+      const hasRecent2DAccel =
+        now - kin.peakAccel2DAt <= ACCEL_WINDOW_MS && kin.peakAccel2D >= 13.0
+      const hasRecentUpAccel =
+        now - kin.peakUpAccelAt <= ACCEL_WINDOW_MS && kin.peakUpAccel >= 13.0
+      const hasRecentDownAccel =
+        now - kin.peakDownAccelAt <= ACCEL_WINDOW_MS && kin.peakDownAccel >= 13.5
       const hasRecentElbowAccel =
-        now - kin.peakElbowAccelAt <= ACCEL_WINDOW_MS && kin.peakElbowAccel >= 1350
+        now - kin.peakElbowAccelAt <= ACCEL_WINDOW_MS && kin.peakElbowAccel >= 980
 
-      // 反回缩与反自然垂臂过滤：收拳往后拉回胸（Z 明显后退）或手臂向下自然放下时绝不触发攻击
-      const notDroppingArm = kin.vy2 < 1.75
-      const notPullingBack = kin.forwardVel3D > -0.55
+      const notDroppingSlowly = kin.vy2 < 1.65
+      const notPullingBack = kin.forwardVel3D > -0.5
 
-      // 通道 1：爆发前刺直拳（高速前冲 + 正向加速度峰值 + 有效前推行程）
-      const isForwardJab =
-        elbowDeg > 102 &&
-        forwardStroke3D > 0.14 &&
-        stroke3D > 0.24 &&
-        ((kin.forwardVel3D > 1.85 && kin.speed3D > 2.2 && (hasRecentFwdAccel || hasRecent3DAccel)) ||
-          (kin.elbowVel > 215 && kin.forwardVel3D > 0.85 && hasRecentElbowAccel))
+      const fingers = side === 0 ? livePose.fingersL : livePose.fingersR
+      const handIsOpenFlat =
+        !!fingers &&
+        (fingers.index + fingers.mid + fingers.ring + fingers.pinky) * 0.25 < 0.36
+      const handIsBlade = handIsOpenFlat && fingers.splay < 0.45
 
-      // 通道 2：爆发横摆拳 / 勾拳（高速横向挥臂 + 显著正向加速度脉冲 + 有效摆拳行程，过滤慢挥与收拳）
+      // 通道 1：前刺直拳 / 推掌（3D 前冲速度 + 肘部伸展加速度双通路，显著改善正对镜头直拳跟手度）
+      const isForwardThrust =
+        elbowDeg > 96 &&
+        forwardStroke3D > 0.11 &&
+        stroke3D > 0.2 &&
+        ((kin.forwardVel3D > 1.38 && kin.speed3D > 1.75 && (hasRecentFwdAccel || hasRecent3DAccel)) ||
+          (kin.elbowVel > 175 && kin.forwardVel3D > 0.65 && hasRecentElbowAccel))
+
+      // 通道 2：横摆勾拳
       const isSwingHook =
-        notDroppingArm &&
+        notDroppingSlowly &&
         notPullingBack &&
-        kin.speed2D > 3.45 &&
-        Math.abs(kin.vx2) > 2.45 &&
+        kin.speed2D > 2.75 &&
+        Math.abs(kin.vx2) > 1.95 &&
         hasRecent2DAccel &&
-        stroke2D > 0.34 &&
-        elbowDeg > 58
+        stroke2D > 0.28 &&
+        elbowDeg > 52
 
-      // 通道 3：爆发上勾升龙拳（高速上冲 + 向上爆发加速度 + 有效上挥行程，过滤慢举手）
+      // 通道 3：上勾升龙拳
       const isUppercut =
-        kin.speed2D > 3.35 &&
-        kin.vy2 < -2.75 &&
+        kin.speed2D > 2.65 &&
+        kin.vy2 < -2.25 &&
         hasRecentUpAccel &&
-        stroke2D > 0.32 &&
-        relY2 < 0.52
+        stroke2D > 0.27 &&
+        relY2 < 0.56
 
-      if (isForwardJab || isSwingHook || isUppercut) {
+      // 通道 4：奥特手刀斜劈斩（高速斜下挥劈，需较高速度与下劈加速度过滤自然放手）
+      const isChop =
+        notPullingBack &&
+        downStroke2D > 0.36 &&
+        kin.vy2 > 2.85 &&
+        hasRecentDownAccel &&
+        (handIsBlade || Math.abs(kin.vx2) > 1.1) &&
+        elbowDeg > 95
+
+      if (isForwardThrust || isSwingHook || isUppercut || isChop) {
+        let style: PunchStyle = 'jab'
+        if (isUppercut) style = 'uppercut'
+        else if (isChop) style = 'chop'
+        else if (isForwardThrust && handIsOpenFlat) style = 'palm'
+        else if (isSwingHook && (!isForwardThrust || Math.abs(kin.vx2) > kin.forwardVel3D * 1.45)) {
+          style = 'hook'
+        } else {
+          style = 'jab'
+        }
+
+        const power = clamp(
+          (kin.speed2D * 0.22 + Math.max(0, kin.forwardVel3D) * 0.32 + stroke3D * 0.65) * 0.55,
+          0.42,
+          1.0,
+        )
+        const height: StrikeHeight =
+          style === 'uppercut' || relY2 < -0.18 ? 'high' : relY2 > 0.45 ? 'low' : 'mid'
+
         const score =
-          kin.speed2D * 0.45 +
-          Math.max(0, kin.forwardVel3D) * 0.75 +
+          kin.speed2D * 0.48 +
+          Math.max(0, kin.forwardVel3D) * 0.78 +
           kin.peakAccel2D * 0.04 +
           kin.peakFwdAccel * 0.05
         if (score > bestScore) {
           bestScore = score
           bestSide = side === 0 ? 'left' : 'right'
-          bestStyle = isUppercut ? 'uppercut' : isSwingHook ? 'hook' : 'jab'
+          bestStyle = style
+          bestPower = power
+          bestHeight = height
         }
       }
     }
@@ -1202,7 +1307,10 @@ export class UltraGestureRecognizer {
       this.punchPeakLock[idx] = true
       out.punch = bestSide
       out.punchStyle = bestStyle
+      out.punchPower = bestPower
+      out.punchHeight = bestHeight
       out.hintKey = 'hintPunch'
+      this.holdCue(bestSide === 'left' ? 'punch-l' : 'punch-r', now, 240)
     }
   }
 }

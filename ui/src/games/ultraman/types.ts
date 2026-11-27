@@ -6,6 +6,7 @@ export type { HeroId }
 export type GamePhase =
   | 'menu'
   | 'loading'
+  | 'calibrating'
   | 'transform'
   | 'intro'
   | 'fighting'
@@ -13,7 +14,9 @@ export type GamePhase =
   | 'victory'
   | 'defeat'
 
-/** 单人电影式五幕战斗阶段 */
+export type GameMode = 'story' | 'practice'
+
+/** 动态战斗阶段：自由战斗为主，关键条件自然触发特摄名场面 */
 export type BattleStage =
   | 'melee'
   | 'transition-ranged'
@@ -29,15 +32,37 @@ export type ActionGuideKind =
   | 'punch'
   | 'guard'
   | 'dodge-shoot'
+  | 'crouch-dodge'
+  | 'jump-dodge'
   | 'grapple'
   | 'beam-spread'
   | 'beam-fire'
   | 'kick-break'
+  | 'disc-illusion'
 
 export type ControlMode = 'camera' | 'keyboard'
 
 export type ConcreteSceneTheme = 'seaside' | 'city' | 'mountain' | 'volcano'
 export type SceneTheme = 'auto' | ConcreteSceneTheme
+
+export type PunchStyle = 'jab' | 'hook' | 'uppercut' | 'palm' | 'chop'
+export type StrikeHeight = 'high' | 'mid' | 'low'
+
+export type DistanceHint = 'ok' | 'too-close' | 'too-far' | 'off-center'
+
+export type GestureActiveCue =
+  | 'none'
+  | 'punch-l'
+  | 'punch-r'
+  | 'kick'
+  | 'guard'
+  | 'beam'
+  | 'disc'
+  | 'dodge'
+  | 'crouch'
+  | 'jump'
+  | 'spread'
+  | 'transform'
 
 export type HeroAction =
   | 'idle'
@@ -45,6 +70,12 @@ export type HeroAction =
   | 'transform'
   | 'punch-left'
   | 'punch-right'
+  | 'hook-left'
+  | 'hook-right'
+  | 'uppercut-left'
+  | 'uppercut-right'
+  | 'chop-left'
+  | 'chop-right'
   | 'punch-heavy'
   | 'combo-1'
   | 'combo-2'
@@ -55,10 +86,12 @@ export type HeroAction =
   | 'palm-right'
   | 'dodge-left'
   | 'dodge-right'
+  | 'crouch-dodge'
   | 'jump-kick'
   | 'kick-left'
   | 'kick-right'
   | 'guard'
+  | 'guard-parry'
   | 'disc'
   | 'grapple'
   | 'grapple-throw'
@@ -67,10 +100,20 @@ export type HeroAction =
   | 'beam-spread'
   | 'beam'
   | 'hit'
+  | 'hit-left'
+  | 'hit-right'
+  | 'hit-heavy'
   | 'defeat'
   | 'victory'
 
-export type MonsterAttackKind = 'melee' | 'fireball' | 'dark-beam'
+export type MonsterAttackKind =
+  | 'melee'
+  | 'melee-high'
+  | 'melee-low'
+  | 'charge'
+  | 'fireball'
+  | 'dark-beam'
+  | 'illusion'
 
 export interface MonsterSpec {
   id: string
@@ -78,7 +121,7 @@ export interface MonsterSpec {
   maxHp: number
   /** 归一化后的目标高度（世界单位，奥特曼高度约为 13.5） */
   targetHeight: number
-  /** 战斗默认站位 Z 坐标（奥特曼在 Z = 13.2，怪兽在其正前方负 Z 方向） */
+  /** 战斗默认站位 Z 坐标（奥特曼在 Z = 8.4~13.2，怪兽在其正前方负 Z 方向） */
   baseZ: number
   /** 主要视觉发光色 */
   accentColor: number
@@ -90,7 +133,9 @@ export interface MonsterSpec {
   attackInterval: number
   /** 默认闯关时搭配的战场主题 */
   defaultTheme: ConcreteSceneTheme
-  /** 是否为静态网格（无骨骼，如加恩Q） */
+  /** 命中材质类型（用于音效与火花分层） */
+  armorMaterial: 'flesh' | 'metal' | 'chitin' | 'eldritch'
+  /** 是否为静态网格（无骨骼） */
   isStaticMesh?: boolean
   /** 初始绕 Y 轴朝向修正（弧度） */
   facingOffsetY?: number
@@ -165,18 +210,31 @@ export interface LiveBodyPose {
 export interface GestureSnapshot {
   tracking: boolean
   coverage: 'none' | 'upper' | 'full'
+  /** 客厅站距与居中校准提示 */
+  distanceHint: DistanceHint
+  /** 实时高亮反馈标记（供雷达肢体变色） */
+  activeCue: GestureActiveCue
   /** 左右位移/倾身偏移 [-1, 1]，负数为左，正数为右 */
   lean: number
   /** 横向跨步瞬时速度（用于触发侧滑/闪步动画） */
   lateralVelocity: number
+  /** 深蹲状态与深度 [0, 1]（用于闪避高位横扫） */
+  crouching: boolean
+  crouchDepth: number
+  /** 腾空起跳状态（用于闪避低位震波） */
+  jumping: boolean
   /** 双臂胸前交叉防御 */
   guard: boolean
   /** 本帧刚进入防御架势的时间戳（用于精准防御判定） */
   guardJustStarted: boolean
   /** 本帧触发的拳击 */
   punch: 'left' | 'right' | null
-  /** 出拳动作风格（直拳/横摆/上勾） */
-  punchStyle: 'jab' | 'hook' | 'uppercut'
+  /** 出拳动作风格（直拳/横摆/上勾/推掌/手刀） */
+  punchStyle: PunchStyle
+  /** 真实发力强度 [0.35, 1.0] */
+  punchPower: number
+  /** 击打高度区域（决定受击部位与反应） */
+  punchHeight: StrikeHeight
   /** 本帧触发的抬腿飞踢 */
   kick: 'left' | 'right' | null
   /** 举手蓄力光轮进度 [0, 1] */
@@ -227,11 +285,17 @@ export interface FloatingDamageEvent {
   kind?: 'normal' | 'crit' | 'guard' | 'dodge' | 'clash'
 }
 
+export type BattleRank = 'S' | 'A' | 'B' | 'C'
+
 export interface BattleHudState {
   phase: GamePhase
+  gameMode: GameMode
   battleStage: BattleStage
   controlMode: ControlMode
   loadingProgress: number
+  calibrationProgress: number
+  distanceHint: DistanceHint
+  activeGestureCue: GestureActiveCue
   heroId: HeroId
   /** 当前形态（如 multi/power/sky 或 flash/strong/miracle；无形态英雄为 'base'） */
   heroForm: string
@@ -243,14 +307,17 @@ export interface BattleHudState {
   monsterState: MonsterState
   monsterHp: number
   monsterMaxHp: number
+  monsterSpecialHintKey: string | null
   heroHp: number
   heroMaxHp: number
+  guardStamina: number
   energy: number
   score: number
   punchChain: number
   combo: number
   maxCombo: number
   perfectGuards: number
+  perfectDodges: number
   defeatedCount: number
   warningTextKey: string | null
   warningUrgency: number
@@ -263,13 +330,18 @@ export interface BattleHudState {
   grappleActive: boolean
   grappleProgress: number
   transformProgress: number
+  finisherReady: boolean
   finisherPhase: 'none' | 'spread' | 'beam'
   finisherProgress: number
   actionGuide: ActionGuideKind | null
   activeSkillBannerKey: string | null
+  impactFlashKind: 'none' | 'heavy' | 'parry' | 'dodge' | 'hurt'
+  impactFlashSeq: number
   tracking: boolean
   bodyCoverage: 'none' | 'upper' | 'full'
   mirroredCenterX: number
   poseHintKey: string
   timerDanger: boolean
+  battleRank: BattleRank
+  badges: string[]
 }

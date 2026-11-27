@@ -29,8 +29,8 @@ let radarCtx: CanvasRenderingContext2D | null = null
 
 const mode = ref<ControlMode>('camera')
 const heroes = ref<[HeroId, HeroId]>(['tiga', 'zero'])
-const selectedTheme = ref<ConcreteSceneTheme>('seaside')
-const ARENA_THEMES: ConcreteSceneTheme[] = ['seaside', 'city', 'mountain', 'volcano']
+const selectedTheme = ref<ConcreteSceneTheme>('city')
+const ARENA_THEMES: ConcreteSceneTheme[] = ['city', 'seaside', 'mountain', 'volcano']
 const slots: readonly PvpSlot[] = [0, 1]
 
 const foreground = ref(!document.hidden)
@@ -42,17 +42,24 @@ const tracked = ref<[boolean, boolean]>([false, false])
 const forcePairBypass = ref(false)
 const floatingHits = [ref<FloatingDamageEvent[]>([]), ref<FloatingDamageEvent[]>([])] as const
 const floatTimers = new Map<number, number>()
+const slotFlash = ref<[PvpFighterHud['impactFlashKind'], PvpFighterHud['impactFlashKind']]>([
+  'none',
+  'none',
+])
+const slotFlashTimers: [number | null, number | null] = [null, null]
 
 const makeDefaultFighter = (heroId: HeroId): PvpFighterHud => ({
   heroId,
   heroForm: heroId === 'tiga' ? 'multi' : 'base',
   hasForms: heroId === 'tiga' || heroId === 'dyna',
-  hp: 140,
-  maxHp: 140,
+  hp: 150,
+  maxHp: 150,
+  guardStamina: 100,
   energy: 45,
   combo: 0,
   maxCombo: 0,
   perfectGuards: 0,
+  perfectDodges: 0,
   punchChain: 0,
   discCooldownRatio: 0,
   beamCooldownRatio: 0,
@@ -60,8 +67,13 @@ const makeDefaultFighter = (heroId: HeroId): PvpFighterHud => ({
   chargeProgress: 0,
   incomingBeamAlert: false,
   activeBannerKey: null,
+  impactFlashKind: 'none',
+  impactFlashSeq: 0,
   tracking: false,
   bodyCoverage: 'none',
+  distanceHint: 'ok',
+  activeGestureCue: 'none',
+  mirroredCenterX: 0.5,
   poseHintKey: 'hintStandCenter',
   timerDanger: false,
 })
@@ -70,7 +82,7 @@ const hud = reactive<PvpHudState>({
   phase: 'menu',
   controlMode: 'camera',
   loadingProgress: 0,
-  activeTheme: 'seaside',
+  activeTheme: 'city',
   portraitSplit: false,
   round: 1,
   maxRounds: 3,
@@ -83,6 +95,22 @@ const hud = reactive<PvpHudState>({
   beamClashBalance: 0.5,
   fighters: [makeDefaultFighter('tiga'), makeDefaultFighter('zero')],
 })
+
+for (const s of [0, 1] as const) {
+  watch(
+    () => hud.fighters[s].impactFlashSeq,
+    () => {
+      const kind = hud.fighters[s].impactFlashKind
+      if (kind === 'none') return
+      slotFlash.value[s] = kind
+      if (slotFlashTimers[s] !== null) window.clearTimeout(slotFlashTimers[s]!)
+      slotFlashTimers[s] = window.setTimeout(() => {
+        slotFlash.value[s] = 'none'
+        slotFlashTimers[s] = null
+      }, 210)
+    },
+  )
+}
 
 const isBattleStage = computed(
   () =>
@@ -124,6 +152,7 @@ watch(
 watch(
   () => hud.phase,
   (p) => {
+    tracker.setHighIntensityCombat(p === 'fighting')
     if (p === 'match-over' || p === 'menu') {
       tracker.stop(videoRef.value)
       tracked.value = [false, false]
@@ -138,7 +167,6 @@ tracker.onError = (err) => {
 
 tracker.onPoses = (poses, now, width, height) => {
   if (!foreground.value) return
-  // 镜像左半幅画面归属 P1，右半幅画面归属 P2
   const lanes = slots.map((i) => poses.filter((p) => (p.mirroredCenterX < 0.5 ? 0 : 1) === i))
   tracked.value = [lanes[0]!.length >= 1, lanes[1]!.length >= 1]
 
@@ -153,6 +181,12 @@ tracker.onPoses = (poses, now, width, height) => {
         [lanes[0]?.[0]?.landmarks, lanes[1]?.[0]?.landmarks],
         showSkeleton.value,
         true,
+        [lanes[0]?.[0]?.leftHandLandmarks, lanes[0]?.[0]?.rightHandLandmarks],
+        {
+          distanceHint: hud.fighters[0].distanceHint,
+          activeCue: hud.fighters[0].activeGestureCue,
+          chargeProgress: hud.fighters[0].chargeProgress,
+        },
       )
     }
   }
@@ -168,6 +202,14 @@ tracker.onPoses = (poses, now, width, height) => {
       width,
       height,
       i === 0 ? 0.75 : 0.25,
+      pose
+        ? {
+            left: pose.leftHandLandmarks,
+            leftWorld: pose.leftHandWorldLandmarks,
+            right: pose.rightHandLandmarks,
+            rightWorld: pose.rightHandWorldLandmarks,
+          }
+        : null,
     )
   })
 }
@@ -610,6 +652,15 @@ onBeforeUnmount(() => {
           class="vp-cell"
           :class="'vp-p' + (slot + 1)"
         >
+          <!-- 分屏独立视觉冲击边光 -->
+          <div
+            v-if="slotFlash[slot] !== 'none'"
+            :key="'fx-' + hud.fighters[slot].impactFlashSeq"
+            class="vp-impact-fx"
+            :class="slotFlash[slot]"
+            aria-hidden="true"
+          />
+
           <!-- 本视口独立伤害/特技飘字 -->
           <div class="vp-floating-layer" aria-hidden="true">
             <span
@@ -736,6 +787,17 @@ onBeforeUnmount(() => {
                   :style="{ width: hud.fighters[slot].energy + '%' }"
                 />
               </div>
+
+              <div class="pvp-shield-row">
+                <span class="pvp-shield-lbl">{{ msg('guardStamina') }}</span>
+                <div class="pvp-shield-track">
+                  <div
+                    class="pvp-shield-fill"
+                    :class="{ low: hud.fighters[slot].guardStamina < 28 }"
+                    :style="{ width: hud.fighters[slot].guardStamina + '%' }"
+                  />
+                </div>
+              </div>
             </div>
 
             <div v-if="hud.fighters[slot].combo >= 2" class="self-combo-chip">
@@ -766,7 +828,8 @@ onBeforeUnmount(() => {
             <div class="col-wins">{{ hud.wins[0] }}</div>
             <div class="col-meta">
               {{ msg('result.maxCombo') }} {{ hud.fighters[0].maxCombo }} ·
-              {{ msg('result.perfectGuards') }} {{ hud.fighters[0].perfectGuards }}
+              {{ msg('result.perfectGuards') }} {{ hud.fighters[0].perfectGuards }} ·
+              {{ msg('result.perfectDodges') }} {{ hud.fighters[0].perfectDodges }}
             </div>
           </div>
           <div class="summary-sep">:</div>
@@ -775,7 +838,8 @@ onBeforeUnmount(() => {
             <div class="col-wins">{{ hud.wins[1] }}</div>
             <div class="col-meta">
               {{ msg('result.maxCombo') }} {{ hud.fighters[1].maxCombo }} ·
-              {{ msg('result.perfectGuards') }} {{ hud.fighters[1].perfectGuards }}
+              {{ msg('result.perfectGuards') }} {{ hud.fighters[1].perfectGuards }} ·
+              {{ msg('result.perfectDodges') }} {{ hud.fighters[1].perfectDodges }}
             </div>
           </div>
         </div>
@@ -1864,6 +1928,58 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.vp-impact-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+  animation: vpEdgeFlash 0.21s ease-out forwards;
+}
+.vp-impact-fx.heavy {
+  box-shadow: inset 0 0 64px rgba(250, 204, 21, 0.55);
+}
+.vp-impact-fx.parry {
+  box-shadow: inset 0 0 72px rgba(56, 232, 255, 0.65);
+}
+.vp-impact-fx.dodge {
+  box-shadow: inset 0 0 72px rgba(74, 222, 128, 0.58);
+}
+.vp-impact-fx.hurt {
+  box-shadow: inset 0 0 78px rgba(239, 68, 68, 0.72);
+}
+@keyframes vpEdgeFlash {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.pvp-shield-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.pvp-shield-lbl {
+  font-size: 9px;
+  font-weight: 800;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+.pvp-shield-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  overflow: hidden;
+}
+.pvp-shield-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #a5f3fc);
+  transition: width 0.08s linear;
+}
+.pvp-shield-fill.low {
+  background: linear-gradient(90deg, #ef4444, #fb923c);
 }
 
 @media (max-width: 900px) {

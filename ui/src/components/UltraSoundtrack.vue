@@ -19,6 +19,9 @@ const blocked = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 let playPromise: Promise<void> | null = null
 
+const BASE_VOLUME = 0.26
+let duckRestoreTimer: number | null = null
+
 const albums: Record<string, string> = {
   dyna: 'https://embed.music.apple.com/jp/album/534110680?i=534110805',
   zeta: 'https://embed.music.apple.com/jp/album/1703538563?i=5341108564',
@@ -29,7 +32,7 @@ async function syncAudioPlayback() {
   if (!audio) return
   const shouldPlay = props.playing && !props.muted && track.value === 'sortie'
   if (shouldPlay) {
-    audio.volume = 0.26
+    audio.volume = BASE_VOLUME
     try {
       playPromise = audio.play()
       await playPromise
@@ -55,6 +58,22 @@ async function syncAudioPlayback() {
   }
 }
 
+function handleBgmDuck(e: Event) {
+  const audio = player.value
+  if (!audio || audio.paused || props.muted) return
+  const detail = (e as CustomEvent<{ durationSec?: number; gain?: number }>).detail
+  const duckGain = Math.max(0.05, Math.min(1, detail?.gain ?? 0.32))
+  const durMs = Math.max(300, Math.round((detail?.durationSec ?? 1.4) * 1000))
+  audio.volume = BASE_VOLUME * duckGain
+  if (duckRestoreTimer !== null) window.clearTimeout(duckRestoreTimer)
+  duckRestoreTimer = window.setTimeout(() => {
+    duckRestoreTimer = null
+    if (player.value && !player.value.paused && !props.muted) {
+      player.value.volume = BASE_VOLUME
+    }
+  }, durMs)
+}
+
 function handleOutsideClick(e: MouseEvent) {
   if (!panel.value || !rootRef.value) return
   if (!rootRef.value.contains(e.target as Node)) {
@@ -71,10 +90,13 @@ watch(
 
 onMounted(() => {
   document.addEventListener('pointerdown', handleOutsideClick)
+  window.addEventListener('ultra-bgm-duck', handleBgmDuck)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleOutsideClick)
+  window.removeEventListener('ultra-bgm-duck', handleBgmDuck)
+  if (duckRestoreTimer !== null) window.clearTimeout(duckRestoreTimer)
   if (player.value && !player.value.paused) {
     player.value.pause()
   }
@@ -90,7 +112,11 @@ onBeforeUnmount(() => {
       :aria-expanded="panel"
       @click.stop="panel = !panel"
     >
-      <span class="note-icon">♫</span>
+      <svg class="note-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 18V5l12-2v13" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="6" cy="18" r="3" />
+        <circle cx="18" cy="16" r="3" />
+      </svg>
       <span>{{ t('message.ultramanView.music') }}</span>
     </button>
     <div
@@ -112,7 +138,10 @@ onBeforeUnmount(() => {
         allow="autoplay; encrypted-media"
       />
       <button v-if="blocked" type="button" class="unlock-btn" @click="syncAudioPlayback">
-        ▶ {{ t('message.ultramanView.music') }}
+        <svg class="play-svg" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M4 2.5l10 5.5-10 5.5V2.5z" />
+        </svg>
+        <span>{{ t('message.ultramanView.music') }}</span>
       </button>
     </div>
     <audio ref="player" src="/audio/ultraman/sortie.m4a" preload="none" loop />
@@ -136,7 +165,7 @@ onBeforeUnmount(() => {
 .music-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   padding: 6px 12px;
   color: #e2f1ff;
   background: rgba(11, 22, 38, 0.88);
@@ -156,8 +185,17 @@ onBeforeUnmount(() => {
   color: #7dd3fc;
 }
 
-.note-icon {
+.note-svg {
+  width: 14px;
+  height: 14px;
   color: #facc15;
+  flex-shrink: 0;
+}
+
+.play-svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 .music-panel {
@@ -181,6 +219,10 @@ onBeforeUnmount(() => {
 
 .music-panel select,
 .unlock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   color: #e7f6ff;
   background: #132338;
   padding: 6px 10px;

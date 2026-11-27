@@ -1,8 +1,9 @@
 import * as THREE from 'three'
 import type { HeroProfile } from './heroes'
 
-interface SparkParticle {
-  mesh: THREE.Mesh
+interface PooledSpark {
+  active: boolean
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   vx: number
   vy: number
   vz: number
@@ -11,6 +12,17 @@ interface SparkParticle {
   gravity: number
   baseWidth: number
   lengthFactor: number
+}
+
+interface DebrisChunk {
+  active: boolean
+  pos: THREE.Vector3
+  vel: THREE.Vector3
+  rot: THREE.Euler
+  rotVel: THREE.Vector3
+  scale: number
+  life: number
+  maxLife: number
 }
 
 interface ShockwaveRing {
@@ -42,6 +54,22 @@ interface HitFlare {
   spinSpeed: number
 }
 
+/** 3D 相机朝向粗电弧条带（彻底取代 1px THREE.Line） */
+interface RibbonArc {
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
+  segments: number
+  pts: THREE.Vector3[]
+  baseWidth: number
+}
+
+/** 拳脚动态骨骼运动拖尾丝带 */
+interface LimbMotionTrail {
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>
+  history: THREE.Vector3[]
+  active: boolean
+  fade: number
+}
+
 export interface Projectile {
   kind: 'punch-wave' | 'kick-wave' | 'palm-bolt' | 'ultra-disc' | 'kaiju-fireball'
   mesh: THREE.Object3D
@@ -55,7 +83,12 @@ export interface Projectile {
   punchSide?: 'left' | 'right'
   finisher?: boolean
   hitTriggered: boolean
+  lavaMat?: THREE.ShaderMaterial
 }
+
+const SPARK_POOL_SIZE = 180
+const DEBRIS_POOL_SIZE = 48
+const TRAIL_POINTS = 10
 
 function makeStarFlareTexture(): THREE.CanvasTexture {
   const size = 128
@@ -117,8 +150,12 @@ function makeStreakSparkTexture(): THREE.CanvasTexture {
   return tex
 }
 
-/** 构造弧形近战刀光剑气带几何体 */
-function buildCurvedSlashGeometry(innerR: number, outerR: number, arcRad: number, segments = 24): THREE.BufferGeometry {
+function buildCurvedSlashGeometry(
+  innerR: number,
+  outerR: number,
+  arcRad: number,
+  segments = 24,
+): THREE.BufferGeometry {
   const positions: number[] = []
   const uvs: number[] = []
   const indices: number[] = []
@@ -127,7 +164,6 @@ function buildCurvedSlashGeometry(innerR: number, outerR: number, arcRad: number
     const a = (u - 0.5) * arcRad
     const ca = Math.cos(a)
     const sa = Math.sin(a)
-    // 两端收尖，中段饱满如锐利月牙刀光
     const taper = Math.sin(u * Math.PI)
     const rIn = THREE.MathUtils.lerp(outerR, innerR, taper)
     positions.push(ca * rIn, sa * rIn, 0)
@@ -142,6 +178,28 @@ function buildCurvedSlashGeometry(innerR: number, outerR: number, arcRad: number
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geo.setIndex(indices)
+  return geo
+}
+
+function buildRibbonBufferGeometry(pointCount: number): THREE.BufferGeometry {
+  const verts = new Float32Array(pointCount * 2 * 3)
+  const uvs = new Float32Array(pointCount * 2 * 2)
+  const indices: number[] = []
+  for (let i = 0; i < pointCount; i++) {
+    const u = i / Math.max(1, pointCount - 1)
+    uvs[i * 4] = u
+    uvs[i * 4 + 1] = 0
+    uvs[i * 4 + 2] = u
+    uvs[i * 4 + 3] = 1
+    if (i < pointCount - 1) {
+      const k = i * 2
+      indices.push(k, k + 1, k + 2, k + 1, k + 3, k + 2)
+    }
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3))
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
   geo.setIndex(indices)
   return geo
 }
@@ -193,22 +251,78 @@ function createPlasmaBeamMaterial(initialColor: number): THREE.ShaderMaterial {
   })
 }
 
+/** 熔岩焦壳裂纹火球 Shader（严格 pow 安全夹紧） */
+function createLavaFireballMaterial(colorHex: number): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(colorHex) },
+    },
+    vertexShader: `
+      varying vec3 vNormal;
+      varying vec3 vPos;
+      varying vec3 vViewDir;
+      void main() {
+        vPos = position;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vNormal = normalize(mat3(modelMatrix) * normal);
+        vViewDir = normalize(cameraPosition - wp.xyz + vec3(0.0001));
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uColor;
+      varying vec3 vNormal;
+      varying vec3 vPos;
+      varying vec3 vViewDir;
+      void main() {
+        vec3 p = normalize(vPos) * 3.8;
+        float n = sin(p.x * 2.4 + uTime * 5.0) * cos(p.y * 2.7 - uTime * 4.2)
+                + 0.5 * sin(p.z * 5.1 + uTime * 7.5);
+        float crack = smoothstep(-0.15, 0.45, n);
+        float ndotv = clamp(abs(dot(normalize(vNormal), normalize(vViewDir))), 0.0, 1.0);
+        float rim = pow(max(1.0 - ndotv, 0.0001), 1.9);
+        vec3 crust = uColor * 0.24;
+        vec3 magma = mix(uColor * 1.35, vec3(1.65, 1.45, 0.95), crack * 0.72);
+        vec3 col = mix(crust, magma, crack) + uColor * rim * 1.2;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  })
+}
+
 /**
- * 影视级特摄战斗特效系统（全面对标悦动元气机）：
- * - 近战连击高曲率红金/青蓝刀光剑气拖尾（Slash Ribbons）
- * - 包裹全身的立体球形蓝色奥特能量穹盾（Fresnel + 六边形扫描 + 受击爆闪波纹）
- * - 命中立体蓝色冲击波能量球 + 电光火石拉伸火花瀑 + 十字耀斑
- * - 远程掌心高速光弹 + 立体烈焰巨型熔岩火球
- * - 七彩棱镜流光全屏蓄力光阵 + 闪电缠绕超级光线 + 猩红毁灭爆裂电弧
+ * 电影级特摄战斗特效系统：
+ * - 3D 粗电弧条带（Billboard Ribbon）取代 1px 细线
+ * - 拳脚骨骼运动拖尾丝带（Motion Trail Ribbons）
+ * - 熔岩焦壳裂纹火球 Shader + 高能等离子光线
+ * - 预分配电光火花池 + 飞溅混凝土瓦砾 InstancedMesh 池 + 爆炸瞬态动态点光源
  */
 export class BattleEffects {
   private readonly group = new THREE.Group()
-  private sparks: SparkParticle[] = []
+  private readonly sparkPool: PooledSpark[] = []
+  private sparkCursor = 0
+
+  private readonly debrisMesh: THREE.InstancedMesh
+  private readonly debrisPool: DebrisChunk[] = []
+  private debrisCursor = 0
+  private readonly debrisDummy = new THREE.Object3D()
+
   private shockwaves: ShockwaveRing[] = []
   private energySpheres: EnergySphereBurst[] = []
   private slashes: MeleeSlashArc[] = []
   private flares: HitFlare[] = []
   public projectiles: Projectile[] = []
+
+  // 爆炸/重击瞬态动态点光源（真实照亮奥特曼皮套与周遭大厦）
+  private readonly impactLight = new THREE.PointLight(0x38d9ff, 0, 48, 1.6)
+  private impactLightLife = 0
+  private impactLightMaxLife = 0.3
+  private impactLightPeak = 0
+
+  // 拳脚运动拖尾丝带
+  private readonly limbTrails = new Map<string, LimbMotionTrail>()
 
   private readonly sparkQuadGeo = new THREE.PlaneGeometry(1, 1)
   private readonly shockwaveGeo = new THREE.PlaneGeometry(2, 2)
@@ -217,13 +331,13 @@ export class BattleEffects {
   private readonly flareTex: THREE.CanvasTexture
   private readonly sparkTex: THREE.CanvasTexture
 
-  // 英雄等离子光线组 + 缠绕闪电弧
+  // 英雄等离子光线组 + 3D 粗电弧条带
   private readonly heroBeamGroup = new THREE.Group()
   private readonly heroBeamInner: THREE.Mesh<THREE.CylinderGeometry, THREE.ShaderMaterial>
   private readonly heroBeamOuter: THREE.Mesh<THREE.CylinderGeometry, THREE.ShaderMaterial>
   private readonly heroBeamFilaments: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>[] = []
-  private readonly beamLightningLines: THREE.Line[] = []
-  private readonly impactArcLines: THREE.Line[] = []
+  private readonly beamLightningRibbons: RibbonArc[] = []
+  private readonly impactArcRibbons: RibbonArc[] = []
   private readonly heroMuzzleSprite: THREE.Sprite
   private readonly heroImpactSprite: THREE.Sprite
   private heroBeamActive = false
@@ -240,18 +354,18 @@ export class BattleEffects {
   private kaijuBeamDuration = 0.75
   private readonly kaijuChargeSprite: THREE.Sprite
 
-  // 双光线对波交汇奇点球
+  // 双光线对波奇点球
   private readonly clashGroup = new THREE.Group()
   private readonly clashCore: THREE.Mesh
   private readonly clashFlare: THREE.Sprite
   private clashActive = false
   private clashProgress = 0.5
 
-  // 包裹全身的立体球形蓝色奥特能量穹顶护盾（复刻视频 2 0:04-0:05, 0:23, 0:51）
+  // 包裹全身的立体球形蓝色奥特能量穹顶护盾
   private readonly shieldMesh: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>
   private shieldFlash = 0
 
-  // 七彩棱镜流光蓄力组（复刻视频 1 0:06 全屏七彩能量汇聚！）
+  // 七彩棱镜流光蓄力组
   private readonly rainbowGroup = new THREE.Group()
   private readonly rainbowStreaks: {
     mesh: THREE.Mesh
@@ -262,16 +376,15 @@ export class BattleEffects {
   }[] = []
   private readonly rainbowHalo: THREE.Sprite
 
-  // 英雄蓄力预览
   private readonly chargeSprite: THREE.Sprite
   private readonly chargeDiscPreview: THREE.Group
   private readonly typeChargeSprite: THREE.Sprite
-
-  // 全息扫描地面危险预警阵
   private readonly warningRing: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>
 
   private readonly upAxis = new THREE.Vector3(0, 1, 0)
   private readonly tmpDir = new THREE.Vector3()
+  private readonly tmpSide = new THREE.Vector3()
+  private readonly tmpCam = new THREE.Vector3(0, 12, 34)
 
   private themeBeamColor = 0x38d9ff
   private themeBeamSuperColor = 0xfacc15
@@ -285,7 +398,110 @@ export class BattleEffects {
     this.flareTex = makeStarFlareTexture()
     this.sparkTex = makeStreakSparkTexture()
 
-    // 1. 英雄等离子光线 + 闪电弧
+    this.group.add(this.impactLight)
+
+    // 预分配电光火花对象池（彻底消除战斗中 GC 卡顿）
+    for (let i = 0; i < SPARK_POOL_SIZE; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: this.sparkTex,
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+      const mesh = new THREE.Mesh(this.sparkQuadGeo, mat)
+      mesh.visible = false
+      this.group.add(mesh)
+      this.sparkPool.push({
+        active: false,
+        mesh,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        life: 0,
+        maxLife: 0.3,
+        gravity: 28,
+        baseWidth: 0.25,
+        lengthFactor: 1.8,
+      })
+    }
+
+    // 预分配特摄微缩飞溅混凝土瓦砾 InstancedMesh 池
+    const debrisGeo = new THREE.DodecahedronGeometry(0.42, 0)
+    const debrisMat = new THREE.MeshStandardMaterial({
+      color: 0x525866,
+      roughness: 0.9,
+      metalness: 0.08,
+    })
+    this.debrisMesh = new THREE.InstancedMesh(debrisGeo, debrisMat, DEBRIS_POOL_SIZE)
+    this.debrisMesh.frustumCulled = false
+    this.debrisDummy.scale.setScalar(0)
+    this.debrisDummy.updateMatrix()
+    for (let i = 0; i < DEBRIS_POOL_SIZE; i++) {
+      this.debrisMesh.setMatrixAt(i, this.debrisDummy.matrix)
+      this.debrisPool.push({
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        rot: new THREE.Euler(),
+        rotVel: new THREE.Vector3(),
+        scale: 1,
+        life: 0,
+        maxLife: 1.0,
+      })
+    }
+    this.debrisMesh.instanceMatrix.needsUpdate = true
+    this.group.add(this.debrisMesh)
+
+    // 预分配 4 条拳脚动态拖尾丝带
+    for (const slot of ['handL', 'handR', 'footL', 'footR']) {
+      const geo = buildRibbonBufferGeometry(TRAIL_POINTS)
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uColor: { value: new THREE.Color(0x38d9ff) },
+          uFade: { value: 0 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          uniform float uFade;
+          varying vec2 vUv;
+          void main() {
+            float along = smoothstep(0.0, 0.25, vUv.x) * (1.0 - smoothstep(0.75, 1.0, vUv.x));
+            float across = 1.0 - abs(vUv.y - 0.5) * 2.0;
+            float core = pow(max(across, 0.0001), 2.4);
+            vec3 col = mix(uColor * 1.35, vec3(1.75, 1.85, 2.0), core * 0.72);
+            float alpha = along * across * uFade * 0.85;
+            if (alpha < 0.01) discard;
+            gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.92));
+          }
+        `,
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.visible = false
+      mesh.frustumCulled = false
+      this.group.add(mesh)
+      this.limbTrails.set(slot, {
+        mesh,
+        history: Array.from({ length: TRAIL_POINTS }, () => new THREE.Vector3()),
+        active: false,
+        fade: 0,
+      })
+    }
+
+    // 1. 英雄等离子光线 + 3D 粗电弧条带
     const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 20, 1, true)
     this.heroBeamInner = new THREE.Mesh(cylGeo, createPlasmaBeamMaterial(0xffffff))
     this.heroBeamInner.material.uniforms.uCoreTightness!.value = 3.2
@@ -308,38 +524,36 @@ export class BattleEffects {
       this.heroBeamFilaments.push(f)
     }
 
-    // 缠绕主光束的高能电弧闪电 + 命中端狂飙的红色毁灭闪电（视频 1 0:07-0:09）
+    const createRibbonArc = (segCount: number, colorHex: number, baseWidth: number): RibbonArc => {
+      const geo = buildRibbonBufferGeometry(segCount)
+      const mat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.92,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.frustumCulled = false
+      this.heroBeamGroup.add(mesh)
+      return {
+        mesh,
+        segments: segCount,
+        pts: Array.from({ length: segCount }, () => new THREE.Vector3()),
+        baseWidth,
+      }
+    }
+
     for (let i = 0; i < 4; i++) {
-      const pts = new Float32Array(12 * 3)
-      const g = new THREE.BufferGeometry()
-      g.setAttribute('position', new THREE.BufferAttribute(pts, 3))
-      const line = new THREE.Line(
-        g,
-        new THREE.LineBasicMaterial({
-          color: i % 2 === 0 ? 0x93c5fd : 0xe879f9,
-          transparent: true,
-          opacity: 0.9,
-          blending: THREE.AdditiveBlending,
-        }),
+      this.beamLightningRibbons.push(
+        createRibbonArc(12, i % 2 === 0 ? 0xa5f3fc : 0xe879f9, 0.24),
       )
-      this.heroBeamGroup.add(line)
-      this.beamLightningLines.push(line)
     }
     for (let i = 0; i < 6; i++) {
-      const pts = new Float32Array(7 * 3)
-      const g = new THREE.BufferGeometry()
-      g.setAttribute('position', new THREE.BufferAttribute(pts, 3))
-      const line = new THREE.Line(
-        g,
-        new THREE.LineBasicMaterial({
-          color: i % 2 === 0 ? 0xff2e63 : 0xfde047,
-          transparent: true,
-          opacity: 0.92,
-          blending: THREE.AdditiveBlending,
-        }),
+      this.impactArcRibbons.push(
+        createRibbonArc(8, i % 2 === 0 ? 0xff2e63 : 0xfef08a, 0.34),
       )
-      this.heroBeamGroup.add(line)
-      this.impactArcLines.push(line)
     }
 
     this.heroMuzzleSprite = new THREE.Sprite(
@@ -409,7 +623,7 @@ export class BattleEffects {
     this.clashGroup.visible = false
     this.group.add(this.clashGroup)
 
-    // 4. 包裹全身的通透立体球形蓝色奥特能量穹盾（精准包裹身躯、边缘高能泛光、核心通透绝不泛白遮屏）
+    // 4. 包裹全身的立体球形蓝色奥特能量穹盾
     this.shieldMesh = new THREE.Mesh(
       new THREE.SphereGeometry(5.6, 32, 24),
       new THREE.ShaderMaterial({
@@ -476,7 +690,7 @@ export class BattleEffects {
     this.shieldMesh.visible = false
     this.group.add(this.shieldMesh)
 
-    // 5. 七彩棱镜全屏蓄力光条（复刻视频 1 00:06）
+    // 5. 七彩棱镜全屏蓄力光条
     const rainbowPalette = [0x38e8ff, 0xfacc15, 0xf472b6, 0xa855f7, 0x4ade80, 0x60a5fa, 0xfb923c]
     const streakGeo = new THREE.PlaneGeometry(0.48, 8.5)
     for (let i = 0; i < 24; i++) {
@@ -514,7 +728,7 @@ export class BattleEffects {
     this.rainbowGroup.visible = false
     this.group.add(this.rainbowGroup)
 
-    // 6. 英雄蓄力星芒与光轮预览
+    // 6. 蓄力星芒与光轮预览
     this.chargeSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.flareTex,
@@ -543,7 +757,7 @@ export class BattleEffects {
     this.typeChargeSprite.visible = false
     this.group.add(this.typeChargeSprite)
 
-    // 7. 全息扫描地面危险预警法阵
+    // 7. 全息扫描地面危险预警阵（支持高/低/常规色相切换）
     this.warningRing = new THREE.Mesh(
       new THREE.PlaneGeometry(11.5, 11.5),
       new THREE.ShaderMaterial({
@@ -554,6 +768,7 @@ export class BattleEffects {
         uniforms: {
           uTime: { value: 0 },
           uUrgency: { value: 0 },
+          uTint: { value: new THREE.Color(0xff422a) },
         },
         vertexShader: `
           varying vec2 vUv;
@@ -565,6 +780,7 @@ export class BattleEffects {
         fragmentShader: `
           uniform float uTime;
           uniform float uUrgency;
+          uniform vec3 uTint;
           varying vec2 vUv;
           void main() {
             vec2 q = (vUv - 0.5) * 2.0;
@@ -576,7 +792,7 @@ export class BattleEffects {
             float lockR = mix(0.88, 0.16, clamp(uUrgency, 0.0, 1.0));
             float innerLock = exp(-pow(max(abs(r - lockR) * 26.0, 0.0001), 2.0));
             float softFill = (1.0 - smoothstep(0.0, 0.92, r)) * 0.14 * (0.6 + 0.4 * sin(uTime * 16.0));
-            vec3 col = mix(vec3(1.1, 0.28, 0.18), vec3(1.3, 0.92, 0.35), innerLock * 0.7);
+            vec3 col = mix(uTint * 1.15, vec3(1.35, 0.95, 0.42), innerLock * 0.7);
             float alpha = clamp(outerRing * 0.85 + innerLock * 0.95 + softFill, 0.0, 1.0);
             gl_FragColor = vec4(col, alpha);
           }
@@ -604,6 +820,112 @@ export class BattleEffects {
         }
       }
     })
+  }
+
+  /** 点亮爆炸/重击瞬态点光源，照亮奥特曼皮套与周围大厦 */
+  public flashDynamicLight(
+    pos: THREE.Vector3,
+    colorHex: number,
+    intensity = 32,
+    duration = 0.34,
+  ) {
+    this.impactLight.position.copy(pos)
+    this.impactLight.color.setHex(colorHex)
+    this.impactLightPeak = intensity
+    this.impactLightMaxLife = duration
+    this.impactLightLife = duration
+    this.impactLight.intensity = intensity
+  }
+
+  /** 喷射特摄微缩飞溅混凝土碎块（InstancedMesh 复用零 GC） */
+  public spawnDebris(pos: THREE.Vector3, count = 12, speed = 18) {
+    for (let i = 0; i < count; i++) {
+      const c = this.debrisPool[this.debrisCursor]!
+      this.debrisCursor = (this.debrisCursor + 1) % DEBRIS_POOL_SIZE
+      c.active = true
+      c.pos.copy(pos)
+      const ang = Math.random() * Math.PI * 2
+      const spd = speed * (0.45 + Math.random() * 0.85)
+      c.vel.set(Math.cos(ang) * spd, speed * (0.45 + Math.random() * 0.75), Math.sin(ang) * spd)
+      c.rot.set(Math.random() * 6, Math.random() * 6, Math.random() * 6)
+      c.rotVel.set(
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14,
+      )
+      c.scale = 0.5 + Math.random() * 1.15
+      c.life = 0
+      c.maxLife = 0.65 + Math.random() * 0.55
+    }
+  }
+
+  /** 更新单肢拳脚运动拖尾丝带（高速出拳/飞踢阶段于骨骼尖端拉出流光残影） */
+  public updateLimbTrail(
+    slot: 'handL' | 'handR' | 'footL' | 'footR',
+    active: boolean,
+    worldPos: THREE.Vector3,
+    colorHex: number,
+    dt: number,
+  ) {
+    const tr = this.limbTrails.get(slot)
+    if (!tr) return
+    if (active) {
+      if (!tr.active) {
+        for (const p of tr.history) p.copy(worldPos)
+      } else {
+        for (let i = tr.history.length - 1; i > 0; i--) {
+          tr.history[i]!.copy(tr.history[i - 1]!)
+        }
+        tr.history[0]!.copy(worldPos)
+      }
+      tr.active = true
+      tr.fade = Math.min(1, tr.fade + dt * 16)
+      tr.mesh.material.uniforms.uColor!.value.setHex(colorHex)
+    } else {
+      tr.active = false
+      tr.fade = Math.max(0, tr.fade - dt * 9)
+    }
+
+    tr.mesh.visible = tr.fade > 0.02
+    if (!tr.mesh.visible) return
+    tr.mesh.material.uniforms.uFade!.value = tr.fade
+    this.writeRibbonGeometry(tr.mesh.geometry, tr.history, 0.55, this.tmpCam)
+  }
+
+  private writeRibbonGeometry(
+    geo: THREE.BufferGeometry,
+    pts: THREE.Vector3[],
+    baseWidth: number,
+    camPos: THREE.Vector3,
+  ) {
+    const attr = geo.getAttribute('position') as THREE.BufferAttribute
+    const n = pts.length
+    for (let i = 0; i < n; i++) {
+      const cur = pts[i]!
+      const prev = pts[Math.max(0, i - 1)]!
+      const next = pts[Math.min(n - 1, i + 1)]!
+      this.tmpDir.subVectors(next, prev)
+      if (this.tmpDir.lengthSq() < 1e-6) this.tmpDir.set(0, 1, 0)
+      else this.tmpDir.normalize()
+
+      this.tmpSide.subVectors(camPos, cur)
+      if (this.tmpSide.lengthSq() < 1e-6) this.tmpSide.set(0, 0, 1)
+      this.tmpSide.cross(this.tmpDir)
+      if (this.tmpSide.lengthSq() < 1e-6) this.tmpSide.set(1, 0, 0)
+      this.tmpSide.normalize()
+
+      const u = i / Math.max(1, n - 1)
+      const w = baseWidth * Math.sin(u * Math.PI) * 0.5 + baseWidth * 0.14
+      const v0 = i * 2
+      attr.setXYZ(v0, cur.x - this.tmpSide.x * w, cur.y - this.tmpSide.y * w, cur.z - this.tmpSide.z * w)
+      attr.setXYZ(
+        v0 + 1,
+        cur.x + this.tmpSide.x * w,
+        cur.y + this.tmpSide.y * w,
+        cur.z + this.tmpSide.z * w,
+      )
+    }
+    attr.needsUpdate = true
   }
 
   private createSawDiscMesh(radius: number): THREE.Group {
@@ -654,7 +976,6 @@ export class BattleEffects {
     return g
   }
 
-  /** 生成近战高饱和弧形光刃斩击拖尾（复刻视频 2 红金/冰蓝刀光拳风） */
   public spawnMeleeSlash(
     center: THREE.Vector3,
     colorHex: number,
@@ -683,7 +1004,6 @@ export class BattleEffects {
         uniform float uProgress;
         varying vec2 vUv;
         void main() {
-          // 沿弧线高速扫过的高光前沿 + 锋利边缘衰减
           float head = clamp(uProgress * 1.65, 0.0, 1.15);
           float sweep = smoothstep(head - 0.85, head, vUv.x) * (1.0 - smoothstep(head, head + 0.14, vUv.x));
           float bladeEdge = smoothstep(0.0, 0.72, vUv.y);
@@ -704,7 +1024,6 @@ export class BattleEffects {
     this.slashes.push({ mesh, life: 0, maxLife: 0.24, spinZ: spinDir * 4.2 })
   }
 
-  /** 命中爆裂的立体蓝色/金色能量冲击球（复刻视频 1 00:04 拳击怪兽的巨大能量波球） */
   public spawnEnergyShockSphere(pos: THREE.Vector3, colorHex = 0x38bdf8, maxScale = 4.6) {
     const mat = new THREE.ShaderMaterial({
       transparent: true,
@@ -746,15 +1065,18 @@ export class BattleEffects {
     this.energySpheres.push({ mesh, life: 0, maxLife: 0.28, maxScale })
   }
 
-  /** 更新七彩棱镜流光全屏蓄力特效（视频 1 00:06，从四周飞向英雄背后汇聚，绝不糊脸） */
-  public updateRainbowGather(active: boolean, center: THREE.Vector3, progress: number, elapsed: number) {
+  public updateRainbowGather(
+    active: boolean,
+    center: THREE.Vector3,
+    progress: number,
+    elapsed: number,
+  ) {
     this.rainbowGroup.visible = active
     if (!active) return
     this.rainbowGroup.position.copy(center)
     const speed = 1.6 + progress * 2.6
     for (const s of this.rainbowStreaks) {
       const t = (s.phase + elapsed * speed) % 1
-      // 从外围向后背外环高速吸入，收束于半径 2.1m 外围，让英雄五官与胸甲始终锐利通透
       const dist = THREE.MathUtils.lerp(s.radius * (1.28 - progress * 0.18), 2.1, t)
       const a = s.angle + elapsed * 0.42
       s.mesh.position.set(
@@ -826,7 +1148,6 @@ export class BattleEffects {
     this.kaijuChargeSprite.scale.set(s, s, 1)
   }
 
-  /** 发射出拳高速破空光弧 */
   public spawnPunchWave(
     origin: THREE.Vector3,
     target: THREE.Vector3,
@@ -867,7 +1188,6 @@ export class BattleEffects {
     })
   }
 
-  /** 远程阶段掌心连发奥特光弹（复刻视频 2 0:39-1:03） */
   public spawnPalmBolt(
     origin: THREE.Vector3,
     target: THREE.Vector3,
@@ -923,7 +1243,6 @@ export class BattleEffects {
     })
   }
 
-  /** 发射奥特飞踢烈焰旋风斩 */
   public spawnKickWave(origin: THREE.Vector3, target: THREE.Vector3, damage: number) {
     const grp = new THREE.Group()
     const outer = new THREE.Mesh(
@@ -977,16 +1296,16 @@ export class BattleEffects {
       mesh: disc,
       pos: origin.clone(),
       vel,
-      radius: 3.4,
+      radius: 3.6,
       damage,
       age: 0,
-      maxAge: 1.1,
+      maxAge: 1.15,
       fromHero: true,
       hitTriggered: false,
     })
   }
 
-  /** 巨型炽热熔岩火球（复刻视频 2 0:46-1:02 铺天盖地的火焰巨弹！） */
+  /** 熔岩焦壳裂纹 Shader 巨型火球（或紫瞳能量弹） */
   public spawnKaijuFireball(
     origin: THREE.Vector3,
     target: THREE.Vector3,
@@ -995,16 +1314,14 @@ export class BattleEffects {
     speed = 24,
   ) {
     const fireball = new THREE.Group()
-    const inner = new THREE.Mesh(
-      new THREE.SphereGeometry(1.45, 16, 14),
-      new THREE.MeshBasicMaterial({ color: 0xfff8d6 }),
-    )
+    const lavaMat = createLavaFireballMaterial(colorHex)
+    const inner = new THREE.Mesh(new THREE.SphereGeometry(1.58, 20, 16), lavaMat)
     const outer = new THREE.Mesh(
-      new THREE.SphereGeometry(2.35, 16, 14),
+      new THREE.SphereGeometry(2.38, 16, 14),
       new THREE.MeshBasicMaterial({
         color: colorHex,
         transparent: true,
-        opacity: 0.72,
+        opacity: 0.42,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }),
@@ -1012,9 +1329,9 @@ export class BattleEffects {
     const halo = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.flareTex,
-        color: 0xff6b24,
+        color: colorHex,
         transparent: true,
-        opacity: 0.92,
+        opacity: 0.88,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }),
@@ -1036,10 +1353,11 @@ export class BattleEffects {
       maxAge: 2.8,
       fromHero: false,
       hitTriggered: false,
+      lavaMat,
     })
   }
 
-  /** 生成特摄电光火石拉伸火花条 */
+  /** 从预分配对象池喷射电光拉伸火花（零 GC 分配） */
   public spawnBurst(
     pos: THREE.Vector3,
     colorHex: number,
@@ -1048,33 +1366,25 @@ export class BattleEffects {
     scale = 1.0,
   ) {
     for (let i = 0; i < count; i++) {
-      const mat = new THREE.MeshBasicMaterial({
-        map: this.sparkTex,
-        color: i % 3 === 0 ? 0xffffff : i % 3 === 1 ? 0xfff3b0 : colorHex,
-        transparent: true,
-        opacity: 1,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-      const mesh = new THREE.Mesh(this.sparkQuadGeo, mat)
-      mesh.position.copy(pos)
-      this.group.add(mesh)
+      const p = this.sparkPool[this.sparkCursor]!
+      this.sparkCursor = (this.sparkCursor + 1) % SPARK_POOL_SIZE
+      p.active = true
+      p.mesh.visible = true
+      p.mesh.position.copy(pos)
+      p.mesh.material.color.setHex(i % 3 === 0 ? 0xffffff : i % 3 === 1 ? 0xfff3b0 : colorHex)
+      p.mesh.material.opacity = 1
 
       const theta = Math.random() * Math.PI * 2
       const phi = (Math.random() - 0.32) * Math.PI * 0.85
       const spd = speed * (0.55 + Math.random() * 0.95)
-      this.sparks.push({
-        mesh,
-        vx: Math.cos(theta) * Math.cos(phi) * spd,
-        vy: Math.sin(phi) * spd + speed * 0.24,
-        vz: Math.sin(theta) * Math.cos(phi) * spd,
-        life: 0,
-        maxLife: 0.24 + Math.random() * 0.28,
-        gravity: 28,
-        baseWidth: (0.24 + Math.random() * 0.24) * scale,
-        lengthFactor: (1.4 + Math.random() * 1.45) * scale,
-      })
+      p.vx = Math.cos(theta) * Math.cos(phi) * spd
+      p.vy = Math.sin(phi) * spd + speed * 0.24
+      p.vz = Math.sin(theta) * Math.cos(phi) * spd
+      p.life = 0
+      p.maxLife = 0.24 + Math.random() * 0.28
+      p.gravity = 28
+      p.baseWidth = (0.24 + Math.random() * 0.24) * scale
+      p.lengthFactor = (1.4 + Math.random() * 1.45) * scale
     }
   }
 
@@ -1082,7 +1392,6 @@ export class BattleEffects {
     this.shieldFlash = 1
   }
 
-  /** 刀锋锐利空气震波细环 */
   public spawnImpactRing(pos: THREE.Vector3, colorHex: number, maxRadius = 6.5) {
     const mat = new THREE.ShaderMaterial({
       transparent: true,
@@ -1146,7 +1455,6 @@ export class BattleEffects {
     })
   }
 
-  /** 包裹全身的球形奥特能量护盾实时同步 */
   public updateShield(
     active: boolean,
     heroX: number,
@@ -1217,12 +1525,14 @@ export class BattleEffects {
     heroZ: number,
     urgency: number,
     elapsed: number,
+    tintHex = 0xff422a,
   ) {
     this.warningRing.visible = visible
     if (!visible) return
     this.warningRing.position.set(heroX, 0.28, heroZ - 2.4)
     this.warningRing.material.uniforms.uTime!.value = elapsed
     this.warningRing.material.uniforms.uUrgency!.value = urgency
+    this.warningRing.material.uniforms.uTint!.value.setHex(tintHex)
   }
 
   private alignCylinder(mesh: THREE.Mesh, from: THREE.Vector3, to: THREE.Vector3, radius: number) {
@@ -1233,8 +1543,13 @@ export class BattleEffects {
     mesh.scale.set(radius, len, radius)
   }
 
-  /** 动态更新缠绕光柱的高频折线闪电与命中猩红毁灭电弧 */
-  private updateBeamLightning(from: THREE.Vector3, to: THREE.Vector3, radius: number, fade: number) {
+  /** 动态生成 3D 粗电弧条带（相机朝向宽带，替代细弱的 1px 线条） */
+  private updateBeamLightningRibbons(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    radius: number,
+    fade: number,
+  ) {
     const dir = to.clone().sub(from)
     const len = Math.max(0.5, dir.length())
     dir.normalize()
@@ -1243,45 +1558,49 @@ export class BattleEffects {
     perpA.normalize()
     const perpB = new THREE.Vector3().crossVectors(dir, perpA).normalize()
 
-    for (const line of this.beamLightningLines) {
-      const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute
-      const count = attr.count
-      for (let j = 0; j < count; j++) {
-        const t = j / (count - 1)
-        const jitter = t > 0 && t < 1 ? radius * (0.9 + Math.random() * 1.1) : 0
+    for (const arc of this.beamLightningRibbons) {
+      for (let j = 0; j < arc.segments; j++) {
+        const t = j / (arc.segments - 1)
+        const jitter = t > 0 && t < 1 ? radius * (0.95 + Math.random() * 1.15) : 0
         const ang = Math.random() * Math.PI * 2
-        const px = from.x + dir.x * len * t + (perpA.x * Math.cos(ang) + perpB.x * Math.sin(ang)) * jitter
-        const py = from.y + dir.y * len * t + (perpA.y * Math.cos(ang) + perpB.y * Math.sin(ang)) * jitter
-        const pz = from.z + dir.z * len * t + (perpA.z * Math.cos(ang) + perpB.z * Math.sin(ang)) * jitter
-        attr.setXYZ(j, px, py, pz)
-      }
-      attr.needsUpdate = true
-      ;(line.material as THREE.LineBasicMaterial).opacity = 0.85 * fade
-    }
-
-    for (const line of this.impactArcLines) {
-      const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute
-      const count = attr.count
-      const theta = Math.random() * Math.PI * 2
-      const phi = (Math.random() - 0.5) * Math.PI * 0.85
-      const arcDir = new THREE.Vector3(
-        Math.cos(theta) * Math.cos(phi),
-        Math.sin(phi),
-        Math.sin(theta) * Math.cos(phi),
-      )
-      const reach = (this.heroBeamSuper ? 8.5 : 5.2) * (0.65 + Math.random() * 0.55)
-      for (let j = 0; j < count; j++) {
-        const t = j / (count - 1)
-        const jag = t > 0 ? 1.35 * (Math.random() - 0.5) : 0
-        attr.setXYZ(
-          j,
-          to.x + arcDir.x * reach * t + jag,
-          to.y + arcDir.y * reach * t + jag,
-          to.z + arcDir.z * reach * t + jag,
+        arc.pts[j]!.set(
+          from.x + dir.x * len * t + (perpA.x * Math.cos(ang) + perpB.x * Math.sin(ang)) * jitter,
+          from.y + dir.y * len * t + (perpA.y * Math.cos(ang) + perpB.y * Math.sin(ang)) * jitter,
+          from.z + dir.z * len * t + (perpA.z * Math.cos(ang) + perpB.z * Math.sin(ang)) * jitter,
         )
       }
-      attr.needsUpdate = true
-      ;(line.material as THREE.LineBasicMaterial).opacity = 0.92 * fade
+      this.writeRibbonGeometry(
+        arc.mesh.geometry,
+        arc.pts,
+        arc.baseWidth * (this.heroBeamSuper ? 1.55 : 1.0),
+        this.tmpCam,
+      )
+      arc.mesh.material.opacity = 0.88 * fade
+    }
+
+    for (const arc of this.impactArcRibbons) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = (Math.random() - 0.5) * Math.PI * 0.85
+      const ax = Math.cos(theta) * Math.cos(phi)
+      const ay = Math.sin(phi)
+      const az = Math.sin(theta) * Math.cos(phi)
+      const reach = (this.heroBeamSuper ? 8.8 : 5.4) * (0.65 + Math.random() * 0.55)
+      for (let j = 0; j < arc.segments; j++) {
+        const t = j / (arc.segments - 1)
+        const jag = t > 0 ? 1.3 * (Math.random() - 0.5) : 0
+        arc.pts[j]!.set(
+          to.x + ax * reach * t + jag,
+          to.y + ay * reach * t + jag,
+          to.z + az * reach * t + jag,
+        )
+      }
+      this.writeRibbonGeometry(
+        arc.mesh.geometry,
+        arc.pts,
+        arc.baseWidth * (this.heroBeamSuper ? 1.4 : 1.0),
+        this.tmpCam,
+      )
+      arc.mesh.material.opacity = 0.92 * fade
     }
   }
 
@@ -1293,7 +1612,19 @@ export class BattleEffects {
     kaijuEmit: THREE.Vector3,
     heroCenter: THREE.Vector3,
     cameraQuat?: THREE.Quaternion,
+    cameraPos?: THREE.Vector3,
   ) {
+    if (cameraPos) this.tmpCam.copy(cameraPos)
+
+    // 0. 爆炸/重击瞬态点光源指数衰减
+    if (this.impactLightLife > 0) {
+      this.impactLightLife = Math.max(0, this.impactLightLife - dt)
+      const ratio = this.impactLightLife / Math.max(0.01, this.impactLightMaxLife)
+      this.impactLight.intensity = this.impactLightPeak * ratio * ratio
+    } else if (this.impactLight.intensity > 0) {
+      this.impactLight.intensity = 0
+    }
+
     const heroOrigin = heroBeamSegment[0].clone().lerp(heroBeamSegment[1], 0.58)
     const clashPoint = heroOrigin.clone().lerp(kaijuEmit, this.clashProgress)
 
@@ -1333,7 +1664,7 @@ export class BattleEffects {
           f.material.opacity = 0.6 * fade
         })
 
-        this.updateBeamLightning(heroOrigin, end, baseR, fade)
+        this.updateBeamLightningRibbons(heroOrigin, end, baseR, fade)
 
         this.heroMuzzleSprite.position.copy(heroOrigin)
         this.heroMuzzleSprite.material.rotation = elapsed * 8
@@ -1357,11 +1688,9 @@ export class BattleEffects {
       }
     }
 
-    // 2. 怪兽暗黑破坏光线 & 双光线对波奇点
+    // 2. 怪兽暗黑破坏光线 & 对波奇点
     if (this.kaijuBeamTime > 0 || this.clashActive) {
-      if (!this.clashActive) {
-        this.kaijuBeamTime += dt
-      }
+      if (!this.clashActive) this.kaijuBeamTime += dt
       const p = this.clashActive ? 0.3 : this.kaijuBeamTime / this.kaijuBeamDuration
       if (p >= 1 && !this.clashActive) {
         this.kaijuBeamTime = 0
@@ -1386,11 +1715,17 @@ export class BattleEffects {
       this.clashFlare.material.rotation = elapsed * 14
       this.clashFlare.scale.setScalar(jitter * 5.6)
       if (Math.random() < 0.85) {
-        this.spawnBurst(clashPoint, Math.random() > 0.5 ? this.heroBeamColorHex : 0xd946ef, 2, 28, 1.05)
+        this.spawnBurst(
+          clashPoint,
+          Math.random() > 0.5 ? this.heroBeamColorHex : 0xd946ef,
+          2,
+          28,
+          1.05,
+        )
       }
     }
 
-    // 3. 更新抛射物
+    // 3. 抛射物更新
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i]!
       proj.age += dt
@@ -1407,10 +1742,11 @@ export class BattleEffects {
           this.spawnBurst(proj.pos, this.themeBeamColor, 1, 9, 0.48)
         }
       } else if (proj.kind === 'kaiju-fireball') {
-        proj.mesh.rotation.x += dt * 8
-        proj.mesh.rotation.y += dt * 6
-        if (Math.random() < 0.72) {
-          this.spawnBurst(proj.pos, 0xff5a1f, 2, 11, 0.72)
+        proj.mesh.rotation.x += dt * 5.5
+        proj.mesh.rotation.y += dt * 4.2
+        if (proj.lavaMat) proj.lavaMat.uniforms.uTime!.value = elapsed
+        if (Math.random() < 0.7) {
+          this.spawnBurst(proj.pos, 0xff5a1f, 2, 11, 0.7)
         }
       }
 
@@ -1419,14 +1755,14 @@ export class BattleEffects {
       }
     }
 
-    // 4. 更新电光拉伸火花条
-    for (let i = this.sparks.length - 1; i >= 0; i--) {
-      const p = this.sparks[i]!
+    // 4. 更新对象池电光火花
+    for (let i = 0; i < SPARK_POOL_SIZE; i++) {
+      const p = this.sparkPool[i]!
+      if (!p.active) continue
       p.life += dt
       if (p.life >= p.maxLife) {
-        this.group.remove(p.mesh)
-        ;(p.mesh.material as THREE.Material).dispose()
-        this.sparks.splice(i, 1)
+        p.active = false
+        p.mesh.visible = false
         continue
       }
       p.vy -= p.gravity * dt
@@ -1440,12 +1776,51 @@ export class BattleEffects {
         this.tmpDir.set(p.vx / speed, p.vy / speed, p.vz / speed)
         p.mesh.quaternion.setFromUnitVectors(this.upAxis, this.tmpDir)
       }
-      const len = Math.max(p.baseWidth, p.baseWidth * p.lengthFactor * (0.4 + speed * 0.045) * ratio)
+      const len = Math.max(
+        p.baseWidth,
+        p.baseWidth * p.lengthFactor * (0.4 + speed * 0.045) * ratio,
+      )
       p.mesh.scale.set(p.baseWidth * ratio, len, p.baseWidth * ratio)
-      ;(p.mesh.material as THREE.MeshBasicMaterial).opacity = Math.min(1, ratio * 1.35)
+      p.mesh.material.opacity = Math.min(1, ratio * 1.35)
     }
 
-    // 5. 更新刀锋震波细环
+    // 5. 更新微缩混凝土碎石池
+    let debrisDirty = false
+    for (let i = 0; i < DEBRIS_POOL_SIZE; i++) {
+      const d = this.debrisPool[i]!
+      if (!d.active) continue
+      debrisDirty = true
+      d.life += dt
+      if (d.life >= d.maxLife) {
+        d.active = false
+        this.debrisDummy.scale.setScalar(0)
+        this.debrisDummy.updateMatrix()
+        this.debrisMesh.setMatrixAt(i, this.debrisDummy.matrix)
+        continue
+      }
+      d.vel.y -= 34 * dt
+      d.pos.addScaledVector(d.vel, dt)
+      if (d.pos.y < 0.25) {
+        d.pos.y = 0.25
+        d.vel.y = Math.abs(d.vel.y) * 0.36
+        d.vel.x *= 0.72
+        d.vel.z *= 0.72
+      }
+      d.rot.x += d.rotVel.x * dt
+      d.rot.y += d.rotVel.y * dt
+      d.rot.z += d.rotVel.z * dt
+      const shrink = 1 - Math.max(0, (d.life / d.maxLife - 0.65) / 0.35)
+      this.debrisDummy.position.copy(d.pos)
+      this.debrisDummy.rotation.copy(d.rot)
+      this.debrisDummy.scale.setScalar(d.scale * shrink)
+      this.debrisDummy.updateMatrix()
+      this.debrisMesh.setMatrixAt(i, this.debrisDummy.matrix)
+    }
+    if (debrisDirty) {
+      this.debrisMesh.instanceMatrix.needsUpdate = true
+    }
+
+    // 6. 刀锋震波环
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
       const r = this.shockwaves[i]!
       r.life += dt
@@ -1462,7 +1837,7 @@ export class BattleEffects {
       r.mesh.material.uniforms.uProgress!.value = t
     }
 
-    // 6. 更新立体蓝色/金色能量冲击球
+    // 7. 立体能量冲击球
     for (let i = this.energySpheres.length - 1; i >= 0; i--) {
       const s = this.energySpheres[i]!
       s.life += dt
@@ -1478,7 +1853,7 @@ export class BattleEffects {
       s.mesh.material.uniforms.uProgress!.value = t
     }
 
-    // 7. 更新近战刀光斩击弧
+    // 8. 弧形刀光斩击
     for (let i = this.slashes.length - 1; i >= 0; i--) {
       const sl = this.slashes[i]!
       sl.life += dt
@@ -1493,7 +1868,7 @@ export class BattleEffects {
       sl.mesh.material.uniforms.uProgress!.value = t
     }
 
-    // 8. 更新十字星芒爆点
+    // 9. 十字星芒爆点
     for (let i = this.flares.length - 1; i >= 0; i--) {
       const f = this.flares[i]!
       f.life += dt
@@ -1532,11 +1907,24 @@ export class BattleEffects {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       this.removeProjectileAt(i)
     }
-    for (const p of this.sparks) {
-      this.group.remove(p.mesh)
-      ;(p.mesh.material as THREE.Material).dispose()
+    for (const p of this.sparkPool) {
+      p.active = false
+      p.mesh.visible = false
     }
-    this.sparks = []
+    this.debrisDummy.scale.setScalar(0)
+    this.debrisDummy.updateMatrix()
+    for (let i = 0; i < DEBRIS_POOL_SIZE; i++) {
+      this.debrisPool[i]!.active = false
+      this.debrisMesh.setMatrixAt(i, this.debrisDummy.matrix)
+    }
+    this.debrisMesh.instanceMatrix.needsUpdate = true
+
+    for (const tr of this.limbTrails.values()) {
+      tr.active = false
+      tr.fade = 0
+      tr.mesh.visible = false
+    }
+
     for (const r of this.shockwaves) {
       this.group.remove(r.mesh)
       r.mesh.material.dispose()
@@ -1557,6 +1945,8 @@ export class BattleEffects {
       f.mesh.material.dispose()
     }
     this.flares = []
+    this.impactLightLife = 0
+    this.impactLight.intensity = 0
     this.heroBeamActive = false
     this.heroBeamGroup.visible = false
     this.kaijuBeamTime = 0
@@ -1574,6 +1964,16 @@ export class BattleEffects {
 
   public dispose() {
     this.clearAllDynamic()
+    for (const p of this.sparkPool) {
+      this.group.remove(p.mesh)
+      p.mesh.material.dispose()
+    }
+    this.debrisMesh.geometry.dispose()
+    ;(this.debrisMesh.material as THREE.Material).dispose()
+    for (const tr of this.limbTrails.values()) {
+      tr.mesh.geometry.dispose()
+      tr.mesh.material.dispose()
+    }
     this.sparkQuadGeo.dispose()
     this.shockwaveGeo.dispose()
     this.sphereBurstGeo.dispose()
@@ -1584,13 +1984,13 @@ export class BattleEffects {
     this.heroBeamInner.material.dispose()
     this.heroBeamOuter.material.dispose()
     for (const f of this.heroBeamFilaments) f.material.dispose()
-    for (const l of this.beamLightningLines) {
-      l.geometry.dispose()
-      ;(l.material as THREE.Material).dispose()
+    for (const l of this.beamLightningRibbons) {
+      l.mesh.geometry.dispose()
+      l.mesh.material.dispose()
     }
-    for (const l of this.impactArcLines) {
-      l.geometry.dispose()
-      ;(l.material as THREE.Material).dispose()
+    for (const l of this.impactArcRibbons) {
+      l.mesh.geometry.dispose()
+      l.mesh.material.dispose()
     }
     this.heroMuzzleSprite.material.dispose()
     this.heroImpactSprite.material.dispose()
@@ -1602,14 +2002,16 @@ export class BattleEffects {
     this.clashFlare.material.dispose()
     this.shieldMesh.geometry.dispose()
     this.shieldMesh.material.dispose()
+    this.rainbowHalo.material.dispose()
     for (const s of this.rainbowStreaks) {
+      s.mesh.geometry.dispose()
       ;(s.mesh.material as THREE.Material).dispose()
     }
-    this.rainbowStreaks[0]?.mesh.geometry.dispose()
-    this.rainbowHalo.material.dispose()
     this.chargeSprite.material.dispose()
     this.typeChargeSprite.material.dispose()
     this.warningRing.geometry.dispose()
     this.warningRing.material.dispose()
+    this.impactLight.dispose()
+    this.group.removeFromParent()
   }
 }

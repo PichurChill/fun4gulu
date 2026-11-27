@@ -5,7 +5,7 @@ import { releaseModel } from './releaseModel'
 import type { ConcreteSceneTheme } from './types'
 
 const ASSETS = '/models/ultraman/landscape'
-const CITY_HQ_URLS = {
+const ARENA_HQ_URLS = {
   towerGlass: '/models/ultraman/city_hq/tower_glass_hq.glb',
   towerNeon: '/models/ultraman/city_hq/tower_cyber_neon.glb',
   buildingRuined: '/models/ultraman/city_hq/building_ruined_hq.glb',
@@ -13,9 +13,28 @@ const CITY_HQ_URLS = {
   rubbleCluster: '/models/ultraman/city_hq/rubble_cluster_hq.glb',
   streetProps: '/models/ultraman/city_hq/street_props_hq.glb',
   gutsVehicle: '/models/ultraman/city_hq/guts_vehicle_wreck.glb',
+  portCrane: '/models/ultraman/city_hq/port_gantry_crane.glb',
+  portContainers: '/models/ultraman/city_hq/port_containers_hq.glb',
+  mountainRadar: '/models/ultraman/city_hq/mountain_radar_base.glb',
+  volcanoBasalt: '/models/ultraman/city_hq/volcano_basalt_spire.glb',
 } as const
-type CityAssetKey = keyof typeof CITY_HQ_URLS
-const CITY_ASSET_KEYS = Object.keys(CITY_HQ_URLS) as CityAssetKey[]
+
+type ArenaAssetKey = keyof typeof ARENA_HQ_URLS
+
+const THEME_ASSET_KEYS: Record<ConcreteSceneTheme, ArenaAssetKey[]> = {
+  city: [
+    'towerGlass',
+    'towerNeon',
+    'buildingRuined',
+    'overpassBroken',
+    'rubbleCluster',
+    'streetProps',
+    'gutsVehicle',
+  ],
+  seaside: ['portCrane', 'portContainers', 'gutsVehicle'],
+  mountain: ['mountainRadar', 'gutsVehicle'],
+  volcano: ['volcanoBasalt'],
+}
 
 const STAGES = {
   seaside: {
@@ -60,11 +79,18 @@ const STAGES = {
   },
 } as const
 
+interface ScorchDecal {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>
+  age: number
+  maxAge: number
+}
+
 /**
- * 物理级实景特摄战场管理器：
- * - 暗夜 3D 都市废墟战场（立体摩天大楼群 + 万家灯火夜窗 + 崩塌瓦砾 + 燃烧烈火与浓烟 + 漫天火星 + 摇曳火光点光源）
- * - 宇宙星空全息光环台（用于体感变身与胜利合影仪式）
- * - 海港码头 / 翠绿山谷 / 熔岩火山完整保留并强化特摄轮廓光与接触阴影
+ * 物理级实景特摄战场管理器（接入全部 11 套 Blender 5.2 PBR 贴图资产）：
+ * - 暗夜都市：7 套高精建筑/断桥/装甲车 + 湿润反光水洼路面 + 相机朝向体积火烟 + 地面焦痕裂纹 + 街灯微破坏闪烁
+ * - 海港码头：巨型红白龙门吊 + 波纹肋板堆叠集装箱 + 战损防卫队装甲车
+ * - 翠绿山谷：山脊防卫队雷达前哨与松树岩礁群
+ * - 熔岩火山：六棱柱状节理玄武岩巨岩簇 + 发光熔岩溪流
  */
 export class ArenaManager {
   private theme: ConcreteSceneTheme = 'city'
@@ -81,6 +107,7 @@ export class ArenaManager {
   private readonly fill = new THREE.HemisphereLight(0x88a8dc, 0x36241d, 0.92)
   private readonly fireLightL = new THREE.PointLight(0xff6b24, 0, 56, 1.45)
   private readonly fireLightR = new THREE.PointLight(0xff5218, 0, 56, 1.45)
+  private propFlickerBoost = 0
 
   private readonly contact = new THREE.Mesh(
     new THREE.PlaneGeometry(110, 120),
@@ -95,13 +122,18 @@ export class ArenaManager {
   private envRenderTarget: THREE.WebGLRenderTarget | null = null
   private readonly pmrem: THREE.PMREMGenerator
   private readonly fixtures = new THREE.Group()
-  private readonly cityLoadedModels: THREE.Object3D[] = []
+  private readonly stageLoadedModels: THREE.Object3D[] = []
+  private readonly billboardFXMeshes: THREE.Mesh[] = []
   private readonly cityFlameMats: THREE.ShaderMaterial[] = []
   private readonly citySmokeMats: THREE.ShaderMaterial[] = []
   private readonly cityBeaconMats: THREE.MeshBasicMaterial[] = []
-  private readonly cityDisposableTextures: THREE.Texture[] = []
-  private readonly cityDisposableGeos: THREE.BufferGeometry[] = []
-  private readonly cityDisposableMats: THREE.Material[] = []
+  private readonly stageDisposableTextures: THREE.Texture[] = []
+  private readonly stageDisposableGeos: THREE.BufferGeometry[] = []
+  private readonly stageDisposableMats: THREE.Material[] = []
+
+  // 地面焦痕裂纹贴花池（重击/爆炸后残留并逐渐冷却暗化）
+  private readonly scorchGeo = new THREE.PlaneGeometry(1, 1)
+  private readonly scorchDecals: ScorchDecal[] = []
 
   // 宇宙变身 & 合影星空全息光阵
   private readonly cosmicGroup = new THREE.Group()
@@ -122,6 +154,8 @@ export class ArenaManager {
   ) {
     this.pmrem = new THREE.PMREMGenerator(renderer)
     this.pmrem.compileEquirectangularShader()
+
+    this.scorchGeo.rotateX(-Math.PI / 2)
 
     this.contact.rotation.x = -Math.PI / 2
     this.contact.position.y = 0.015
@@ -160,14 +194,12 @@ export class ArenaManager {
     this.sun.shadow.normalBias = 0.035
     this.sun.shadow.bias = -0.0004
 
-    // 双侧特摄逆光轮廓灯（暖橙火光 + 冰蓝夜色），勾勒奥特曼皮套与怪兽鳞片立体剪影
     this.rim.position.set(-22, 18, -28)
     this.coolRim.position.set(24, 24, -22)
 
     this.fireLightL.position.set(-15, 6.5, 1.5)
     this.fireLightR.position.set(16, 7.2, -5.5)
 
-    // 构建变身/合影宇宙星空全息光阵
     const { group: cosmicGrp, ringMat, starsMat } = createCosmicStage()
     this.cosmicGroup.add(cosmicGrp)
     this.cosmicRingMat = ringMat
@@ -198,7 +230,6 @@ export class ArenaManager {
     return this.theme
   }
 
-  /** 开启/关闭宇宙星空光环舞台（变身仪式与胜利合影使用） */
   public setCosmicMode(active: boolean) {
     this.cosmicActive = active
     this.cosmicGroup.visible = active
@@ -206,6 +237,7 @@ export class ArenaManager {
     if (this.ground) this.ground.visible = !active
     if (this.sky) this.sky.visible = !active
     if (this.nightDome) this.nightDome.visible = !active
+    for (const s of this.scorchDecals) s.mesh.visible = !active
     this.embers.visible = !active && (this.theme === 'city' || this.theme === 'volcano')
     if (active) {
       this.scene.fog = null
@@ -220,7 +252,7 @@ export class ArenaManager {
       const cfg = STAGES[this.theme]
       this.scene.background = null
       this.scene.fog =
-        this.theme === 'city' ? new THREE.FogExp2(cfg.fog, 0.0046) : null
+        this.theme === 'city' ? new THREE.FogExp2(cfg.fog, 0.0044) : null
       this.sun.color.setHex(cfg.light)
       this.sun.intensity = cfg.power
       this.rim.color.setHex(cfg.rim)
@@ -247,27 +279,23 @@ export class ArenaManager {
     const texPromise = Promise.allSettled(
       names.map((name) => this.loader.loadAsync(`${ASSETS}/${name}.webp`)),
     )
-    const cityPromise =
-      theme === 'city'
-        ? Promise.allSettled(
-            CITY_ASSET_KEYS.map(async (key) => ({
-              key,
-              scene: (await this.gltfLoader.loadAsync(CITY_HQ_URLS[key])).scene,
-            })),
-          )
-        : Promise.resolve(null)
+    const assetKeys = THEME_ASSET_KEYS[theme]
+    const glbPromise = Promise.allSettled(
+      assetKeys.map(async (key) => ({
+        key,
+        scene: (await this.gltfLoader.loadAsync(ARENA_HQ_URLS[key])).scene,
+      })),
+    )
 
-    const [results, cityResults] = await Promise.all([texPromise, cityPromise])
+    const [results, glbResults] = await Promise.all([texPromise, glbPromise])
     const maps = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
     const failure = results.find((r) => r.status === 'rejected')
 
     if (this.disposed || revision !== this.revision || failure) {
       maps.forEach((texture) => texture.dispose())
-      if (cityResults) {
-        cityResults.forEach((r) => {
-          if (r.status === 'fulfilled') releaseModel(r.value.scene)
-        })
-      }
+      glbResults.forEach((r) => {
+        if (r.status === 'fulfilled') releaseModel(r.value.scene)
+      })
       if (failure && !this.disposed && revision === this.revision) throw failure.reason
       return
     }
@@ -280,34 +308,33 @@ export class ArenaManager {
     texture.mapping = THREE.EquirectangularReflectionMapping
     texture.anisotropy = 4
 
+    const loadedAssets: Partial<Record<ArenaAssetKey, THREE.Object3D>> = {}
+    for (const r of glbResults) {
+      if (r.status === 'fulfilled') {
+        loadedAssets[r.value.key] = r.value.scene
+      } else {
+        console.error('[ArenaManager] 高精场景资产加载失败:', r.reason)
+      }
+    }
+
     const yaw = (config.heading - 0.25) * Math.PI * 2
 
     if (theme === 'city') {
-      // 暗夜 3D 都市废墟：程序化暗夜乌云天穹 + Blender 5.2 高精特摄摩天楼群、断桥、战损车与燃烧废墟
       const nightDome = createNightCitySkyDome()
       this.nightDome = nightDome
       this.root.add(nightDome)
       this.scene.fog = new THREE.FogExp2(config.fog, 0.0044)
 
-      // 柔和暗夜环境反射光（适度提亮以呈现玻璃幕墙与防卫队装甲金属层次）
       this.envRenderTarget = this.pmrem.fromEquirectangular(texture)
       texture.dispose()
       this.scene.environment = this.envRenderTarget.texture
       this.scene.environmentRotation.y = yaw
-      this.scene.environmentIntensity = 0.48
+      this.scene.environmentIntensity = 0.52
       this.fill.color.setHex(0x7496d2)
       this.fill.groundColor.setHex(0x3a2218)
-      this.fill.intensity = 0.9
+      this.fill.intensity = 0.92
 
-      const cityAssets: Partial<Record<CityAssetKey, THREE.Object3D>> = {}
-      for (const r of cityResults ?? []) {
-        if (r.status === 'fulfilled') {
-          cityAssets[r.value.key] = r.value.scene
-        } else {
-          console.error('[ArenaManager] Blender 都市资产加载失败:', r.reason)
-        }
-      }
-      this.buildNightCityRuins(maps[1]!, maps[2]!, cityAssets)
+      this.buildNightCityRuins(maps[1]!, maps[2]!, loadedAssets)
     } else {
       this.scene.fog = null
       const sky = new GroundedSkybox(texture, 14.2, 240, 64)
@@ -326,8 +353,9 @@ export class ArenaManager {
       this.fill.groundColor.setHex(0x6f655c)
       this.fill.intensity = 0.88
 
-      if (theme === 'volcano') this.buildCrater(maps[1]!, maps[2]!)
-      else if (theme === 'seaside') this.buildQuay(maps[1]!, maps[2]!)
+      if (theme === 'volcano') this.buildCrater(maps[1]!, maps[2]!, loadedAssets)
+      else if (theme === 'seaside') this.buildQuay(maps[1]!, maps[2]!, loadedAssets)
+      else if (theme === 'mountain') this.buildMountainStage(loadedAssets)
     }
 
     this.sun.color.setHex(config.light)
@@ -344,13 +372,48 @@ export class ArenaManager {
     }
   }
 
-  /** 构建暗夜 3D 特摄都市废墟战场（7 套 Blender 5.2 高精 GLB 资产 + 高程分层立体道路与人行道） */
+  private prepTemplate(
+    assets: Partial<Record<ArenaAssetKey, THREE.Object3D>>,
+    key: ArenaAssetKey,
+    castShadow: boolean,
+  ): THREE.Object3D | null {
+    const tpl = assets[key]
+    if (!tpl) return null
+    tpl.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const m = node as THREE.Mesh
+        m.castShadow = castShadow
+        m.receiveShadow = true
+      }
+    })
+    return tpl
+  }
+
+  private placeAsset(
+    tpl: THREE.Object3D | null,
+    x: number,
+    y: number,
+    z: number,
+    rotY: number,
+    sx = 1,
+    sy = sx,
+    sz = sx,
+  ) {
+    if (!tpl) return
+    const clone = tpl.clone(true)
+    clone.position.set(x, y, z)
+    clone.rotation.y = rotY
+    clone.scale.set(sx, sy, sz)
+    this.fixtures.add(clone)
+    this.stageLoadedModels.push(clone)
+  }
+
+  /** 构建暗夜 3D 特摄都市废墟战场（7 套高精贴图 PBR 资产 + 湿润水洼路面 + 体积朝向火烟） */
   private buildNightCityRuins(
     map: THREE.Texture,
     normal: THREE.Texture,
-    cityAssets: Partial<Record<CityAssetKey, THREE.Object3D>>,
+    cityAssets: Partial<Record<ArenaAssetKey, THREE.Object3D>>,
   ) {
-    // 1. 高程分层暗夜柏油主干道（底板 y=-0.04 / 柏油大道 y=0 / 标线 y=+0.035 / 立体人行道 y=+0.26，彻底消除 Z-Fighting）
     const width = 220
     const length = 220
     for (const tex of [map, normal]) {
@@ -359,13 +422,17 @@ export class ArenaManager {
       tex.anisotropy = 8
     }
     map.colorSpace = THREE.SRGBColorSpace
+    const puddleRoughness = makeWetPuddleRoughnessTexture()
+    this.stageDisposableTextures.push(puddleRoughness)
+
     const surface = new THREE.MeshStandardMaterial({
       map,
       normalMap: normal,
       normalScale: new THREE.Vector2(0.85, 0.85),
-      roughness: 0.56,
-      metalness: 0.18,
-      color: 0x353c4b,
+      roughnessMap: puddleRoughness,
+      roughness: 0.92,
+      metalness: 0.24,
+      color: 0x353d4e,
     })
     const geometry = new THREE.PlaneGeometry(width, length)
     geometry.rotateX(-Math.PI / 2)
@@ -374,21 +441,21 @@ export class ArenaManager {
     this.ground.receiveShadow = true
     this.root.add(this.ground)
 
-    // 双侧立体抬升人行道与石质路缘石（严格退界至 |x| >= 13.5，保障中央 27m 大道 100% 净空供英雄/怪兽激战）
+    // 双侧立体抬升人行道与石质路缘石
     const sidewalkGeo = new THREE.BoxGeometry(15.5, 0.28, 170)
     const sidewalkMat = new THREE.MeshStandardMaterial({
       color: 0x2a303d,
-      roughness: 0.86,
-      metalness: 0.08,
+      roughness: 0.84,
+      metalness: 0.1,
     })
     const curbGeo = new THREE.BoxGeometry(0.45, 0.34, 170)
     const curbMat = new THREE.MeshStandardMaterial({
       color: 0x4b5563,
-      roughness: 0.78,
-      metalness: 0.12,
+      roughness: 0.76,
+      metalness: 0.14,
     })
-    this.cityDisposableGeos.push(sidewalkGeo, curbGeo)
-    this.cityDisposableMats.push(sidewalkMat, curbMat)
+    this.stageDisposableGeos.push(sidewalkGeo, curbGeo)
+    this.stageDisposableMats.push(sidewalkMat, curbMat)
     for (const side of [-1, 1] as const) {
       const sw = new THREE.Mesh(sidewalkGeo, sidewalkMat)
       sw.position.set(side * 21.4, 0.14, -8)
@@ -399,7 +466,7 @@ export class ArenaManager {
       this.fixtures.add(sw, curb)
     }
 
-    // 2. 精细道路交通标线（双黄实线中轴 + 双向白色虚线车道 + 路口斑马线，强化纵深透视走廊）
+    // 道路交通标线
     const yellowLineGeo = new THREE.PlaneGeometry(0.22, 130)
     yellowLineGeo.rotateX(-Math.PI / 2)
     const yellowLineMat = new THREE.MeshBasicMaterial({
@@ -418,8 +485,8 @@ export class ArenaManager {
     })
     const zebraGeo = new THREE.PlaneGeometry(0.85, 3.8)
     zebraGeo.rotateX(-Math.PI / 2)
-    this.cityDisposableGeos.push(yellowLineGeo, dashGeo, zebraGeo)
-    this.cityDisposableMats.push(yellowLineMat, whiteMarkMat)
+    this.stageDisposableGeos.push(yellowLineGeo, dashGeo, zebraGeo)
+    this.stageDisposableMats.push(yellowLineMat, whiteMarkMat)
 
     for (const yx of [-0.22, 0.22]) {
       const centerLine = new THREE.Mesh(yellowLineGeo, yellowLineMat)
@@ -455,77 +522,32 @@ export class ArenaManager {
     zebraMesh.instanceMatrix.needsUpdate = true
     this.fixtures.add(zebraMesh)
 
-    // 3. 配置 Blender 5.2 高精 GLB 模板的阴影属性（完整保留 Blender 精心调制的暗夜 PBR 与克制霓虹自发光）
-    const prepTemplate = (key: CityAssetKey, castShadow: boolean) => {
-      const tpl = cityAssets[key]
-      if (!tpl) return null
-      tpl.traverse((node) => {
-        if ((node as THREE.Mesh).isMesh) {
-          const m = node as THREE.Mesh
-          m.castShadow = castShadow
-          m.receiveShadow = true
-        }
-      })
-      return tpl
-    }
+    const tplGlass = this.prepTemplate(cityAssets, 'towerGlass', false)
+    const tplNeon = this.prepTemplate(cityAssets, 'towerNeon', false)
+    const tplRuined = this.prepTemplate(cityAssets, 'buildingRuined', false)
+    const tplOverpass = this.prepTemplate(cityAssets, 'overpassBroken', true)
+    const tplRubble = this.prepTemplate(cityAssets, 'rubbleCluster', true)
+    const tplProps = this.prepTemplate(cityAssets, 'streetProps', true)
+    const tplVehicle = this.prepTemplate(cityAssets, 'gutsVehicle', true)
 
-    const tplGlass = prepTemplate('towerGlass', false)
-    const tplNeon = prepTemplate('towerNeon', false)
-    const tplRuined = prepTemplate('buildingRuined', false)
-    const tplOverpass = prepTemplate('overpassBroken', true)
-    const tplRubble = prepTemplate('rubbleCluster', true)
-    const tplProps = prepTemplate('streetProps', true)
-    const tplVehicle = prepTemplate('gutsVehicle', true)
-
-    const placeAsset = (
-      tpl: THREE.Object3D | null,
-      x: number,
-      y: number,
-      z: number,
-      rotY: number,
-      sx = 1,
-      sy = sx,
-      sz = sx,
-    ) => {
-      if (!tpl) return
-      const clone = tpl.clone(true)
-      clone.position.set(x, y, z)
-      clone.rotation.y = rotY
-      clone.scale.set(sx, sy, sz)
-      this.fixtures.add(clone)
-      this.cityLoadedModels.push(clone)
-    }
-
-    // 4. 中景与 360° 天际线 Blender 高精摩天大楼与战损大厦（严格退界至 |x| >= 35，绝不挡任何侧面/高空机位！）
-    const buildingLayout: {
-      tpl: THREE.Object3D | null
-      x: number
-      z: number
-      rotY: number
-      sx: number
-      sy: number
-    }[] = [
-      // 西侧（左）特摄主街建筑群（内壁稳居 x <= -27）
+    const buildingLayout = [
       { tpl: tplNeon, x: -35.5, z: 18, rotY: Math.PI * 0.5, sx: 1.0, sy: 0.98 },
       { tpl: tplRuined, x: -35.0, z: 1, rotY: Math.PI * 0.5, sx: 1.05, sy: 1.1 },
       { tpl: tplGlass, x: -36.5, z: -17, rotY: Math.PI * 0.5, sx: 1.05, sy: 1.02 },
       { tpl: tplNeon, x: -38.5, z: -36, rotY: Math.PI * 0.5, sx: 1.12, sy: 1.18 },
       { tpl: tplGlass, x: -53.0, z: -6, rotY: 0.12, sx: 1.15, sy: 1.16 },
       { tpl: tplRuined, x: -51.0, z: -26, rotY: -0.25, sx: 1.12, sy: 1.25 },
-      // 东侧（右）特摄主街建筑群（内壁稳居 x >= +27，给侧面角力 x=23 与高空俯拍 x=18.5 留足绝对净空！）
       { tpl: tplGlass, x: 35.5, z: 19, rotY: -Math.PI * 0.5, sx: 1.0, sy: 0.96 },
       { tpl: tplNeon, x: 35.8, z: 0, rotY: -Math.PI * 0.5, sx: 1.02, sy: 1.06 },
       { tpl: tplRuined, x: 35.2, z: -18, rotY: -Math.PI * 0.5, sx: 1.08, sy: 1.14 },
       { tpl: tplGlass, x: 38.5, z: -37, rotY: -Math.PI * 0.5, sx: 1.12, sy: 1.16 },
       { tpl: tplNeon, x: 53.0, z: -7, rotY: -0.15, sx: 1.15, sy: 1.2 },
       { tpl: tplGlass, x: 52.0, z: -28, rotY: 0.2, sx: 1.18, sy: 1.25 },
-      // 北侧正面远景大都市核心摩天楼群（z <= -50）
       { tpl: tplRuined, x: -20, z: -50, rotY: 0.14, sx: 1.15, sy: 1.22 },
       { tpl: tplGlass, x: 0, z: -56, rotY: 0, sx: 1.18, sy: 1.26 },
       { tpl: tplNeon, x: 20, z: -50, rotY: -0.16, sx: 1.12, sy: 1.2 },
       { tpl: tplGlass, x: -38, z: -58, rotY: 0.28, sx: 1.2, sy: 1.28 },
       { tpl: tplNeon, x: 38, z: -58, rotY: -0.28, sx: 1.2, sy: 1.25 },
-      // 南侧反拍远景摩天楼群（z >= +48，让幕 2/3/4A 迪迦正面大特写背后是震撼东京玻璃幕墙与霓虹楼群！）
       { tpl: tplNeon, x: -38, z: 42, rotY: Math.PI * 0.45, sx: 1.05, sy: 1.08 },
       { tpl: tplGlass, x: 38, z: 42, rotY: -Math.PI * 0.45, sx: 1.05, sy: 1.1 },
       { tpl: tplGlass, x: -19, z: 54, rotY: Math.PI, sx: 1.12, sy: 1.16 },
@@ -533,27 +555,22 @@ export class ArenaManager {
       { tpl: tplRuined, x: 0, z: 60, rotY: Math.PI, sx: 1.18, sy: 1.28 },
     ]
     for (const b of buildingLayout) {
-      placeAsset(b.tpl, b.x, 0, b.z, b.rotY, b.sx, b.sy, b.sx)
+      this.placeAsset(b.tpl, b.x, 0, b.z, b.rotY, b.sx, b.sy, b.sx)
     }
 
-    // 5. 震断坍塌的高架桥残墩与砸地断桥箱梁（刻意左右错落纵深分布，打破镜像感，重现特摄灾难街区实景）
-    placeAsset(tplOverpass, -24.2, 0, -16.2, 0.44, 1.04)
-    placeAsset(tplOverpass, 25.0, 0, -32.4, -0.22, 1.08)
+    this.placeAsset(tplOverpass, -24.2, 0, -16.2, 0.44, 1.04)
+    this.placeAsset(tplOverpass, 25.0, 0, -32.4, -0.22, 1.08)
 
-    // 6. 人行道精细街景配景：路灯+红绿灯+护栏配电箱（|x| = 15.0，左右错步排布，挑臂朝内照亮大道建立 40m 巨物比例尺）
     for (const pz of [-22, -6, 9, 23]) {
-      // 右侧默认挑臂指向 -X（朝向大道），左侧旋转 180° 指向 +X（朝向大道）
-      placeAsset(tplProps, 15.0, 0.26, pz, 0, 1.0)
-      placeAsset(tplProps, -15.0, 0.26, pz + 4.5, Math.PI, 1.0)
+      this.placeAsset(tplProps, 15.0, 0.26, pz, 0, 1.0)
+      this.placeAsset(tplProps, -15.0, 0.26, pz + 4.5, Math.PI, 1.0)
     }
 
-    // 7. 路缘战损 GUTS 防卫队装甲巡逻车（前后错落紧急制动与撤离姿态，避免镜像摆位，拉满特摄巨兽压迫感）
-    placeAsset(tplVehicle, -15.8, 0.26, 12.0, 0.48, 1.08)
-    placeAsset(tplVehicle, 16.4, 0.26, 1.8, -0.78, 1.08)
-    placeAsset(tplVehicle, -16.0, 0.26, -10.5, 2.52, 1.08)
-    placeAsset(tplVehicle, 15.8, 0.26, -24.5, -2.35, 1.08)
+    this.placeAsset(tplVehicle, -15.8, 0.26, 12.0, 0.48, 1.08)
+    this.placeAsset(tplVehicle, 16.4, 0.26, 1.8, -0.78, 1.08)
+    this.placeAsset(tplVehicle, -16.0, 0.26, -10.5, 2.52, 1.08)
+    this.placeAsset(tplVehicle, 15.8, 0.26, -24.5, -2.35, 1.08)
 
-    // 8. 精细化钢筋混凝土碎块废墟堆与真实透空破窗断墙（非对称自然坍塌布局，替代原先粗糙十二面体与灰色盒子墙）
     const rubbleSpots: [number, number, number, number][] = [
       [-18.8, 9.2, 0.35, 1.08],
       [19.6, 14.8, -0.62, 0.96],
@@ -567,12 +584,12 @@ export class ArenaManager {
       [21.6, -29.5, 0.88, 1.14],
     ]
     for (const [rx, rz, rotY, scl] of rubbleSpots) {
-      placeAsset(tplRubble, rx, 0.24, rz, rotY, scl)
+      this.placeAsset(tplRubble, rx, 0.24, rz, rotY, scl)
     }
 
-    // 9. 最外围无边际远景万家灯火剪影摩天楼群（退界至 |x| >= 60 或 |z| >= 72，烘托大都市无限纵深）
+    // 远景无边际万家灯火剪影摩天楼群
     const windowTex = makeNightWindowsTexture()
-    this.cityDisposableTextures.push(windowTex)
+    this.stageDisposableTextures.push(windowTex)
     const towerSpecs: [number, number, number, number, number][] = [
       [-68, -32, 16, 68, 16],
       [-48, -76, 19, 82, 17],
@@ -585,7 +602,6 @@ export class ArenaManager {
       [64, 12, 16, 60, 15],
       [-74, -64, 20, 74, 18],
       [74, -64, 20, 72, 18],
-      // 南侧极远景天际线
       [-58, 42, 16, 62, 16],
       [58, 42, 16, 64, 16],
       [-36, 72, 18, 72, 16],
@@ -600,12 +616,12 @@ export class ArenaManager {
       metalness: 0.24,
       emissive: new THREE.Color(0xffc978),
       emissiveMap: windowTex,
-      emissiveIntensity: 0.52,
+      emissiveIntensity: 0.54,
     })
     const beaconGeo = new THREE.SphereGeometry(0.45, 8, 6)
     const beaconMat = new THREE.MeshBasicMaterial({ color: 0xff3b30 })
-    this.cityDisposableGeos.push(towerGeo, beaconGeo)
-    this.cityDisposableMats.push(towerMat, beaconMat)
+    this.stageDisposableGeos.push(towerGeo, beaconGeo)
+    this.stageDisposableMats.push(towerMat, beaconMat)
     this.cityBeaconMats.push(beaconMat)
 
     const towers = new THREE.InstancedMesh(towerGeo, towerMat, towerSpecs.length)
@@ -626,45 +642,48 @@ export class ArenaManager {
     beacons.instanceMatrix.needsUpdate = true
     this.fixtures.add(towers, beacons)
 
-    // 10. 熊熊燃烧的废墟烈焰 + 升腾浓烟（错落锚定在非对称废墟堆与战损建筑基座旁）
+    // 相机朝向多层体积火烟（告别十字纸片交接线）
     const fireSpots: [number, number, number][] = [
-      [-18.8, 9.2, 5.0],
-      [19.2, 2.2, 4.8],
-      [-21.0, -5.4, 6.0],
-      [20.4, -9.6, 5.6],
-      [-18.6, -14.6, 6.6],
+      [-18.8, 9.2, 5.2],
+      [19.2, 2.2, 5.0],
+      [-21.0, -5.4, 6.2],
+      [20.4, -9.6, 5.8],
+      [-18.6, -14.6, 6.8],
       [18.8, -19.8, 6.4],
     ]
     const flameGeo = new THREE.PlaneGeometry(1, 1)
     const smokeGeo = new THREE.PlaneGeometry(1, 1)
-    this.cityDisposableGeos.push(flameGeo, smokeGeo)
+    this.stageDisposableGeos.push(flameGeo, smokeGeo)
 
     fireSpots.forEach(([fx, fz, size], idx) => {
       const flameMat = createRuinsFlameMaterial(idx * 1.73)
       const smokeMat = createRuinsSmokeMaterial(idx * 2.11)
       this.cityFlameMats.push(flameMat)
       this.citySmokeMats.push(smokeMat)
-      this.cityDisposableMats.push(flameMat, smokeMat)
+      this.stageDisposableMats.push(flameMat, smokeMat)
 
-      for (const rotY of [0, Math.PI * 0.5]) {
-        const fMesh = new THREE.Mesh(flameGeo, flameMat)
-        fMesh.position.set(fx, size * 0.48, fz)
-        fMesh.scale.set(size * 0.92, size * 1.28, 1)
-        fMesh.rotation.y = rotY
-        this.fixtures.add(fMesh)
+      const fMesh = new THREE.Mesh(flameGeo, flameMat)
+      fMesh.position.set(fx, size * 0.5, fz)
+      fMesh.scale.set(size * 1.05, size * 1.35, 1)
+      this.fixtures.add(fMesh)
+      this.billboardFXMeshes.push(fMesh)
 
-        const sMesh = new THREE.Mesh(smokeGeo, smokeMat)
-        sMesh.position.set(fx, size * 1.35, fz)
-        sMesh.scale.set(size * 1.45, size * 1.8, 1)
-        sMesh.rotation.y = rotY + 0.35
-        this.fixtures.add(sMesh)
-      }
+      const sMesh = new THREE.Mesh(smokeGeo, smokeMat)
+      sMesh.position.set(fx, size * 1.48, fz)
+      sMesh.scale.set(size * 1.68, size * 2.0, 1)
+      this.fixtures.add(sMesh)
+      this.billboardFXMeshes.push(sMesh)
     })
   }
 
-  private buildQuay(map: THREE.Texture, normal: THREE.Texture) {
-    const width = 150
-    const length = 106
+  /** 海港码头（接入红白龙门吊 + 波纹肋板集装箱簇 + 战损防卫队巡逻车） */
+  private buildQuay(
+    map: THREE.Texture,
+    normal: THREE.Texture,
+    assets: Partial<Record<ArenaAssetKey, THREE.Object3D>>,
+  ) {
+    const width = 156
+    const length = 112
     for (const tex of [map, normal]) {
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping
       tex.repeat.set(width / 4, length / 4)
@@ -674,8 +693,9 @@ export class ArenaManager {
     const surface = new THREE.MeshStandardMaterial({
       map,
       normalMap: normal,
-      normalScale: new THREE.Vector2(0.65, 0.65),
-      roughness: 0.88,
+      normalScale: new THREE.Vector2(0.7, 0.7),
+      roughness: 0.78,
+      metalness: 0.12,
       color: 0xc8c1b6,
     })
     const geometry = new THREE.PlaneGeometry(width, length)
@@ -708,32 +728,48 @@ export class ArenaManager {
     }
     bollards.castShadow = true
     this.fixtures.add(bollards)
-    this.cityDisposableGeos.push(post)
-    this.cityDisposableMats.push(metal)
+    this.stageDisposableGeos.push(post)
+    this.stageDisposableMats.push(metal)
 
-    // 码头两侧堆叠集装箱（呼应视频 1 海港码头特摄氛围，退界在战场走廊之外）
-    const boxGeo = new THREE.BoxGeometry(5.5, 3.6, 12.2)
-    const containerColors = [0x991b1b, 0x1d4ed8, 0xb45309, 0x1e3a5f]
-    this.cityDisposableGeos.push(boxGeo)
-    containerColors.forEach((col, cIdx) => {
-      const cMat = new THREE.MeshStandardMaterial({
-        color: col,
-        roughness: 0.72,
-        metalness: 0.34,
-      })
-      this.cityDisposableMats.push(cMat)
-      const side = cIdx % 2 === 0 ? -1 : 1
-      const mesh = new THREE.Mesh(boxGeo, cMat)
-      mesh.position.set(side * (20 + (cIdx >> 1) * 6.4), 1.8, -14 - cIdx * 6)
-      mesh.rotation.y = side * 0.12
-      mesh.castShadow = true
-      mesh.receiveShadow = true
-      this.fixtures.add(mesh)
-    })
+    const tplCrane = this.prepTemplate(assets, 'portCrane', true)
+    const tplContainers = this.prepTemplate(assets, 'portContainers', true)
+    const tplVehicle = this.prepTemplate(assets, 'gutsVehicle', true)
+
+    // 左右两座巨型海港岸桥龙门吊（退界至战场走廊之外，框出强纵深特摄码头地平线）
+    this.placeAsset(tplCrane, -32, 0, -28, 0.18, 1.15)
+    this.placeAsset(tplCrane, 34, 0, -32, -0.22, 1.15)
+    this.placeAsset(tplCrane, -44, 0, 8, Math.PI * 0.48, 1.05)
+
+    // 高精波纹肋板堆叠集装箱簇
+    this.placeAsset(tplContainers, -24, 0, -4, 0.12, 1.1)
+    this.placeAsset(tplContainers, 25, 0, -10, -0.15, 1.12)
+    this.placeAsset(tplContainers, -26, 0, 18, -0.25, 1.0)
+    this.placeAsset(tplContainers, 27, 0, 14, 0.22, 1.05)
+
+    // 码头紧急防卫队巡逻车
+    this.placeAsset(tplVehicle, -17.5, 0, 11.5, 0.55, 1.08)
+    this.placeAsset(tplVehicle, 18.2, 0, 3.2, -0.72, 1.08)
   }
 
-  /** 实体火山口围住平坦战斗区，岩面凹处的两条熔流沿坡脚延伸 */
-  private buildCrater(map: THREE.Texture, normal: THREE.Texture) {
+  /** 翠绿山谷（接入防卫队山脊雷达前哨站与松树岩礁群，彻底告别空旷纯贴图） */
+  private buildMountainStage(assets: Partial<Record<ArenaAssetKey, THREE.Object3D>>) {
+    const tplRadar = this.prepTemplate(assets, 'mountainRadar', true)
+    const tplVehicle = this.prepTemplate(assets, 'gutsVehicle', true)
+
+    this.placeAsset(tplRadar, -30, 0, -24, 0.42, 1.25)
+    this.placeAsset(tplRadar, 32, 0, -28, -0.52, 1.32)
+    this.placeAsset(tplRadar, -34, 0, 14, 1.25, 1.15)
+    this.placeAsset(tplRadar, 35, 0, 10, -1.18, 1.1)
+    this.placeAsset(tplVehicle, -16.5, 0, 12.2, 0.42, 1.08)
+    this.placeAsset(tplVehicle, 17.8, 0, 4.5, -0.68, 1.08)
+  }
+
+  /** 实体火山口 + 6 组六棱柱状玄武岩巨岩簇 */
+  private buildCrater(
+    map: THREE.Texture,
+    normal: THREE.Texture,
+    assets: Partial<Record<ArenaAssetKey, THREE.Object3D>>,
+  ) {
     const ground = new THREE.PlaneGeometry(260, 240, 160, 144)
     ground.rotateX(-Math.PI / 2)
     const pos = ground.getAttribute('position')
@@ -787,12 +823,83 @@ export class ArenaManager {
     this.ground = new THREE.Mesh(ground, material)
     this.ground.receiveShadow = true
     this.root.add(this.ground)
+
+    const tplBasalt = this.prepTemplate(assets, 'volcanoBasalt', true)
+    const spireSpots: [number, number, number, number][] = [
+      [-28, -22, 0.35, 1.4],
+      [30, -26, -0.65, 1.5],
+      [-34, 4, 1.42, 1.3],
+      [32, 6, -1.22, 1.35],
+      [-24, -44, 2.2, 1.7],
+      [24, -46, -2.0, 1.65],
+    ]
+    for (const [bx, bz, rotY, scl] of spireSpots) {
+      this.placeAsset(tplBasalt, bx, 0, bz, rotY, scl, scl * 1.15, scl)
+    }
   }
 
-  public groundImpact(x: number, z: number, elapsed: number) {
+  public groundImpact(x: number, z: number, elapsed: number, scorchScale = 0) {
     this.impactTime = elapsed
     this.dust.position.set(x, 0.12, z)
     this.dust.material.uniforms.tint!.value.setHex(STAGES[this.theme].dust)
+    if (scorchScale > 0) {
+      this.spawnGroundScorch(x, z, scorchScale)
+    }
+    this.propFlickerBoost = Math.min(1.5, this.propFlickerBoost + 0.65)
+  }
+
+  /** 在地表生成高温余烬裂纹焦痕（最多同时保留 8 处，随时间自然冷却暗化淡出） */
+  public spawnGroundScorch(x: number, z: number, size = 7.5) {
+    if (this.cosmicActive) return
+    if (this.scorchDecals.length >= 8) {
+      const oldest = this.scorchDecals.shift()!
+      this.root.remove(oldest.mesh)
+      oldest.mesh.material.dispose()
+    }
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      uniforms: {
+        uAge: { value: 0 },
+        uSeed: { value: Math.random() * 100 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uAge;
+        uniform float uSeed;
+        varying vec2 vUv;
+        void main() {
+          vec2 q = (vUv - 0.5) * 2.0;
+          float r = length(q);
+          if (r > 1.0) discard;
+          float ang = atan(q.y, q.x);
+          float cracks = abs(sin(ang * 7.0 + uSeed + r * 5.0)) * abs(cos(ang * 11.0 - r * 7.0));
+          float crackLine = smoothstep(0.06, 0.01, cracks) * (1.0 - smoothstep(0.15, 0.92, r));
+          float charMask = (1.0 - smoothstep(0.1, 0.95, r)) * 0.72;
+          float heat = max(0.0, 1.0 - uAge * 0.35);
+          float fadeOut = 1.0 - smoothstep(8.0, 13.0, uAge);
+          vec3 charCol = vec3(0.04, 0.03, 0.03);
+          vec3 lavaCol = vec3(1.55, 0.42, 0.06) * heat;
+          vec3 col = mix(charCol, lavaCol, crackLine * heat);
+          float alpha = clamp((charMask + crackLine * heat) * fadeOut, 0.0, 0.86);
+          gl_FragColor = vec4(col, alpha);
+        }
+      `,
+    })
+    const mesh = new THREE.Mesh(this.scorchGeo, mat)
+    mesh.position.set(x, 0.042, z)
+    mesh.scale.setScalar(size)
+    mesh.renderOrder = -1
+    this.root.add(mesh)
+    this.scorchDecals.push({ mesh, age: 0, maxAge: 13 })
   }
 
   public update(
@@ -800,8 +907,25 @@ export class ArenaManager {
     heroPos?: THREE.Vector3,
     kaijuPos?: THREE.Vector3,
     kaijuVisible = true,
+    cameraPos?: THREE.Vector3,
+    dt = 0.016,
   ) {
     this.heat.value = elapsed
+    this.propFlickerBoost = Math.max(0, this.propFlickerBoost - dt * 1.4)
+
+    // 更新地表焦痕冷却生命周期
+    for (let i = this.scorchDecals.length - 1; i >= 0; i--) {
+      const s = this.scorchDecals[i]!
+      s.age += dt
+      if (s.age >= s.maxAge) {
+        this.root.remove(s.mesh)
+        s.mesh.material.dispose()
+        this.scorchDecals.splice(i, 1)
+      } else {
+        s.mesh.material.uniforms.uAge!.value = s.age
+      }
+    }
+
     const age = elapsed - this.impactTime
     this.dust.visible = !this.cosmicActive && age < 1.25
     this.dust.material.uniforms.age!.value = age
@@ -822,9 +946,25 @@ export class ArenaManager {
       for (const m of this.citySmokeMats) {
         m.uniforms.uTime!.value = elapsed
       }
-      // 动态摇曳的废墟火光实时照亮奥特曼与怪兽两侧金属边缘
-      const flickL = 0.78 + 0.22 * Math.sin(elapsed * 11.3) + 0.12 * Math.cos(elapsed * 19.7)
-      const flickR = 0.76 + 0.24 * Math.cos(elapsed * 13.1) + 0.14 * Math.sin(elapsed * 23.1)
+      // 废墟火烟平面持续绕 Y 轴朝向相机，立体体积感零穿帮
+      if (cameraPos) {
+        for (const bm of this.billboardFXMeshes) {
+          bm.rotation.y = Math.atan2(
+            cameraPos.x - bm.position.x,
+            cameraPos.z - bm.position.z,
+          )
+        }
+      }
+      const flickL =
+        0.78 +
+        0.22 * Math.sin(elapsed * 11.3) +
+        0.12 * Math.cos(elapsed * 19.7) +
+        this.propFlickerBoost * 0.45
+      const flickR =
+        0.76 +
+        0.24 * Math.cos(elapsed * 13.1) +
+        0.14 * Math.sin(elapsed * 23.1) +
+        this.propFlickerBoost * 0.35
       this.fireLightL.intensity = 18 * flickL
       this.fireLightR.intensity = 16 * flickR
       const beaconPulse = Math.sin(elapsed * 3.4) > 0.2 ? 1.0 : 0.22
@@ -872,19 +1012,26 @@ export class ArenaManager {
       const child = this.fixtures.children[0]!
       this.fixtures.remove(child)
     }
-    for (const mdl of this.cityLoadedModels) {
+    for (const mdl of this.stageLoadedModels) {
       releaseModel(mdl)
     }
-    this.cityLoadedModels.length = 0
-    for (const tex of this.cityDisposableTextures) tex.dispose()
-    this.cityDisposableTextures.length = 0
-    for (const geo of this.cityDisposableGeos) geo.dispose()
-    this.cityDisposableGeos.length = 0
-    for (const mat of this.cityDisposableMats) mat.dispose()
-    this.cityDisposableMats.length = 0
+    this.stageLoadedModels.length = 0
+    this.billboardFXMeshes.length = 0
+    for (const tex of this.stageDisposableTextures) tex.dispose()
+    this.stageDisposableTextures.length = 0
+    for (const geo of this.stageDisposableGeos) geo.dispose()
+    this.stageDisposableGeos.length = 0
+    for (const mat of this.stageDisposableMats) mat.dispose()
+    this.stageDisposableMats.length = 0
     this.cityFlameMats.length = 0
     this.citySmokeMats.length = 0
     this.cityBeaconMats.length = 0
+
+    for (const s of this.scorchDecals) {
+      this.root.remove(s.mesh)
+      s.mesh.material.dispose()
+    }
+    this.scorchDecals.length = 0
 
     this.scene.environment = null
     this.envRenderTarget?.dispose()
@@ -902,6 +1049,7 @@ export class ArenaManager {
   public dispose() {
     this.disposed = true
     this.releaseStage()
+    this.scorchGeo.dispose()
     this.cosmicGroup.traverse((n) => {
       if ((n as THREE.Mesh).isMesh) {
         const m = n as THREE.Mesh
@@ -931,7 +1079,42 @@ export class ArenaManager {
   }
 }
 
-/** 暗夜城市阴云 + 城市地平线暖橙火灾霞光天穹 */
+/** 暗夜湿润柏油路面水洼粗糙度贴图（亮区干燥粗糙，暗区湿润水洼反射城市霓虹与光线） */
+function makeWetPuddleRoughnessTexture(): THREE.CanvasTexture {
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#d4d4d4'
+  ctx.fillRect(0, 0, size, size)
+
+  let seed = 1337
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296
+    return seed / 4294967296
+  }
+  for (let i = 0; i < 38; i++) {
+    const cx = rand() * size
+    const cy = rand() * size
+    const rx = 14 + rand() * 34
+    const ry = 10 + rand() * 26
+    const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, Math.max(rx, ry))
+    grad.addColorStop(0, 'rgba(34, 34, 34, 0.85)')
+    grad.addColorStop(0.65, 'rgba(72, 72, 72, 0.45)')
+    grad.addColorStop(1, 'rgba(212, 212, 212, 0)')
+    ctx.fillStyle = grad
+    ctx.beginPath()
+    ctx.ellipse(cx, cy, rx, ry, rand() * Math.PI, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = THREE.RepeatWrapping
+  tex.wrapT = THREE.RepeatWrapping
+  tex.repeat.set(6, 6)
+  return tex
+}
+
 function createNightCitySkyDome() {
   const geo = new THREE.SphereGeometry(230, 32, 24)
   const mat = new THREE.ShaderMaterial({
@@ -976,7 +1159,6 @@ function createNightCitySkyDome() {
       void main() {
         vec3 d = normalize(vWorldDir);
         float h = clamp(d.y, 0.0, 1.0);
-        // 深靛蓝夜空向地平线暗灰暖橙过渡
         vec3 zenith = vec3(0.035, 0.06, 0.13);
         vec3 midSky = vec3(0.11, 0.16, 0.27);
         vec3 horizonFire = vec3(0.42, 0.22, 0.14);
@@ -984,7 +1166,6 @@ function createNightCitySkyDome() {
         float fireGlow = exp(-max(h, 0.0) * 8.5);
         base = mix(base, horizonFire, fireGlow * 0.62);
 
-        // 动态翻涌暗夜云层
         vec2 cloudUv = d.xz / (h + 0.22) * 0.9 + vec2(uTime * 0.015, -uTime * 0.008);
         float clouds = fbm(cloudUv * 2.2);
         float cloudMask = smoothstep(0.36, 0.78, clouds) * smoothstep(0.0, 0.28, h);
@@ -999,7 +1180,6 @@ function createNightCitySkyDome() {
   return mesh
 }
 
-/** 万家灯火高楼夜景自发光贴图（冷白与暖黄办公窗自然错落） */
 function makeNightWindowsTexture(): THREE.CanvasTexture {
   const w = 256
   const h = 512
@@ -1041,7 +1221,6 @@ function makeNightWindowsTexture(): THREE.CanvasTexture {
   return tex
 }
 
-/** 废墟熊熊烈焰 Shader（严格 pow 安全夹紧） */
 function createRuinsFlameMaterial(seed: number): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     transparent: true,
@@ -1096,7 +1275,6 @@ function createRuinsFlameMaterial(seed: number): THREE.ShaderMaterial {
   })
 }
 
-/** 废墟翻滚黑红浓烟 Shader */
 function createRuinsSmokeMaterial(seed: number): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     transparent: true,
@@ -1146,7 +1324,6 @@ function createRuinsSmokeMaterial(seed: number): THREE.ShaderMaterial {
   })
 }
 
-/** 宇宙变身 / 胜利合影星空与蓝色赛博全息脚底光环（复刻视频 1 00:01-00:02 & 00:10-00:11） */
 function createCosmicStage() {
   const group = new THREE.Group()
 
@@ -1171,7 +1348,6 @@ function createCosmicStage() {
         float neb = 0.5 + 0.5 * sin(uv.x * 1.3 + uTime * 0.35) * cos(uv.y * 2.1 - uTime * 0.25);
         vec3 bg = mix(vec3(0.02, 0.06, 0.16), vec3(0.05, 0.22, 0.38), neb * 0.65);
         bg += vec3(0.06, 0.16, 0.28) * exp(-abs(d.y) * 3.5);
-        // 闪烁星点
         vec2 cell = floor(uv * 16.0);
         vec2 f = fract(uv * 16.0) - 0.5;
         float h = hash(cell);
@@ -1205,9 +1381,9 @@ function createCosmicStage() {
         float r = length(q);
         if (r > 1.0) discard;
         float a = atan(q.y, q.x);
-        float r1 = exp(-pow((r - 0.88) * 34.0, 2.0));
-        float r2 = exp(-pow((r - 0.64) * 28.0, 2.0)) * step(0.28, fract((a / 6.28318) * 14.0 + uTime * 0.35));
-        float r3 = exp(-pow((r - 0.40) * 32.0, 2.0)) * step(0.32, fract((a / 6.28318) * 8.0 - uTime * 0.5));
+        float r1 = exp(-pow(max(abs(r - 0.88) * 34.0, 0.0001), 2.0));
+        float r2 = exp(-pow(max(abs(r - 0.64) * 28.0, 0.0001), 2.0)) * step(0.28, fract((a / 6.28318) * 14.0 + uTime * 0.35));
+        float r3 = exp(-pow(max(abs(r - 0.40) * 32.0, 0.0001), 2.0)) * step(0.32, fract((a / 6.28318) * 8.0 - uTime * 0.5));
         float glow = exp(-r * 2.6) * 0.45;
         float intensity = r1 * 1.1 + r2 * 0.85 + r3 * 0.9 + glow;
         vec3 col = mix(vec3(0.15, 0.65, 1.25), vec3(0.85, 0.98, 1.4), r1 * 0.7);
@@ -1238,7 +1414,6 @@ function makeSoftBlobTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas)
 }
 
-/** 贴地震波尘团 */
 function makeImpactDust() {
   const geometry = new THREE.InstancedBufferGeometry()
   const quad = new THREE.PlaneGeometry(1, 1)
@@ -1286,7 +1461,6 @@ function makeImpactDust() {
   return mesh
 }
 
-/** 城市废墟与火山战场满屏升腾火星余烬粒子 */
 function makeVolcanoEmbers() {
   const geometry = new THREE.InstancedBufferGeometry()
   const quad = new THREE.PlaneGeometry(0.32, 0.32)

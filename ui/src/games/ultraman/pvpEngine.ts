@@ -1,9 +1,14 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { UltraAudio } from './audio'
 import { BattleEffects } from './effects'
 import { ArenaManager } from './environment'
 import { UltraGestureRecognizer } from './gesture'
+import type { HandLandmarksInput } from './gesture'
 import { HERO_PROFILES } from './heroes'
 import type { HeroFormSpec, HeroId, HeroProfile } from './heroes'
 import { HeroController } from './hero'
@@ -11,8 +16,12 @@ import { canTrackFeet, JumpKickRecognizer } from './jump'
 import type {
   ConcreteSceneTheme,
   ControlMode,
+  DistanceHint,
   FloatingDamageEvent,
+  GestureActiveCue,
+  HeroAction,
   PoseLandmark,
+  PunchStyle,
 } from './types'
 
 export type PvpPhase = 'menu' | 'loading' | 'round-intro' | 'fighting' | 'round-ko' | 'match-over'
@@ -24,10 +33,12 @@ export interface PvpFighterHud {
   hasForms: boolean
   hp: number
   maxHp: number
+  guardStamina: number
   energy: number
   combo: number
   maxCombo: number
   perfectGuards: number
+  perfectDodges: number
   punchChain: number
   discCooldownRatio: number
   beamCooldownRatio: number
@@ -35,8 +46,13 @@ export interface PvpFighterHud {
   chargeProgress: number
   incomingBeamAlert: boolean
   activeBannerKey: string | null
+  impactFlashKind: 'none' | 'heavy' | 'parry' | 'dodge' | 'hurt'
+  impactFlashSeq: number
   tracking: boolean
   bodyCoverage: 'none' | 'upper' | 'full'
+  distanceHint: DistanceHint
+  activeGestureCue: GestureActiveCue
+  mirroredCenterX: number
   poseHintKey: string
   timerDanger: boolean
 }
@@ -55,7 +71,6 @@ export interface PvpHudState {
   matchWinner: PvpSlot | null
   centerBannerKey: string | null
   beamClashActive: boolean
-  /** 对波天平 [0, 1]：0.5 势均力敌，越接近 1 代表 P1 压倒 P2，越接近 0 代表 P2 压倒 P1 */
   beamClashBalance: number
   fighters: [PvpFighterHud, PvpFighterHud]
 }
@@ -76,12 +91,16 @@ interface FighterRuntime {
   jump: JumpKickRecognizer
   feetTracked: boolean
   hp: number
+  guardStamina: number
+  guardBrokenCd: number
   energy: number
   combo: number
   maxCombo: number
   comboTimer: number
   perfectGuards: number
+  perfectDodges: number
   punchChain: number
+  manualCycle: number
   lastPunchSide: 'left' | 'right' | null
   chainTimeLeft: number
   discCooldown: number
@@ -98,6 +117,9 @@ interface FighterRuntime {
   gestureGuard: boolean
   gestureTracking: boolean
   gestureCoverage: 'none' | 'upper' | 'full'
+  gestureDistanceHint: DistanceHint
+  gestureActiveCue: GestureActiveCue
+  gestureMirroredX: number
   gestureHintKey: string
   gestureBeamCharge: number
   gestureBeamHolding: boolean
@@ -107,23 +129,25 @@ interface FighterRuntime {
   gestureTypeCharge: number
   bannerKey: string | null
   bannerTimer: number
+  impactFlashKind: PvpFighterHud['impactFlashKind']
+  impactFlashSeq: number
   shakeTrauma: number
   fovKick: number
   camAnchor: THREE.Vector3
   lookAnchor: THREE.Vector3
 }
 
-const PVP_MAX_HP = 140
+const PVP_MAX_HP = 150
 const PVP_ROUND_SECONDS = 90
 const DISC_BASE_CD = 1.45
 const BEAM_BASE_CD = 2.0
 const WINS_NEEDED = 2
 
 /**
- * 第三人称 3D 同场双人分屏对战主引擎（P1 奥特曼 VS P2 奥特曼）：
- * - 单一共享 3D 世界 + 单 WebGLRenderer 双视口（setViewport/setScissor）对称越肩渲染
- * - 整备菜单全屏展示双雄面对面对峙，开战切入各自第三人称越肩视角
- * - 支持真实三维横向侧闪躲避、拳风/光轮空中对轰消弹、飞踢碎盾、以及真人双奥特曼宿命光线对波！
+ * 第三人称 3D 同场双人分屏对战主引擎（并入电影级双视口 Bloom 后处理 + 1:1 真实格斗体感）：
+ * - 双半屏独立 EffectComposer（RenderPass + UnrealBloomPass + OutputPass）合成，分屏照样复眼/光线辉光拉满
+ * - 双方头部视线实时互锁 + 1:1 拳风招式（直拳/摆拳/上勾/手刀）+ 拳脚运动拖尾丝带
+ * - 护盾耐力系统 + 精准弹反振开 + 侧闪完美躲避 + 空中消弹 + 双奥特曼宿命光线对波
  */
 export class UltramanSplitPvpEngine {
   private readonly container: HTMLElement
@@ -132,6 +156,16 @@ export class UltramanSplitPvpEngine {
   private readonly scene: THREE.Scene
   private readonly cameras: [THREE.PerspectiveCamera, THREE.PerspectiveCamera]
   private readonly loader = new GLTFLoader()
+
+  // 双视口 Bloom 离屏后处理与最终分屏合成通道
+  private readonly menuComposer: EffectComposer
+  private readonly menuBloom: UnrealBloomPass
+  private readonly splitComposers: [EffectComposer, EffectComposer]
+  private readonly splitBlooms: [UnrealBloomPass, UnrealBloomPass]
+  private readonly blitScene = new THREE.Scene()
+  private readonly blitCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+  private readonly blitMat: THREE.MeshBasicMaterial
+  private readonly blitQuad: THREE.Mesh
 
   public readonly audio = new UltraAudio()
   private readonly arena: ArenaManager
@@ -147,7 +181,7 @@ export class UltramanSplitPvpEngine {
 
   private phase: PvpPhase = 'menu'
   private controlMode: ControlMode = 'camera'
-  private activeTheme: ConcreteSceneTheme = 'seaside'
+  private activeTheme: ConcreteSceneTheme = 'city'
   private loadingProgress = 0
   private round = 1
   private roundTimeLeft = PVP_ROUND_SECONDS
@@ -169,6 +203,7 @@ export class UltramanSplitPvpEngine {
 
   private fullWidth = 1280
   private fullHeight = 720
+  private dpr = 1.35
   private portraitSplit = false
   private readonly resizeObserver: ResizeObserver
 
@@ -191,15 +226,61 @@ export class UltramanSplitPvpEngine {
       alpha: false,
       powerPreference: 'high-performance',
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    const isTouch =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window)
+    this.dpr = Math.min(window.devicePixelRatio || 1, isTouch ? 1.25 : 1.5)
+    this.renderer.setPixelRatio(this.dpr)
     this.renderer.setSize(this.fullWidth, this.fullHeight)
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.06
+    this.renderer.toneMappingExposure = 1.03
 
     container.appendChild(this.renderer.domElement)
+
+    // 整备菜单全屏 Bloom 管线
+    this.menuComposer = new EffectComposer(this.renderer)
+    this.menuComposer.setPixelRatio(this.dpr)
+    this.menuComposer.setSize(this.fullWidth, this.fullHeight)
+    this.menuComposer.addPass(new RenderPass(this.scene, this.cameras[0]))
+    this.menuBloom = new UnrealBloomPass(
+      new THREE.Vector2(this.fullWidth, this.fullHeight),
+      0.24,
+      0.24,
+      0.96,
+    )
+    this.menuComposer.addPass(this.menuBloom)
+    this.menuComposer.addPass(new OutputPass())
+
+    // 分屏双路独立离屏 Bloom 管线（避免双视口直接共用主画布冲突，各自完整 Bloom + OutputPass 后合成）
+    const makeSplitComposer = (cam: THREE.PerspectiveCamera) => {
+      const sw = Math.max(2, Math.floor(this.fullWidth * 0.5))
+      const sh = Math.max(2, this.fullHeight)
+      const comp = new EffectComposer(this.renderer)
+      comp.renderToScreen = false
+      comp.setPixelRatio(this.dpr)
+      comp.setSize(sw, sh)
+      comp.addPass(new RenderPass(this.scene, cam))
+      const bloom = new UnrealBloomPass(new THREE.Vector2(sw, sh), 0.25, 0.24, 0.96)
+      comp.addPass(bloom)
+      comp.addPass(new OutputPass())
+      return { comp, bloom }
+    }
+    const sc0 = makeSplitComposer(this.cameras[0])
+    const sc1 = makeSplitComposer(this.cameras[1])
+    this.splitComposers = [sc0.comp, sc1.comp]
+    this.splitBlooms = [sc0.bloom, sc1.bloom]
+
+    this.blitMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    this.blitQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blitMat)
+    this.blitScene.add(this.blitQuad)
 
     this.arena = new ArenaManager(this.scene, this.renderer)
     this.fighters = [
@@ -231,12 +312,16 @@ export class UltramanSplitPvpEngine {
       jump: new JumpKickRecognizer(),
       feetTracked: false,
       hp: PVP_MAX_HP,
+      guardStamina: 100,
+      guardBrokenCd: 0,
       energy: 45,
       combo: 0,
       maxCombo: 0,
       comboTimer: 0,
       perfectGuards: 0,
+      perfectDodges: 0,
       punchChain: 0,
+      manualCycle: 0,
       lastPunchSide: null,
       chainTimeLeft: 0,
       discCooldown: 0,
@@ -253,6 +338,9 @@ export class UltramanSplitPvpEngine {
       gestureGuard: false,
       gestureTracking: false,
       gestureCoverage: 'none',
+      gestureDistanceHint: 'ok',
+      gestureActiveCue: 'none',
+      gestureMirroredX: slot === 0 ? 0.25 : 0.75,
       gestureHintKey: 'hintStandCenter',
       gestureBeamCharge: 0,
       gestureBeamHolding: false,
@@ -262,6 +350,8 @@ export class UltramanSplitPvpEngine {
       gestureTypeCharge: 0,
       bannerKey: null,
       bannerTimer: 0,
+      impactFlashKind: 'none',
+      impactFlashSeq: 0,
       shakeTrauma: 0,
       fovKick: 0,
       camAnchor: new THREE.Vector3(sideSign * 2.5, 11.8, sideSign * 21.5),
@@ -275,6 +365,16 @@ export class UltramanSplitPvpEngine {
     this.fullHeight = Math.max(2, this.container.clientHeight || window.innerHeight)
     this.portraitSplit = this.fullHeight > this.fullWidth
     this.renderer.setSize(this.fullWidth, this.fullHeight)
+
+    this.menuComposer.setSize(this.fullWidth, this.fullHeight)
+    this.menuBloom.setSize(this.fullWidth, this.fullHeight)
+
+    const sw = this.portraitSplit ? this.fullWidth : Math.max(2, Math.floor(this.fullWidth * 0.5))
+    const sh = this.portraitSplit ? Math.max(2, Math.floor(this.fullHeight * 0.5)) : this.fullHeight
+    for (let i = 0; i < 2; i++) {
+      this.splitComposers[i]!.setSize(sw, sh)
+      this.splitBlooms[i]!.setSize(sw, sh)
+    }
   }
 
   private getSlotAspect(): number {
@@ -349,7 +449,7 @@ export class UltramanSplitPvpEngine {
     const pos = f.hero.root.position.clone().add(new THREE.Vector3(0, 9.5, 0))
     f.effects.spawnBurst(pos, form.accentColor, 20, 20, 1.2)
     f.effects.spawnImpactRing(pos, form.accentColor, 5.8)
-    this.audio.playTransform()
+    this.audio.playTransform('type')
     this.emitHud()
   }
 
@@ -360,7 +460,12 @@ export class UltramanSplitPvpEngine {
 
   public setMuted(muted: boolean) {
     this.audio.muted = muted
-    if (muted) this.audio.setDangerAlarm(false)
+    if (muted) {
+      this.audio.setDangerAlarm(false)
+      this.audio.setAmbience(this.activeTheme, false)
+    } else if (this.phase === 'fighting') {
+      this.audio.setAmbience(this.activeTheme, true)
+    }
   }
 
   public setPaused(paused: boolean) {
@@ -401,6 +506,12 @@ export class UltramanSplitPvpEngine {
   private gainEnergy(slot: PvpSlot, base: number) {
     const f = this.fighters[slot]
     f.energy = Math.min(100, f.energy + base * this.getEnergyMul(slot))
+  }
+
+  private triggerSlotFlash(slot: PvpSlot, kind: PvpFighterHud['impactFlashKind']) {
+    const f = this.fighters[slot]
+    f.impactFlashKind = kind
+    f.impactFlashSeq++
   }
 
   private applyFighterForm(slot: PvpSlot) {
@@ -450,8 +561,10 @@ export class UltramanSplitPvpEngine {
     for (const slot of [0, 1] as const) {
       this.fighters[slot].maxCombo = 0
       this.fighters[slot].perfectGuards = 0
+      this.fighters[slot].perfectDodges = 0
     }
-    this.audio.playTransform()
+    this.audio.playTransform('rise')
+    this.audio.setAmbience(theme, true)
     this.beginRound(1)
   }
 
@@ -467,10 +580,13 @@ export class UltramanSplitPvpEngine {
       const f = this.fighters[slot]
       f.effects.clearAllDynamic()
       f.hp = PVP_MAX_HP
+      f.guardStamina = 100
+      f.guardBrokenCd = 0
       f.energy = 45
       f.combo = 0
       f.comboTimer = 0
       f.punchChain = 0
+      f.manualCycle = 0
       f.chainTimeLeft = 0
       f.discCooldown = 0
       f.beamCooldown = 0
@@ -504,16 +620,17 @@ export class UltramanSplitPvpEngine {
     this.beamClashActive = false
     this.beamClashTimer = 0
     this.audio.setDangerAlarm(false)
+    this.audio.setAmbience(this.activeTheme, false)
     for (const slot of [0, 1] as const) {
       const f = this.fighters[slot]
       f.effects.clearAllDynamic()
       f.hero.resetPose()
+      f.hero.setLookTarget(null)
       f.hero.triggerAction('pose-intro', 0.85)
     }
     this.emitHud()
   }
 
-  /** 喂入单侧玩家的姿态骨骼数据（镜像左半区 P1 laneCenter=0.75，右半区 P2 laneCenter=0.25） */
   public feedPlayerPose(
     slot: PvpSlot,
     landmarks: PoseLandmark[] | null,
@@ -522,6 +639,7 @@ export class UltramanSplitPvpEngine {
     width: number,
     height: number,
     laneCenter: number,
+    hands?: HandLandmarksInput | null,
   ) {
     if (this.controlMode !== 'camera') return
     const f = this.fighters[slot]
@@ -533,15 +651,19 @@ export class UltramanSplitPvpEngine {
       worldLandmarks,
       !!f.profile.forms,
       laneCenter,
+      hands,
     )
     f.gestureTracking = snap.tracking
     const fullBody = snap.coverage === 'full' && canTrackFeet(landmarks)
     const physicalKick = fullBody && f.feetTracked ? snap.kick : null
     f.feetTracked = fullBody
     f.gestureCoverage = fullBody ? 'full' : snap.tracking ? 'upper' : 'none'
+    f.gestureDistanceHint = snap.distanceHint
+    f.gestureActiveCue = snap.activeCue
+    f.gestureMirroredX = snap.mirroredCenterX
     f.gestureLean = snap.lean
-    f.gestureGuard = snap.guard
-    if (snap.guardJustStarted) {
+    f.gestureGuard = snap.guard && f.guardBrokenCd <= 0
+    if (snap.guardJustStarted && f.guardBrokenCd <= 0) {
       f.guardStartedAt = this.elapsedTime
     }
     f.gestureBeamCharge = snap.beamCharge
@@ -581,11 +703,9 @@ export class UltramanSplitPvpEngine {
     } else if (physicalKick) {
       this.executeKick(slot, physicalKick, false)
     } else if (snap.punch) {
-      this.executePunch(slot, snap.punch)
+      this.executePunch(slot, snap.punch, snap.punchStyle, snap.punchPower)
     }
   }
-
-  // ---- 双人键盘 / 手动指令入口 ----
 
   public setManualLean(slot: PvpSlot, dir: -1 | 0 | 1) {
     this.fighters[slot].manualLean = dir
@@ -593,6 +713,7 @@ export class UltramanSplitPvpEngine {
 
   public setManualGuard(slot: PvpSlot, active: boolean) {
     const f = this.fighters[slot]
+    if (active && f.guardBrokenCd > 0) return
     if (active && !f.manualGuard) {
       f.guardStartedAt = this.elapsedTime
     }
@@ -605,7 +726,10 @@ export class UltramanSplitPvpEngine {
       this.pushBeamClash(slot, 0.095)
       return
     }
-    this.executePunch(slot, side)
+    const f = this.fighters[slot]
+    const styles: PunchStyle[] = ['jab', 'hook', 'chop', 'uppercut']
+    const style = styles[f.manualCycle++ % styles.length]!
+    this.executePunch(slot, side, style, style === 'uppercut' || style === 'hook' ? 0.9 : 0.72)
   }
 
   public triggerManualKick(slot: PvpSlot, side: 'left' | 'right' = 'right') {
@@ -655,34 +779,64 @@ export class UltramanSplitPvpEngine {
     f.effects.spawnBurst(pos, form.accentColor, 26, 24, 1.4)
     f.effects.spawnHitFlash(pos, form.accentColor, 1.5)
     f.effects.spawnImpactRing(pos, form.accentColor, 7.0)
-    this.audio.playTransform()
+    f.effects.flashDynamicLight(pos, form.accentColor, 26, 0.3)
+    this.audio.playTransform('type')
     this.addTrauma(slot, 0.3)
     f.fovKick = -3.0
     this.showFighterBanner(slot, `bannerForm${form.bannerKey}`, 1.25)
     this.emitHud()
   }
 
-  private executePunch(slot: PvpSlot, side: 'left' | 'right') {
+  private executePunch(
+    slot: PvpSlot,
+    side: 'left' | 'right',
+    style: PunchStyle = 'jab',
+    power = 0.75,
+  ) {
     const f = this.fighters[slot]
     const opp = this.fighters[(1 - slot) as PvpSlot]
     if (f.effects.isHeroBeamActive()) return
 
     f.punchChain = f.chainTimeLeft > 0 && f.lastPunchSide !== side ? f.punchChain + 1 : 1
-    const finisher = f.punchChain >= 3
+    const finisher = f.punchChain >= 3 || style === 'uppercut'
     f.lastPunchSide = side
     f.chainTimeLeft = finisher ? 0 : 1.5
 
-    f.hero.triggerAction(
-      finisher ? 'punch-heavy' : side === 'left' ? 'punch-left' : 'punch-right',
-      finisher ? 0.38 : 0.28,
-    )
+    const action: HeroAction =
+      style === 'uppercut'
+        ? side === 'left'
+          ? 'uppercut-left'
+          : 'uppercut-right'
+        : style === 'hook'
+          ? side === 'left'
+            ? 'hook-left'
+            : 'hook-right'
+          : style === 'chop'
+            ? side === 'left'
+              ? 'chop-left'
+              : 'chop-right'
+            : finisher
+              ? 'punch-heavy'
+              : side === 'left'
+                ? 'punch-left'
+                : 'punch-right'
+
+    f.hero.triggerAction(action, finisher ? 0.4 : 0.3)
     if (finisher) f.fovKick = -2.4
 
     const origin = f.hero.getFistOrigin(side)
     const target = opp.hero.getTargetCenter()
-    const damage = Math.round((finisher ? 26 : 13) * this.getDamageMul(slot))
-    f.effects.spawnPunchWave(origin, target, damage, side, finisher)
-    f.effects.spawnBurst(origin, f.profile.burstColor, 6, 14, 0.6)
+    const baseDmg = style === 'uppercut' ? 24 : style === 'hook' || style === 'chop' ? 18 : finisher ? 25 : 13
+    const damage = Math.round(baseDmg * (0.85 + power * 0.25) * this.getDamageMul(slot))
+    f.effects.spawnPalmBolt(origin, target, damage, side)
+    f.effects.spawnMeleeSlash(
+      origin,
+      finisher ? 0xfacc15 : f.profile.burstColor,
+      [0.2, 0, side === 'left' ? -0.5 : 2.5],
+      finisher ? 1.15 : 0.9,
+      side === 'left' ? -1 : 1,
+    )
+    f.effects.spawnBurst(origin, f.profile.burstColor, 8, 16, 0.65)
     this.audio.playSwing(side, false)
     if (finisher) f.punchChain = 0
     this.emitHud()
@@ -695,14 +849,14 @@ export class UltramanSplitPvpEngine {
 
     f.hero.triggerAction(
       jumping ? 'jump-kick' : side === 'left' ? 'kick-left' : 'kick-right',
-      jumping ? 0.46 : 0.36,
+      jumping ? 0.48 : 0.38,
     )
     f.fovKick = jumping ? -3.2 : -2.2
     const origin = f.hero.getFootOrigin(side)
     const target = opp.hero.getTargetCenter()
-    const damage = Math.round((jumping ? 28 : 21) * this.getDamageMul(slot))
+    const damage = Math.round((jumping ? 28 : 22) * this.getDamageMul(slot))
     f.effects.spawnKickWave(origin, target, damage)
-    f.effects.spawnBurst(origin, 0xf97316, 10, 16, 0.8)
+    f.effects.spawnBurst(origin, 0xf97316, 12, 18, 0.85)
     this.audio.playSwing(side, true)
     this.showFighterBanner(slot, jumping ? 'bannerJumpKick' : 'bannerKick', 0.85)
   }
@@ -745,7 +899,6 @@ export class UltramanSplitPvpEngine {
     f.beamCooldown = BEAM_BASE_CD
     f.beamIsSuper = isSuper
 
-    // 若对面此时正在发射必杀光线 -> 瞬间引爆双奥特曼宿命光线对波！！
     if (opp.effects.isHeroBeamActive()) {
       this.startPvpBeamClash(slot, isSuper)
       return
@@ -754,12 +907,17 @@ export class UltramanSplitPvpEngine {
     const dur = isSuper ? 1.65 : 1.25
     f.hero.triggerAction('beam', dur)
     f.effects.startHeroBeam(isSuper, dur)
+    f.effects.flashDynamicLight(
+      f.hero.root.position.clone().add(new THREE.Vector3(0, 9.2, 0)),
+      isSuper ? f.profile.beamSuperColor : f.profile.beamColor,
+      36,
+      0.4,
+    )
     this.audio.playBeam(isSuper)
     this.addTrauma(slot, isSuper ? 0.55 : 0.38)
     this.addTrauma(oppSlot, 0.25)
     f.fovKick = isSuper ? -4.0 : -2.8
 
-    // 首段命中延迟 0.38s，给对面玩家留出交叉防御或按下光线键反制对波的精彩博弈窗口！
     f.beamTicksRemaining = isSuper ? 4 : 3
     f.beamDamagePerTick = Math.round((isSuper ? 16 : 13) * this.getDamageMul(slot))
     f.beamTickTimer = 0.38
@@ -778,7 +936,6 @@ export class UltramanSplitPvpEngine {
 
     this.beamClashActive = true
     this.beamClashTimer = 1.85
-    // 满能量超光线享有初始对波身位优势
     let balance = 0.5
     if (initiatorSuper !== responderSuper) {
       const bonus = 0.12
@@ -802,9 +959,7 @@ export class UltramanSplitPvpEngine {
   }
 
   private syncBeamClashVisuals() {
-    // effects[0] 的 clashProgress 表示从 P1 射向 P2 的比例；effects[1] 为互补比例 1 - balance
     this.fighters[0].effects.setBeamClash(this.beamClashActive, this.beamClashBalance)
-    // 只由 effects[0] 渲染中央奇点光球，effects[1] 仅截断光束终点对齐奇点即可
     this.fighters[1].effects.setBeamClash(this.beamClashActive, 1 - this.beamClashBalance)
   }
 
@@ -833,9 +988,11 @@ export class UltramanSplitPvpEngine {
     const hitPos = loser.hero.getTargetCenter()
 
     loser.effects.spawnBurst(hitPos, 0xfef08a, 34, 32, 1.55)
+    loser.effects.spawnDebris(hitPos, 16, 22)
     loser.effects.spawnImpactRing(hitPos, 0xfacc15, 10.5)
     loser.effects.spawnHitFlash(hitPos, 0xffffff, 2.0)
-    this.arena.groundImpact(loser.hero.currentX, loser.hero.worldZ, this.elapsedTime)
+    loser.effects.flashDynamicLight(hitPos, 0xfef08a, 46, 0.45)
+    this.arena.groundImpact(loser.hero.currentX, loser.hero.worldZ, this.elapsedTime, 9.0)
     this.audio.playHeavyImpact()
     this.audio.playExplosion()
     this.gainEnergy(winnerSlot, 22)
@@ -853,6 +1010,7 @@ export class UltramanSplitPvpEngine {
 
   private isFighterGuarding(slot: PvpSlot): boolean {
     const f = this.fighters[slot]
+    if (f.guardBrokenCd > 0) return false
     return f.manualGuard || f.gestureGuard
   }
 
@@ -869,39 +1027,49 @@ export class UltramanSplitPvpEngine {
     const def = this.fighters[defenderSlot]
     const hitPos = def.hero.getTargetCenter()
 
-    // 防御判定（对波压制爆破不可防御）
     if (!unblockable && this.isFighterGuarding(defenderSlot)) {
-      const isJustGuard = this.elapsedTime - def.guardStartedAt <= 0.68
+      const isJustGuard = this.elapsedTime - def.guardStartedAt <= 0.52
       if (isJustGuard) {
         def.perfectGuards += 1
-        this.gainEnergy(defenderSlot, 26)
-        this.audio.playGuardBlock()
+        def.guardStamina = 100
+        this.gainEnergy(defenderSlot, 28)
+        def.hero.triggerAction('guard-parry', 0.42)
+        this.audio.playParry()
         def.effects.triggerShieldBlockFlash()
-        def.effects.spawnBurst(hitPos, 0xfef08a, 20, 22, 1.05)
-        def.effects.spawnImpactRing(hitPos, 0xfef08a, 6.2)
-        this.addHitStop(0.055)
+        def.effects.spawnBurst(hitPos, 0xfef08a, 24, 24, 1.15)
+        def.effects.spawnImpactRing(hitPos, 0xfef08a, 7.0)
+        def.effects.flashDynamicLight(hitPos, 0xfef08a, 32, 0.28)
+        this.addHitStop(0.068)
         this.addTrauma(defenderSlot, 0.28)
         this.addTrauma(attackerSlot, 0.28)
-        this.spawnFloating(defenderSlot, hitPos, 'PERFECT GUARD!', '#38bdf8', 1.22, 'guard')
-        this.spawnFloating(attackerSlot, hitPos, 'PARRIED!', '#38bdf8', 1.12, 'guard')
+        this.triggerSlotFlash(defenderSlot, 'parry')
+        this.spawnFloating(defenderSlot, hitPos, 'PARRY!', '#38bdf8', 1.28, 'guard')
+        this.spawnFloating(attackerSlot, hitPos, 'PARRIED!', '#38bdf8', 1.14, 'guard')
         this.showFighterBanner(defenderSlot, 'bannerPerfectGuard', 0.9)
         this.emitHud()
         return
       }
 
-      // 长时间死架护盾时，飞踢重击可直接踢碎护盾！
       if (isHeavy && atk.hero.getAction().includes('kick')) {
         def.manualGuard = false
         def.gestureGuard = false
+        def.guardStamina = 0
+        def.guardBrokenCd = 1.5
         this.audio.playHeavyImpact()
-        this.spawnFloating(defenderSlot, hitPos, 'GUARD BREAK!', '#fb923c', 1.24, 'crit')
+        this.triggerSlotFlash(defenderSlot, 'hurt')
+        this.spawnFloating(defenderSlot, hitPos, 'GUARD BREAK!', '#fb923c', 1.26, 'crit')
       } else {
-        const chip = Math.max(2, Math.round(rawDamage * 0.22))
+        def.guardStamina = Math.max(0, def.guardStamina - (isHeavy ? 32 : 20))
+        const chip = Math.max(2, Math.round(rawDamage * 0.2))
         def.hp = Math.max(1, def.hp - chip)
         this.gainEnergy(defenderSlot, 9)
         this.audio.playGuardBlock()
         def.effects.triggerShieldBlockFlash()
-        def.effects.spawnBurst(hitPos, 0x7dd3fc, 10, 18, 0.9)
+        def.effects.spawnBurst(hitPos, 0x7dd3fc, 12, 18, 0.9)
+        if (def.guardStamina <= 0) {
+          def.guardBrokenCd = 1.4
+          def.manualGuard = false
+        }
         this.spawnFloating(defenderSlot, hitPos, `GUARD -${chip}`, '#93c5fd', 0.98, 'guard')
         this.spawnFloating(attackerSlot, hitPos, `-${chip}`, '#93c5fd', 0.95)
         this.emitHud()
@@ -917,31 +1085,55 @@ export class UltramanSplitPvpEngine {
     atk.maxCombo = Math.max(atk.maxCombo, atk.combo)
     atk.comboTimer = 3.2
 
-    def.hero.triggerAction('hit', 0.38)
+    def.hero.triggerAction(isHeavy ? 'hit-heavy' : 'hit', isHeavy ? 0.48 : 0.36)
+    def.hero.triggerHurtFlash(isHeavy ? 1 : 0.78)
+    this.triggerSlotFlash(defenderSlot, 'hurt')
+    if (isHeavy) this.triggerSlotFlash(attackerSlot, 'heavy')
+
     def.effects.spawnBurst(
       hitPos,
       isHeavy ? 0xfacc15 : atk.profile.beamColor,
-      isHeavy ? 22 : 14,
-      isHeavy ? 26 : 19,
-      isHeavy ? 1.2 : 0.9,
+      isHeavy ? 24 : 14,
+      isHeavy ? 28 : 19,
+      isHeavy ? 1.25 : 0.92,
     )
-    def.effects.spawnImpactRing(hitPos, isHeavy ? 0xfef08a : atk.profile.burstColor, isHeavy ? 6.8 : 4.5)
-    def.effects.spawnHitFlash(hitPos, 0xffffff, isHeavy ? 1.35 : 0.95)
+    def.effects.spawnImpactRing(
+      hitPos,
+      isHeavy ? 0xfef08a : atk.profile.burstColor,
+      isHeavy ? 7.2 : 4.6,
+    )
+    def.effects.spawnHitFlash(hitPos, 0xffffff, isHeavy ? 1.38 : 0.95)
 
     if (isHeavy) {
-      this.arena.groundImpact(def.hero.currentX, def.hero.worldZ, this.elapsedTime)
-      this.addHitStop(0.075)
+      def.effects.spawnDebris(hitPos, 10, 18)
+      def.effects.flashDynamicLight(hitPos, 0xfacc15, 32, 0.3)
+      this.arena.groundImpact(def.hero.currentX, def.hero.worldZ, this.elapsedTime, 5.5)
+      this.addHitStop(0.08)
       this.addTrauma(defenderSlot, 0.48)
       this.addTrauma(attackerSlot, 0.34)
     } else {
-      this.addHitStop(0.042)
+      this.addHitStop(0.045)
       this.addTrauma(defenderSlot, 0.28)
       this.addTrauma(attackerSlot, 0.18)
     }
 
     const txt = `-${rawDamage}${isHeavy ? '!' : ''}`
-    this.spawnFloating(defenderSlot, hitPos, txt, '#ff4d4f', isHeavy ? 1.26 : 1.05, isHeavy ? 'crit' : 'normal')
-    this.spawnFloating(attackerSlot, hitPos, txt, color, isHeavy ? 1.28 : 1.05, isHeavy ? 'crit' : 'normal')
+    this.spawnFloating(
+      defenderSlot,
+      hitPos,
+      txt,
+      '#ff4d4f',
+      isHeavy ? 1.26 : 1.05,
+      isHeavy ? 'crit' : 'normal',
+    )
+    this.spawnFloating(
+      attackerSlot,
+      hitPos,
+      txt,
+      color,
+      isHeavy ? 1.28 : 1.05,
+      isHeavy ? 'crit' : 'normal',
+    )
 
     if (def.hp <= 0) {
       this.onRoundFinished(attackerSlot)
@@ -968,8 +1160,10 @@ export class UltramanSplitPvpEngine {
       this.wins[winner] += 1
       const loser = (1 - winner) as PvpSlot
       const loserCenter = this.fighters[loser].hero.getTargetCenter()
-      this.fighters[loser].effects.spawnBurst(loserCenter, 0xff6b2b, 32, 30, 1.5)
-      this.fighters[loser].effects.spawnImpactRing(loserCenter, 0xffd28a, 10)
+      this.fighters[loser].effects.spawnBurst(loserCenter, 0xff6b2b, 34, 30, 1.55)
+      this.fighters[loser].effects.spawnDebris(loserCenter, 16, 22)
+      this.fighters[loser].effects.spawnImpactRing(loserCenter, 0xffd28a, 10.5)
+      this.fighters[loser].effects.flashDynamicLight(loserCenter, 0xff6b2b, 48, 0.45)
       this.fighters[loser].hero.triggerAction('defeat', 99)
       this.audio.playExplosion()
       this.addHitStop(0.12)
@@ -977,12 +1171,18 @@ export class UltramanSplitPvpEngine {
       this.addTrauma(1, 0.7)
     }
 
-    // 检查是否决出整场三局两胜总冠军
     if (this.wins[0] >= WINS_NEEDED || this.wins[1] >= WINS_NEEDED) {
       const champ: PvpSlot =
-        this.wins[0] > this.wins[1] ? 0 : this.wins[1] > this.wins[0] ? 1 : winner === 'draw' ? 0 : winner
+        this.wins[0] > this.wins[1]
+          ? 0
+          : this.wins[1] > this.wins[0]
+            ? 1
+            : winner === 'draw'
+              ? 0
+              : winner
       this.matchWinner = champ
       this.phase = 'match-over'
+      this.audio.setAmbience(this.activeTheme, false)
       this.fighters[champ].hero.triggerAction('victory', 6)
       this.fighters[(1 - champ) as PvpSlot].hero.triggerAction('defeat', 99)
       this.audio.playVictory()
@@ -1065,8 +1265,8 @@ export class UltramanSplitPvpEngine {
 
     let dt = rawDt
     if (this.hitStopTimer > 0) {
-      this.hitStopTimer -= rawDt
-      dt = rawDt * 0.12
+      this.hitStopTimer = Math.max(0, this.hitStopTimer - rawDt)
+      dt = rawDt * 0.1
     }
 
     this.stepSimulation(dt, rawDt, now)
@@ -1081,8 +1281,10 @@ export class UltramanSplitPvpEngine {
 
     for (const slot of [0, 1] as const) {
       const f = this.fighters[slot]
+      const opp = this.fighters[(1 - slot) as PvpSlot]
       if (f.discCooldown > 0) f.discCooldown = Math.max(0, f.discCooldown - dt)
       if (f.beamCooldown > 0) f.beamCooldown = Math.max(0, f.beamCooldown - dt)
+      if (f.guardBrokenCd > 0) f.guardBrokenCd = Math.max(0, f.guardBrokenCd - rawDt)
       if (f.bannerTimer > 0) {
         f.bannerTimer = Math.max(0, f.bannerTimer - dt)
         if (f.bannerTimer <= 0) f.bannerKey = null
@@ -1102,6 +1304,16 @@ export class UltramanSplitPvpEngine {
       }
       f.wasGuarding = guarding
 
+      if (guarding) {
+        f.guardStamina = Math.max(0, f.guardStamina - rawDt * 22)
+        if (f.guardStamina <= 0) {
+          f.guardBrokenCd = 1.4
+          f.manualGuard = false
+        }
+      } else {
+        f.guardStamina = Math.min(100, f.guardStamina + rawDt * 30)
+      }
+
       f.hero.setLean(lean)
       f.hero.setGuard(guarding)
       f.hero.setBeamCharge(
@@ -1112,9 +1324,46 @@ export class UltramanSplitPvpEngine {
         this.controlMode === 'camera' ? f.gestureDiscCharge : 0,
         f.gestureDiscSide,
       )
+      // 双雄战斗时头眼死锁对手面部
+      if (this.phase === 'fighting') {
+        f.hero.setLookTarget(opp.hero.getTargetCenter().add(new THREE.Vector3(0, 2.2, 0)))
+      } else {
+        f.hero.setLookTarget(null)
+      }
 
       const danger = this.phase === 'fighting' && f.hp > 0 && f.hp <= PVP_MAX_HP * 0.3
       f.hero.update(dt, this.elapsedTime, danger, nowMs, rawDt)
+
+      // 拳脚动态拖尾丝带
+      const info = f.hero.getStrikeContactInfo()
+      f.effects.updateLimbTrail(
+        'handL',
+        info.limb === 'handL' && info.progress >= 0.12 && info.progress <= 0.56,
+        f.hero.getFistOrigin('left'),
+        f.profile.accentColor,
+        rawDt,
+      )
+      f.effects.updateLimbTrail(
+        'handR',
+        info.limb === 'handR' && info.progress >= 0.12 && info.progress <= 0.56,
+        f.hero.getFistOrigin('right'),
+        f.profile.accentColor,
+        rawDt,
+      )
+      f.effects.updateLimbTrail(
+        'footL',
+        info.limb === 'footL' && info.progress >= 0.12 && info.progress <= 0.62,
+        f.hero.getFootOrigin('left'),
+        0xf97316,
+        rawDt,
+      )
+      f.effects.updateLimbTrail(
+        'footR',
+        info.limb === 'footR' && info.progress >= 0.12 && info.progress <= 0.62,
+        f.hero.getFootOrigin('right'),
+        0xf97316,
+        rawDt,
+      )
     }
 
     this.arena.update(
@@ -1122,6 +1371,8 @@ export class UltramanSplitPvpEngine {
       this.fighters[0].hero.root.position,
       this.fighters[1].hero.root.position,
       true,
+      this.cameras[0].position,
+      rawDt,
     )
 
     if (this.phase === 'round-intro') {
@@ -1140,7 +1391,6 @@ export class UltramanSplitPvpEngine {
       this.stepPvpCombat(dt)
     }
 
-    // 更新双方独立特效池
     const zeroVec = new THREE.Vector3()
     for (const slot of [0, 1] as const) {
       const f = this.fighters[slot]
@@ -1158,6 +1408,7 @@ export class UltramanSplitPvpEngine {
         this.beamClashActive ? oppEmit : zeroVec,
         f.hero.getTargetCenter(),
         this.cameras[slot].quaternion,
+        this.cameras[slot].position,
       )
       f.effects.updateShield(
         this.isFighterGuarding(slot),
@@ -1192,7 +1443,6 @@ export class UltramanSplitPvpEngine {
   }
 
   private stepPvpCombat(dt: number) {
-    // 回合倒计时
     this.roundTimeLeft = Math.max(0, this.roundTimeLeft - dt)
     if (this.roundTimeLeft <= 0) {
       if (this.fighters[0].hp > this.fighters[1].hp) this.onRoundFinished(0)
@@ -1201,7 +1451,6 @@ export class UltramanSplitPvpEngine {
       return
     }
 
-    // 1. 双人宿命光线对波结算
     if (this.beamClashActive) {
       this.beamClashTimer -= dt
       if (this.controlMode === 'camera') {
@@ -1227,7 +1476,6 @@ export class UltramanSplitPvpEngine {
       return
     }
 
-    // 2. 单方必杀光线多段伤害结算
     for (const slot of [0, 1] as const) {
       const f = this.fighters[slot]
       const oppSlot = (1 - slot) as PvpSlot
@@ -1242,7 +1490,7 @@ export class UltramanSplitPvpEngine {
       }
     }
 
-    // 3. 双方抛射物半途对轰消弹（Clash）
+    // 抛射物半途对轰消弹（Clash）
     const p1Projs = this.fighters[0].effects.projectiles
     const p2Projs = this.fighters[1].effects.projectiles
     for (const a of p1Projs) {
@@ -1253,13 +1501,14 @@ export class UltramanSplitPvpEngine {
           a.hitTriggered = true
           b.hitTriggered = true
           const mid = a.pos.clone().lerp(b.pos, 0.5)
-          this.fighters[0].effects.spawnBurst(mid, 0xfef08a, 20, 24, 1.15)
-          this.fighters[0].effects.spawnImpactRing(mid, 0xfacc15, 6.2)
-          this.fighters[0].effects.spawnHitFlash(mid, 0xffffff, 1.3)
+          this.fighters[0].effects.spawnBurst(mid, 0xfef08a, 22, 26, 1.2)
+          this.fighters[0].effects.spawnImpactRing(mid, 0xfacc15, 6.4)
+          this.fighters[0].effects.spawnHitFlash(mid, 0xffffff, 1.35)
+          this.fighters[0].effects.flashDynamicLight(mid, 0xfef08a, 26, 0.22)
           this.audio.playDeflect()
           this.gainEnergy(0, 12)
           this.gainEnergy(1, 12)
-          this.addHitStop(0.045)
+          this.addHitStop(0.05)
           this.addTrauma(0, 0.22)
           this.addTrauma(1, 0.22)
           this.spawnFloating(0, mid, 'CLASH!', '#fde047', 1.15, 'guard')
@@ -1269,7 +1518,6 @@ export class UltramanSplitPvpEngine {
       }
     }
 
-    // 4. 抛射物抵达对手战线：真实 3D 侧闪擦肩判定 vs 命中判定
     for (const slot of [0, 1] as const) {
       const atk = this.fighters[slot]
       const defSlot = (1 - slot) as PvpSlot
@@ -1288,25 +1536,21 @@ export class UltramanSplitPvpEngine {
           proj.kind === 'ultra-disc' ? 3.4 : proj.kind === 'kick-wave' ? 3.2 : 2.95
         const lateralDist = Math.abs(proj.pos.x - def.hero.currentX)
 
-        // 对手成功横向侧闪躲开攻击！
         if (lateralDist > hitRadius) {
-          this.gainEnergy(defSlot, 15)
-          this.audio.playDodge()
+          def.perfectDodges++
+          this.gainEnergy(defSlot, 18)
+          this.audio.playBulletTime()
+          this.triggerSlotFlash(defSlot, 'dodge')
           const dodgePos = def.hero.getTargetCenter().add(new THREE.Vector3(0, 4.2, 0))
-          this.spawnFloating(defSlot, dodgePos, 'PERFECT DODGE!', '#4ade80', 1.16, 'dodge')
+          this.spawnFloating(defSlot, dodgePos, 'PERFECT DODGE!', '#4ade80', 1.2, 'dodge')
           this.spawnFloating(slot, dodgePos, 'MISS!', '#94a3b8', 0.95)
           continue
         }
 
-        // 实打实命中对手
         this.gainEnergy(slot, proj.kind === 'ultra-disc' ? 16 : proj.finisher ? 15 : 10)
-        if (proj.kind === 'punch-wave') {
-          if (proj.finisher) {
-            this.audio.playHeavyImpact()
-            this.showFighterBanner(slot, 'bannerTriple', 0.9)
-          } else {
-            this.audio.playPunch(true)
-          }
+        if (proj.kind === 'palm-bolt' || proj.kind === 'punch-wave') {
+          this.audio.playImpact('metal', !!proj.finisher, atk.combo + 1)
+          if (proj.finisher) this.showFighterBanner(slot, 'bannerTriple', 0.9)
           this.inflictDamage(
             slot,
             defSlot,
@@ -1315,10 +1559,10 @@ export class UltramanSplitPvpEngine {
             !!proj.finisher,
           )
         } else if (proj.kind === 'kick-wave') {
-          this.audio.playHeavyImpact()
+          this.audio.playImpact('metal', true, atk.combo + 1)
           this.inflictDamage(slot, defSlot, proj.damage, '#fb923c', true)
         } else if (proj.kind === 'ultra-disc') {
-          this.audio.playHeavyImpact()
+          this.audio.playImpact('metal', true, atk.combo + 1)
           this.inflictDamage(slot, defSlot, proj.damage, '#67e8f9', true)
         }
       }
@@ -1330,7 +1574,6 @@ export class UltramanSplitPvpEngine {
     const wideFactor = THREE.MathUtils.clamp((aspect - 0.68) / 0.72, 0, 1)
 
     if (this.phase === 'menu') {
-      // 整备菜单全屏单镜头：侧面史诗广角对峙，自适应宽高比将双雄完整收拢在中央安全区
       const cam = this.cameras[0]
       const sway = Math.sin(this.elapsedTime * 0.55) * 0.65
       const menuWide = THREE.MathUtils.clamp((aspect - 1.1) / 0.68, 0, 1)
@@ -1360,7 +1603,6 @@ export class UltramanSplitPvpEngine {
         targetCam.set(s * 3.2, 9.2, s * 22.5)
         targetLook.copy(f.hero.root.position).add(new THREE.Vector3(0, 7, 0))
       } else if (this.beamClashActive) {
-        // 对波时两侧玩家各自从斜后侧方广角观看己方发波、中央碰撞星芒与远端对手
         const clashSideX = s * THREE.MathUtils.lerp(15.8, 19.5, wideFactor)
         targetCam.set(clashSideX, 11.2, s * 9.2)
         targetLook.set(0, 8.8, -s * 0.8)
@@ -1370,7 +1612,6 @@ export class UltramanSplitPvpEngine {
         targetCam.set(f.hero.currentX * 0.45 + beamOffsetX, 10.8, s * 17.8)
         targetLook.set(opp.hero.currentX * 0.5, 9.0, opp.hero.worldZ * 0.45)
       } else {
-        // 对称第三人称越肩视角：己方居左前景、对面奥特曼全身居右中景，零肩膀遮挡
         const shoulderX = s * THREE.MathUtils.lerp(2.7, 4.1, wideFactor)
         const camDistZ = THREE.MathUtils.lerp(22.8, 20.6, wideFactor)
         targetCam.set(f.hero.currentX * 0.6 + shoulderX, 11.7, s * camDistZ)
@@ -1405,6 +1646,7 @@ export class UltramanSplitPvpEngine {
     }
   }
 
+  /** 双视口选择性 Bloom 渲染：分别离屏执行 Bloom+OutputPass 后合成至左右/上下分屏 */
   private renderSplitViews() {
     const w = this.fullWidth
     const h = this.fullHeight
@@ -1412,34 +1654,49 @@ export class UltramanSplitPvpEngine {
     if (this.phase === 'menu') {
       this.renderer.setScissorTest(false)
       this.renderer.setViewport(0, 0, w, h)
-      this.renderer.render(this.scene, this.cameras[0])
+      this.menuComposer.render()
       return
     }
 
+    // 1. 分别离屏渲染两路带选择性 Bloom + ACES 色调映射的高精缓冲
+    this.renderer.setScissorTest(false)
+    this.splitComposers[0].render()
+    this.splitComposers[1].render()
+
+    // 2. 切回主画布并按横/竖分屏区域贴图合成
+    this.renderer.setRenderTarget(null)
     this.renderer.setScissorTest(true)
+    const prevAutoClear = this.renderer.autoClear
+    this.renderer.autoClear = false
+    this.renderer.clear()
+
     if (this.portraitSplit) {
-      // 竖屏上下分屏：上半屏 P1（WebGL y = halfH），下半屏 P2（WebGL y = 0）
       const halfH = Math.floor(h * 0.5)
       const topH = h - halfH
+      this.blitMat.map = this.splitComposers[0].readBuffer.texture
       this.renderer.setViewport(0, halfH, w, topH)
       this.renderer.setScissor(0, halfH, w, topH)
-      this.renderer.render(this.scene, this.cameras[0])
+      this.renderer.render(this.blitScene, this.blitCamera)
 
+      this.blitMat.map = this.splitComposers[1].readBuffer.texture
       this.renderer.setViewport(0, 0, w, halfH)
       this.renderer.setScissor(0, 0, w, halfH)
-      this.renderer.render(this.scene, this.cameras[1])
+      this.renderer.render(this.blitScene, this.blitCamera)
     } else {
-      // 横屏左右分屏：左半屏 P1，右半屏 P2
       const halfW = Math.floor(w * 0.5)
       const rightW = w - halfW
+      this.blitMat.map = this.splitComposers[0].readBuffer.texture
       this.renderer.setViewport(0, 0, halfW, h)
       this.renderer.setScissor(0, 0, halfW, h)
-      this.renderer.render(this.scene, this.cameras[0])
+      this.renderer.render(this.blitScene, this.blitCamera)
 
+      this.blitMat.map = this.splitComposers[1].readBuffer.texture
       this.renderer.setViewport(halfW, 0, rightW, h)
       this.renderer.setScissor(halfW, 0, rightW, h)
-      this.renderer.render(this.scene, this.cameras[1])
+      this.renderer.render(this.blitScene, this.blitCamera)
     }
+    this.renderer.setScissorTest(false)
+    this.renderer.autoClear = prevAutoClear
   }
 
   private buildFighterHud(slot: PvpSlot): PvpFighterHud {
@@ -1449,7 +1706,7 @@ export class UltramanSplitPvpEngine {
     let chargeProgress = 0
     if (this.isFighterGuarding(slot)) {
       chargeKind = 'guard'
-      chargeProgress = 1
+      chargeProgress = f.guardStamina / 100
     } else if (f.gestureBeamCharge > 0.05) {
       chargeKind = 'beam'
       chargeProgress = f.gestureBeamCharge
@@ -1468,10 +1725,12 @@ export class UltramanSplitPvpEngine {
       hasForms: !!f.profile.forms,
       hp: Math.round(f.hp),
       maxHp: PVP_MAX_HP,
+      guardStamina: Math.round(f.guardStamina),
       energy: Math.round(f.energy),
       combo: f.combo,
       maxCombo: f.maxCombo,
       perfectGuards: f.perfectGuards,
+      perfectDodges: f.perfectDodges,
       punchChain: f.punchChain,
       discCooldownRatio: THREE.MathUtils.clamp(f.discCooldown / discMax, 0, 1),
       beamCooldownRatio: THREE.MathUtils.clamp(f.beamCooldown / BEAM_BASE_CD, 0, 1),
@@ -1483,8 +1742,13 @@ export class UltramanSplitPvpEngine {
         opp.effects.isHeroBeamActive() &&
         !f.effects.isHeroBeamActive(),
       activeBannerKey: f.bannerKey,
+      impactFlashKind: f.impactFlashKind,
+      impactFlashSeq: f.impactFlashSeq,
       tracking: f.gestureTracking,
       bodyCoverage: f.gestureCoverage,
+      distanceHint: f.gestureDistanceHint,
+      activeGestureCue: f.gestureActiveCue,
+      mirroredCenterX: f.gestureMirroredX,
       poseHintKey: f.gestureHintKey,
       timerDanger: this.phase === 'fighting' && f.hp > 0 && f.hp <= PVP_MAX_HP * 0.3,
     }
@@ -1524,6 +1788,11 @@ export class UltramanSplitPvpEngine {
       f.hero.dispose()
     }
     this.arena.dispose()
+    this.menuComposer.dispose()
+    this.splitComposers[0].dispose()
+    this.splitComposers[1].dispose()
+    this.blitQuad.geometry.dispose()
+    this.blitMat.dispose()
     this.renderer.dispose()
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement)

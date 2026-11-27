@@ -19,15 +19,21 @@ import { KaijuController, MONSTER_WAVES } from './monsters'
 import type {
   ActionGuideKind,
   BattleHudState,
+  BattleRank,
   BattleStage,
   ConcreteSceneTheme,
   ControlMode,
+  DistanceHint,
   FloatingDamageEvent,
+  GameMode,
   GamePhase,
+  GestureActiveCue,
   HeroAction,
   MonsterAttackKind,
   PoseLandmark,
+  PunchStyle,
   SceneTheme,
+  StrikeHeight,
 } from './types'
 
 export interface EngineCallbacks {
@@ -35,38 +41,43 @@ export interface EngineCallbacks {
   onFloatingText: (evt: FloatingDamageEvent) => void
 }
 
-const DISC_MAX_COOLDOWN = 1.8
-const BEAM_MAX_COOLDOWN = 2.2
-const MELEE_PUNCH_COOLDOWN = 0.3
-const RANGED_PALM_COOLDOWN = 0.34
-const KICK_MIN_COOLDOWN = 0.48
+interface PendingMeleeStrike {
+  damage: number
+  impact: Impact
+  side: 'left' | 'right'
+  height: StrikeHeight
+  color: string
+  isCritical: boolean
+  isFinisher: boolean
+  isKick: boolean
+  settled: boolean
+}
 
-const MELEE_COMBO_ACTIONS: readonly HeroAction[] = [
-  'combo-1',
-  'combo-2',
-  'combo-3',
-  'combo-4',
-  'combo-5',
-]
+interface BufferedCombatInput {
+  kind: 'punch' | 'kick' | 'disc' | 'beam'
+  side: 'left' | 'right'
+  style: PunchStyle
+  power: number
+  height: StrikeHeight
+  jumping?: boolean
+  expiresAt: number
+}
 
-const MELEE_SLASH_STYLES: readonly { color: number; euler: [number, number, number]; spin: number }[] = [
-  { color: 0xff5a2c, euler: [0.25, 0.2, -0.55], spin: -1 },
-  { color: 0xfacc15, euler: [-0.2, -0.25, 2.45], spin: 1 },
-  { color: 0x38e8ff, euler: [0.55, 0.15, 0.85], spin: -1 },
-  { color: 0xf97316, euler: [-0.35, 0.1, -1.2], spin: 1 },
-  { color: 0xff2e63, euler: [1.22, 0.1, 0], spin: -1.6 },
-]
+const DISC_MAX_COOLDOWN = 1.65
+const BEAM_MAX_COOLDOWN = 2.1
+const MELEE_PUNCH_COOLDOWN = 0.24
+const RANGED_PALM_COOLDOWN = 0.3
+const KICK_MIN_COOLDOWN = 0.44
+const INPUT_BUFFER_WINDOW = 0.16
 
 /**
- * 悦动元气机级 3D 特摄体感超激斗主引擎：
- * - 选择性 UnrealBloomPass 电影级辉光渲染管线（严格防 NaN，突出复眼/刀光/护盾/烈焰/光线）
- * - 五幕无缝电影式战斗流程：
- *   0) 宇宙星海体感举手变身仪式
- *   1) 近身贴脸 5 段刀光拳脚肉搏 + 全身球形蓝色护盾弹反
- *   2) 过场正面特写 -> 正后方远程大步闪避巨型熔岩火球 + 掌心光弹连射
- *   3) 侧面超近景角力推力 QTE -> 霸气过肩摔砸飞怪兽 + 后空翻落地起身特写
- *   4) 残血处决二段必杀光线：正面展臂七彩棱镜聚能 -> 高空俯拍闪电超级光线轰爆
- *   5) 宇宙星海英雄合影结算
+ * 3D 奥特曼体感格斗主引擎（自由动作连招 + 接触帧硬核打击感 + 条件触发特摄名场面）：
+ * - 1:1 动作风格映射（左右直拳/摆拳/上勾/手刀/推掌/飞踢）+ 160ms 输入缓冲零吃招
+ * - 近战真实接触帧判定（淘汰隔空甜甜圈，在拳/脚接触窗口于真实骨骼处炸裂火花/碎石/动态点光）
+ * - 分层顿帧 + 顿帧期间怪兽 48Hz 高频震颤 + 部位差异受击动画
+ * - 真实空间闪避（深蹲躲高位、起跳躲低位、跨步躲火球）触发 0.36s 子弹时间 + 反击增伤
+ * - 护盾耐力系统防死防 + 精准弹反振开震晕怪兽
+ * - 自由战斗为主：支持主动开启残血终结大招、迎击哥莫拉冲锋进角力、迎击暗黑光线进对波、体感试招靶场与开场站位校准
  */
 export class UltramanGameEngine {
   private readonly container: HTMLElement
@@ -94,15 +105,14 @@ export class UltramanGameEngine {
   private baseAssets: Promise<void> | null = null
   private assetsReady = false
 
-  // 游戏核心状态机与五幕导演状态
+  // 模式与核心战斗状态
   private phase: GamePhase = 'menu'
+  private gameMode: GameMode = 'story'
   private battleStage: BattleStage = 'melee'
   private stageTimer = 0
-  private rangedTriggered = false
-  private grappleTriggered = false
-  private finisherTriggered = false
-  private rangedFireballTimer = 1.4
-  private rangedLaneCursor = 0
+  private calibrationProgress = 0
+  private menuOrbitFocus: 'center' | 'hero' | 'monster' = 'center'
+  private menuFocusTimer = 0
 
   private heroProfile: HeroProfile = HERO_PROFILES.tiga
   private heroFormIndex = 0
@@ -110,31 +120,45 @@ export class UltramanGameEngine {
   private preferredTheme: SceneTheme = 'auto'
   private loadingProgress = 0
   private waveIndex = 0
-  private monsterHp = 1100
-  private monsterMaxHp = 1100
+  private monsterHp = 1120
+  private monsterMaxHp = 1120
   private heroHp = 100
   private readonly heroMaxHp = 100
+  private guardStamina = 100
+  private guardBrokenCooldown = 0
   private energy = 50
   private score = 0
   private punchChain = 0
-  private comboStep = 0
+  private manualPunchCycle = 0
   private lastPunchSide: 'left' | 'right' | null = null
   private chainTimeLeft = 0
   private combo = 0
   private maxCombo = 0
   private comboResetTimer = 0
   private perfectGuards = 0
+  private perfectDodges = 0
+  private totalHeroDamageTaken = 0
+  private finisherKillCount = 0
   private defeatedCount = 0
 
   private waveTransitionTimer = 0
 
-  // 变身、角力、二段终结光线状态
+  // 接触帧近战挂起槽与 160ms 输入缓冲
+  private pendingMeleeStrike: PendingMeleeStrike | null = null
+  private bufferedInput: BufferedCombatInput | null = null
+
+  // 子弹时间与反击增伤窗口
+  private bulletTimeLeft = 0
+  private counterBonusTimer = 0
+
+  // 变身、角力、主动终结光线状态
   private transformProgress = 0
   private transformBurstPlayed = false
   private transformHoldAfterTrigger = 0
   private grappleProgress = 0.48
   private grappleTimeLeft = 0
   private grappleSfxCooldown = 0
+  private grappleTriggeredThisWave = false
   private finisherSpreadProgress = 0
   private finisherBeamFired = false
   private finisherBeamWaitTimer = 0
@@ -142,7 +166,7 @@ export class UltramanGameEngine {
   private rainbowSfxCooldown = 0
   private lastDodgeTriggerAt = -Infinity
 
-  // 招式、防御时机与双光线对波状态
+  // 招式冷却与对波
   private beamDamageTicksRemaining = 0
   private beamTickTimer = 0
   private beamDamagePerTick = 28
@@ -154,16 +178,24 @@ export class UltramanGameEngine {
   private beamClashTimer = 0
   private beamClashProgress = 0.5
 
+  // 键盘/触屏输入状态
   private manualLean = 0
   private manualGuard = false
+  private manualCrouch = false
+  private manualJumpTimer = 0
   private manualSpreadHeld = false
   private guardStartedAt = -Infinity
   private wasGuarding = false
 
+  // 摄像头体感快照状态
   private gestureLean = 0
   private gestureGuard = false
+  private gestureCrouching = false
+  private gestureJumping = false
   private gestureTracking = false
   private gestureCoverage: 'none' | 'upper' | 'full' = 'none'
+  private gestureDistanceHint: DistanceHint = 'ok'
+  private gestureActiveCue: GestureActiveCue = 'none'
   private gestureMirroredX = 0.5
   private gestureHintKey = 'hintReady'
   private gestureBeamCharge = 0
@@ -176,10 +208,12 @@ export class UltramanGameEngine {
   private gestureStrugglePower = 0
   private gestureTransformProgress = 0
 
-  // 镜头动效（命中顿帧 + FOV 冲击推镜 + trauma² 多频震动）
+  // 视觉冲击帧与镜头动效
   private hitStopTimer = 0
   private shakeTrauma = 0
   private fovKick = 0
+  private impactFlashKind: BattleHudState['impactFlashKind'] = 'none'
+  private impactFlashSeq = 0
   private skillBannerKey: string | null = null
   private skillBannerTimer = 0
   private floatingIdCounter = 1
@@ -225,17 +259,17 @@ export class UltramanGameEngine {
 
     container.appendChild(this.renderer.domElement)
 
-    // 选择性电影辉光后处理管线（阈值 0.96 + 克制强度 0.24，保证头雕、胸甲与都市轮廓纤毫毕现零白雾）
+    // 选择性 Bloom 后处理管线（阈值 0.96 仅让高能光效与复眼辉光，绝不泛白起雾）
     this.composer = new EffectComposer(this.renderer)
     this.composer.setPixelRatio(dpr)
     this.composer.setSize(w, h)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.24, 0.24, 0.96)
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.26, 0.96)
     this.composer.addPass(this.bloomPass)
     this.composer.addPass(new OutputPass())
 
     this.arena = new ArenaManager(this.scene, this.renderer)
-    this.hero = new HeroController(this.scene, { baseZ: 7.0 })
+    this.hero = new HeroController(this.scene, { baseZ: 7.4 })
     this.kaiju = new KaijuController(this.scene)
     this.effects = new BattleEffects(this.scene)
 
@@ -246,7 +280,6 @@ export class UltramanGameEngine {
     this.loop(this.lastTimestamp)
   }
 
-  /** 为胜利合影强制渲染最新一帧并返回 WebGL 画布元素 */
   public getSnapshotCanvas(): HTMLCanvasElement {
     this.composer.render()
     return this.renderer.domElement
@@ -321,6 +354,8 @@ export class UltramanGameEngine {
     this.applyHeroForm()
     this.emitHud()
     if (this.phase !== 'menu' || !this.assetsReady) return
+    this.menuOrbitFocus = 'hero'
+    this.menuFocusTimer = 2.4
     this.loadingProgress = 40
     this.emitHud()
     await this.hero.load(this.loader, profile)
@@ -340,6 +375,8 @@ export class UltramanGameEngine {
     const clamped = THREE.MathUtils.clamp(waveIdx, 0, MONSTER_WAVES.length - 1)
     this.waveIndex = clamped
     if (this.phase !== 'menu' || !this.assetsReady) return
+    this.menuOrbitFocus = 'monster'
+    this.menuFocusTimer = 2.6
     const spec = MONSTER_WAVES[clamped]!
     this.audio.setMonster(spec.id)
     await Promise.all([
@@ -347,8 +384,11 @@ export class UltramanGameEngine {
       this.kaiju.spawn(this.loader, spec),
     ])
     if (this.disposed || this.phase !== 'menu') return
-    this.kaiju.setStageAnchor(-2.4, 11.6)
+    // 加坦杰厄体宽纵深极大，机库预览退后数米完整展示邪神全貌
+    const previewZ = spec.id === 'gatanothor' ? -9.5 : -3.4
+    this.kaiju.setStageAnchor(previewZ, 11.6)
     this.kaiju.encounter.enter('idle')
+    this.audio.playRoar(spec.id)
     this.emitHud()
   }
 
@@ -357,6 +397,8 @@ export class UltramanGameEngine {
     this.heroFormIndex = (this.heroFormIndex + 1) % this.heroProfile.forms.length
     const form = this.activeForm!
     this.applyHeroForm()
+    this.menuOrbitFocus = 'hero'
+    this.menuFocusTimer = 2.0
     this.hero.triggerAction('pose-intro', 0.7)
     const pos = this.hero.root.position.clone().add(new THREE.Vector3(0, 9.5, -0.6))
     this.effects.spawnBurst(pos, form.accentColor, 20, 20, 1.2)
@@ -370,7 +412,8 @@ export class UltramanGameEngine {
   }
 
   private get totalDamageMul(): number {
-    return this.heroProfile.baseDamageMul * (this.activeForm?.damageMul ?? 1)
+    const counterMul = this.counterBonusTimer > 0 ? 1.4 : 1
+    return this.heroProfile.baseDamageMul * (this.activeForm?.damageMul ?? 1) * counterMul
   }
 
   private get totalEnergyMul(): number {
@@ -379,6 +422,11 @@ export class UltramanGameEngine {
 
   private gainEnergy(baseAmount: number) {
     this.energy = Math.min(100, this.energy + baseAmount * this.totalEnergyMul)
+  }
+
+  private triggerImpactFlash(kind: BattleHudState['impactFlashKind']) {
+    this.impactFlashKind = kind
+    this.impactFlashSeq++
   }
 
   private applyHeroForm() {
@@ -408,6 +456,7 @@ export class UltramanGameEngine {
     this.effects.spawnBurst(pos, form.accentColor, 28, 26, 1.45)
     this.effects.spawnHitFlash(pos, form.accentColor, 1.6)
     this.effects.spawnImpactRing(pos, form.accentColor, 7.5)
+    this.effects.flashDynamicLight(pos, form.accentColor, 28, 0.35)
     this.deflectNearbyFireballs(6.5)
 
     this.audio.playTransform('type')
@@ -431,8 +480,20 @@ export class UltramanGameEngine {
     this.emitHud()
   }
 
-  /** 手动立即触发/跳过变身仪式（或按空格/点击按钮直接变身） */
+  public skipCalibration() {
+    if (this.phase !== 'calibrating') return
+    if (this.gameMode === 'practice') {
+      void this.loadWave(this.waveIndex, true)
+    } else {
+      this.beginTransformPhase()
+    }
+  }
+
   public triggerManualTransform() {
+    if (this.phase === 'calibrating') {
+      this.skipCalibration()
+      return
+    }
     if (this.phase !== 'transform' || this.transformBurstPlayed) return
     this.completeTransformBurst()
   }
@@ -441,13 +502,45 @@ export class UltramanGameEngine {
     this.manualSpreadHeld = active
   }
 
+  public setManualCrouch(active: boolean) {
+    if (active && !this.manualCrouch && this.phase === 'fighting') {
+      this.hero.triggerAction('crouch-dodge', 0.42)
+      this.audio.playDodge()
+    }
+    this.manualCrouch = active
+  }
+
+  public triggerManualJump() {
+    if (this.phase !== 'fighting') return
+    if (this.manualJumpTimer <= 0) {
+      this.manualJumpTimer = 0.56
+      this.hero.triggerAction('jump-kick', 0.56)
+      this.audio.playSwing('right', true)
+      if (this.battleStage === 'melee') {
+        this.pendingMeleeStrike = {
+          damage: Math.round(58 * this.totalDamageMul),
+          impact: 'heavy',
+          side: 'right',
+          height: 'high',
+          color: '#fb923c',
+          isCritical: true,
+          isFinisher: true,
+          isKick: true,
+          settled: false,
+        }
+      }
+    }
+  }
+
   public async startGame(
     mode: ControlMode,
     startWaveIndex = 0,
     theme: SceneTheme = this.preferredTheme,
+    gameMode: GameMode = 'story',
   ): Promise<void> {
     this.controlMode = mode
     this.preferredTheme = theme
+    this.gameMode = gameMode
     this.audio.unlock()
     this.resetTracking()
     this.effects.clearAllDynamic()
@@ -459,26 +552,38 @@ export class UltramanGameEngine {
     if (!this.assetsReady) {
       await this.preloadBaseAssets()
     }
-
     if (this.disposed) return
     await this.hero.load(this.loader, this.heroProfile)
     if (this.disposed) return
 
     this.waveIndex = THREE.MathUtils.clamp(startWaveIndex, 0, MONSTER_WAVES.length - 1)
     this.heroHp = this.heroMaxHp
-    this.energy = 50
+    this.guardStamina = 100
+    this.guardBrokenCooldown = 0
+    this.energy = gameMode === 'practice' ? 100 : 50
     this.score = 0
     this.combo = 0
     this.maxCombo = 0
     this.perfectGuards = 0
+    this.perfectDodges = 0
+    this.totalHeroDamageTaken = 0
+    this.finisherKillCount = 0
     this.defeatedCount = 0
+    this.bulletTimeLeft = 0
+    this.counterBonusTimer = 0
+    this.pendingMeleeStrike = null
+    this.bufferedInput = null
     this.manualLean = 0
     this.manualGuard = false
+    this.manualCrouch = false
+    this.manualJumpTimer = 0
     this.manualSpreadHeld = false
     this.wasGuarding = false
     this.guardStartedAt = -Infinity
     this.gestureLean = 0
     this.gestureGuard = false
+    this.gestureCrouching = false
+    this.gestureJumping = false
     this.gestureBeamCharge = 0
     this.gestureBeamHolding = false
     this.gestureDiscCharge = 0
@@ -495,7 +600,6 @@ export class UltramanGameEngine {
     this.hero.resetPose()
     this.audio.setDangerAlarm(false)
 
-    // 先预载首波战场与怪兽，然后进入「宇宙星海体感变身仪式」（复刻视频 1 00:01-00:02）
     const spec = MONSTER_WAVES[this.waveIndex]!
     await Promise.all([
       this.arena.setTheme(this.resolveThemeForWave(this.waveIndex)),
@@ -503,7 +607,21 @@ export class UltramanGameEngine {
     ])
     if (this.disposed) return
 
-    this.beginTransformPhase()
+    // 体感模式先做 1.5s 快捷站位校准（可随时一键跳过）；键盘模式直接进场
+    if (mode === 'camera') {
+      this.phase = 'calibrating'
+      this.calibrationProgress = 0
+      this.loadingProgress = 100
+      this.kaiju.root.visible = false
+      this.arena.setCosmicMode(true)
+      this.hero.resetPose()
+      this.hero.setStageBaseZ(12.2, true)
+      this.emitHud()
+    } else if (gameMode === 'practice') {
+      await this.loadWave(this.waveIndex, true)
+    } else {
+      this.beginTransformPhase()
+    }
   }
 
   private beginTransformPhase() {
@@ -525,7 +643,7 @@ export class UltramanGameEngine {
     if (this.transformBurstPlayed) return
     this.transformBurstPlayed = true
     this.transformProgress = 1
-    this.transformHoldAfterTrigger = 0.95
+    this.transformHoldAfterTrigger = 0.9
     this.hero.triggerAction('transform', 1.2)
     this.audio.playTransform('rise')
     this.addTrauma(0.55)
@@ -535,6 +653,7 @@ export class UltramanGameEngine {
     this.effects.spawnEnergyShockSphere(burstPos, this.heroProfile.accentColor, 9.5)
     this.effects.spawnImpactRing(burstPos, 0xffffff, 14)
     this.effects.spawnHitFlash(burstPos, 0xffffff, 2.5)
+    this.effects.flashDynamicLight(burstPos, 0xfacc15, 46, 0.45)
     this.showBanner('bannerTransform', 1.1)
     this.emitHud()
   }
@@ -545,23 +664,21 @@ export class UltramanGameEngine {
     this.feetTracked = false
     this.jump.reset()
     this.punchChain = 0
-    this.comboStep = 0
+    this.manualPunchCycle = 0
     this.chainTimeLeft = 0
+    this.pendingMeleeStrike = null
+    this.bufferedInput = null
     this.waveIndex = index
     this.monsterMaxHp = spec.maxHp
     this.monsterHp = spec.maxHp
     this.beamDamageTicksRemaining = 0
     this.beamClashActive = false
     this.beamClashTimer = 0
+    this.grappleTriggeredThisWave = false
     this.effects.clearAllDynamic()
 
-    // 重置五幕导演进度
     this.battleStage = 'melee'
     this.stageTimer = 0
-    this.rangedTriggered = false
-    this.grappleTriggered = false
-    this.finisherTriggered = false
-    this.rangedFireballTimer = 1.4
     this.grappleProgress = 0.48
     this.finisherSpreadProgress = 0
     this.finisherBeamFired = false
@@ -580,20 +697,28 @@ export class UltramanGameEngine {
       if (this.disposed) return
     }
 
-    // 幕 1 近身贴脸肉搏距离落位（按怪兽真实包围盒前探深度自适应计算，5 大怪兽全员绝对零穿模！）
-    const safeKaijuZ = Math.min(-2.4, -(this.kaiju.frontExtentZ - 0.5))
+    // 紧贴真实拳脚打击距落位（严格以怪兽前表面 + 安全距离排布，拳到肉且零穿模！）
+    const safeKaijuZ = Math.min(-1.8, -(this.kaiju.frontExtentZ - 0.8))
     this.hero.resetPose()
-    this.hero.setStageBaseZ(8.8, true)
-    this.hero.setLeanRange(4.8)
+    this.hero.setStageBaseZ(7.6, true)
+    this.hero.setLeanRange(5.8)
     this.kaiju.root.visible = true
-    this.kaiju.setStageAnchor(safeKaijuZ, 8.8, null)
+    this.kaiju.setStageAnchor(safeKaijuZ, 7.6, null)
     this.kaiju.encounter.reset()
 
     this.loadingProgress = 100
-    this.phase = 'intro'
-    this.waveTransitionTimer = 1.1
-    this.addTrauma(0.38)
-    this.showBanner('bannerWaveStart', 1.35)
+    this.audio.setAmbience(this.arena.getTheme(), true)
+
+    if (this.gameMode === 'practice') {
+      this.kaiju.encounter.enter('idle')
+      this.phase = 'fighting'
+      this.showBanner('bannerPracticeStart', 1.4)
+    } else {
+      this.phase = 'intro'
+      this.waveTransitionTimer = 1.05
+      this.addTrauma(0.38)
+      this.showBanner('bannerWaveStart', 1.35)
+    }
     this.emitHud()
   }
 
@@ -602,15 +727,23 @@ export class UltramanGameEngine {
     this.battleStage = 'melee'
     this.beamClashActive = false
     this.beamClashTimer = 0
+    this.pendingMeleeStrike = null
+    this.bufferedInput = null
+    this.bulletTimeLeft = 0
     this.arena.setCosmicMode(false)
     this.audio.setDangerAlarm(false)
+    this.audio.setChargeHum(0)
+    this.audio.setAmbience(this.arena.getTheme(), false)
     this.effects.clearAllDynamic()
     this.hero.resetPose()
+    this.hero.setLookTarget(null)
     this.hero.setStageBaseZ(11.6, true)
     this.hero.setLeanRange(5.5)
     this.hero.triggerAction('pose-intro', 0.8)
     this.kaiju.root.visible = true
-    this.kaiju.setStageAnchor(-2.4, 11.6)
+    // 加坦杰厄体宽纵深极大，机库预览退后数米完整展示邪神全貌
+    const previewZ = this.kaiju.getSpec()?.id === 'gatanothor' ? -9.5 : -3.4
+    this.kaiju.setStageAnchor(previewZ, 11.6)
     this.kaiju.encounter.directorLocked = false
     this.kaiju.encounter.enter('idle')
     this.emitHud()
@@ -621,11 +754,35 @@ export class UltramanGameEngine {
     this.audio.setDangerAlarm(
       !paused && this.heroHp > 0 && this.heroHp <= this.heroMaxHp * 0.3 && this.phase === 'fighting',
     )
+    if (paused) this.audio.setChargeHum(0)
   }
 
   public setMuted(muted: boolean) {
     this.audio.muted = muted
-    if (muted) this.audio.setDangerAlarm(false)
+    if (muted) {
+      this.audio.setDangerAlarm(false)
+      this.audio.setChargeHum(0)
+      this.audio.setAmbience(this.arena.getTheme(), false)
+    } else if (this.phase === 'fighting') {
+      this.audio.setAmbience(this.arena.getTheme(), true)
+    }
+  }
+
+  /** 是否已达到主动终结技释放条件（怪兽残血 < 26% 或破防眩晕，玩家能量 >= 50） */
+  private isFinisherReady(): boolean {
+    if (this.phase !== 'fighting' || this.gameMode === 'practice') return false
+    if (this.battleStage !== 'melee' && this.battleStage !== 'ranged') return false
+    if (this.beamClashActive) return false
+    const hpRatio = this.monsterHp / Math.max(1, this.monsterMaxHp)
+    return (
+      (hpRatio <= 0.26 || this.kaiju.encounter.state === 'stunned') &&
+      this.energy >= 45
+    )
+  }
+
+  public triggerManualFinisher() {
+    if (!this.isFinisherReady()) return
+    this.beginFinisherSpread()
   }
 
   public feedPoseLandmarks(
@@ -653,12 +810,16 @@ export class UltramanGameEngine {
     const physicalKick = fullBody && this.feetTracked ? snap.kick : null
     this.feetTracked = fullBody
     this.gestureCoverage = fullBody ? 'full' : snap.tracking ? 'upper' : 'none'
+    this.gestureDistanceHint = snap.distanceHint
+    this.gestureActiveCue = snap.activeCue
     this.gestureMirroredX = snap.mirroredCenterX
     this.gestureLean = snap.lean
-    this.gestureGuard = snap.guard
-    if (snap.guardJustStarted) {
+    this.gestureGuard = snap.guard && this.guardBrokenCooldown <= 0
+    if (snap.guardJustStarted && this.guardBrokenCooldown <= 0) {
       this.guardStartedAt = this.elapsedTime
     }
+    this.gestureCrouching = snap.crouching
+    this.gestureJumping = snap.jumping
     this.gestureBeamCharge = snap.beamCharge
     this.gestureBeamHolding = snap.beamHolding
     this.gestureBeamArmSide = snap.beamArmSide
@@ -674,7 +835,9 @@ export class UltramanGameEngine {
 
     this.hero.setLiveBodyPose(snap.livePose, now)
 
-    // 幕 0：体感举手变身（复刻视频 1 00:01-00:02）
+    if (this.phase === 'calibrating') return
+
+    // 变身仪式
     if (this.phase === 'transform') {
       if (!this.transformBurstPlayed) {
         this.transformProgress = Math.max(this.transformProgress, snap.transformProgress)
@@ -687,23 +850,30 @@ export class UltramanGameEngine {
 
     if (this.phase !== 'fighting') return
 
-    // 幕 3：近身角力 QTE — 挥拳/踢腿或疯狂摆臂全部转化为推力！
+    // 主动触发残血终结技：残血就绪窗期间双臂展开即可切入七彩棱镜必杀演出！
+    if (this.isFinisherReady() && snap.spreadProgress >= 0.45) {
+      this.beginFinisherSpread()
+      return
+    }
+
     if (this.battleStage === 'grapple') {
       if (snap.punch || physicalKick) {
-        this.boostGrapple(0.085)
+        this.boostGrapple(0.09)
       }
       return
     }
 
-    // 幕 4A / 4B：二段必杀光线终结技演出
     if (this.battleStage === 'finisher-spread') {
-      if (snap.spreadProgress >= 0.85) {
+      if (snap.spreadProgress >= 0.82) {
         this.finisherSpreadProgress = 1
       }
       return
     }
     if (this.battleStage === 'finisher-beam') {
-      if (!this.finisherBeamFired && (snap.beamTrigger || snap.beamHolding || snap.beamCharge > 0.16 || snap.punch)) {
+      if (
+        !this.finisherBeamFired &&
+        (snap.beamTrigger || snap.beamHolding || snap.beamCharge > 0.16 || snap.punch)
+      ) {
         this.fireFinisherSuperBeam()
       }
       return
@@ -713,17 +883,15 @@ export class UltramanGameEngine {
       return
     }
 
-    // 远程大步侧闪时触发炫酷滑步动作
+    // 瞬时侧滑步触发
     if (
-      this.battleStage === 'ranged' &&
-      Math.abs(snap.lateralVelocity) > 2.35 &&
+      Math.abs(snap.lateralVelocity) > 2.3 &&
       this.elapsedTime - this.lastDodgeTriggerAt > 0.42
     ) {
       this.lastDodgeTriggerAt = this.elapsedTime
       this.hero.triggerAction(snap.lateralVelocity < 0 ? 'dodge-left' : 'dodge-right', 0.3)
     }
 
-    // 对波期间
     if (this.beamClashActive) {
       if (snap.punch || physicalKick) {
         this.boostBeamClash(0.14)
@@ -737,17 +905,54 @@ export class UltramanGameEngine {
       width / height,
     )
     if (jumped) {
-      this.executeKick('right', true)
+      this.dispatchCombatAction({
+        kind: 'kick',
+        side: 'right',
+        style: 'jab',
+        power: 0.95,
+        height: 'high',
+        jumping: true,
+        expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+      })
     } else if (snap.typeTrigger) {
       this.switchHeroForm()
     } else if (snap.beamTrigger) {
-      this.executeBeam()
+      this.dispatchCombatAction({
+        kind: 'beam',
+        side: snap.beamArmSide,
+        style: 'palm',
+        power: 1,
+        height: 'mid',
+        expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+      })
     } else if (snap.discTrigger) {
-      this.executeDisc(snap.discTrigger)
+      this.dispatchCombatAction({
+        kind: 'disc',
+        side: snap.discTrigger,
+        style: 'chop',
+        power: 0.9,
+        height: 'mid',
+        expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+      })
     } else if (physicalKick) {
-      this.executeKick(physicalKick)
+      this.dispatchCombatAction({
+        kind: 'kick',
+        side: physicalKick,
+        style: 'jab',
+        power: 0.92,
+        height: 'mid',
+        jumping: false,
+        expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+      })
     } else if (snap.punch) {
-      this.executePunch(snap.punch)
+      this.dispatchCombatAction({
+        kind: 'punch',
+        side: snap.punch,
+        style: snap.punchStyle,
+        power: snap.punchPower,
+        height: snap.punchHeight,
+        expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+      })
     }
   }
 
@@ -765,10 +970,9 @@ export class UltramanGameEngine {
   public setManualLean(dir: -1 | 0 | 1) {
     if (
       this.phase === 'fighting' &&
-      this.battleStage === 'ranged' &&
       dir !== 0 &&
       dir !== this.manualLean &&
-      this.elapsedTime - this.lastDodgeTriggerAt > 0.32
+      this.elapsedTime - this.lastDodgeTriggerAt > 0.34
     ) {
       this.lastDodgeTriggerAt = this.elapsedTime
       this.hero.triggerAction(dir < 0 ? 'dodge-left' : 'dodge-right', 0.28)
@@ -777,14 +981,15 @@ export class UltramanGameEngine {
   }
 
   public setManualGuard(active: boolean) {
+    if (active && this.guardBrokenCooldown > 0) return
     if (active && !this.manualGuard) {
       this.guardStartedAt = this.elapsedTime
     }
     this.manualGuard = active
   }
 
-  public triggerManualPunch(side: 'left' | 'right') {
-    if (this.phase === 'transform') {
+  public triggerManualPunch(side: 'left' | 'right', styleOverride?: PunchStyle) {
+    if (this.phase === 'calibrating' || this.phase === 'transform') {
       this.triggerManualTransform()
       return
     }
@@ -806,7 +1011,23 @@ export class UltramanGameEngine {
       this.boostBeamClash(0.13)
       return
     }
-    this.executePunch(side)
+
+    // 键盘/触屏连续出拳自然演进：直拳 → 摆拳 → 手刀 → 上勾重拳
+    const styleCycle: PunchStyle[] = ['jab', 'hook', 'chop', 'uppercut']
+    const heightCycle: StrikeHeight[] = ['mid', 'mid', 'high', 'high']
+    const idx = this.manualPunchCycle % styleCycle.length
+    this.manualPunchCycle++
+    const style = styleOverride ?? styleCycle[idx]!
+    const height = heightCycle[idx]!
+
+    this.dispatchCombatAction({
+      kind: 'punch',
+      side,
+      style,
+      power: style === 'uppercut' || style === 'hook' ? 0.92 : 0.72,
+      height,
+      expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+    })
   }
 
   public triggerManualKick(side: 'left' | 'right' = 'right') {
@@ -828,7 +1049,15 @@ export class UltramanGameEngine {
       this.boostBeamClash(0.15)
       return
     }
-    this.executeKick(side)
+    this.dispatchCombatAction({
+      kind: 'kick',
+      side,
+      style: 'jab',
+      power: 0.94,
+      height: 'mid',
+      jumping: false,
+      expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+    })
   }
 
   public triggerManualDisc(side: 'left' | 'right' = 'right') {
@@ -843,11 +1072,18 @@ export class UltramanGameEngine {
       this.boostBeamClash(0.15)
       return
     }
-    this.executeDisc(side)
+    this.dispatchCombatAction({
+      kind: 'disc',
+      side,
+      style: 'chop',
+      power: 0.9,
+      height: 'mid',
+      expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+    })
   }
 
   public triggerManualBeam() {
-    if (this.phase === 'transform') {
+    if (this.phase === 'calibrating' || this.phase === 'transform') {
       this.triggerManualTransform()
       return
     }
@@ -869,11 +1105,57 @@ export class UltramanGameEngine {
       this.boostBeamClash(0.16)
       return
     }
-    this.executeBeam()
+    // 残血终结窗就绪时直接按光线键一键进入七彩终结技！
+    if (this.isFinisherReady()) {
+      this.beginFinisherSpread()
+      return
+    }
+    this.dispatchCombatAction({
+      kind: 'beam',
+      side: 'right',
+      style: 'palm',
+      power: 1,
+      height: 'mid',
+      expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
+    })
   }
 
-  /** 挥拳/飞踢/光轮正面弹反击碎逼近的怪兽火球 */
-  private deflectNearbyFireballs(reachZ = 6.2): boolean {
+  /** 160ms 输入缓冲调度器：若当前正在冷却则暂存，冷却完毕立即无缝衔接 */
+  private dispatchCombatAction(input: BufferedCombatInput) {
+    if (this.tryExecuteInput(input)) {
+      this.bufferedInput = null
+    } else {
+      this.bufferedInput = input
+    }
+  }
+
+  private tryExecuteInput(input: BufferedCombatInput): boolean {
+    if (this.effects.isHeroBeamActive()) return false
+    if (input.kind === 'punch') {
+      if (this.punchCooldown > 0) return false
+      this.executePunch(input.side, input.style, input.power, input.height)
+      return true
+    }
+    if (input.kind === 'kick') {
+      if (this.kickCooldown > 0) return false
+      this.executeKick(input.side, !!input.jumping)
+      return true
+    }
+    if (input.kind === 'disc') {
+      if (this.discCooldown > 0) return false
+      this.executeDisc(input.side)
+      return true
+    }
+    if (input.kind === 'beam') {
+      if (this.beamCooldown > 0) return false
+      this.executeBeam()
+      return true
+    }
+    return false
+  }
+
+  /** 挥拳/飞踢/光轮正面弹反击碎逼近的怪兽火球或加恩Q反吐紫弹 */
+  private deflectNearbyFireballs(reachZ = 6.5): boolean {
     let deflected = false
     const kaijuCenter = this.kaiju.getTargetCenter()
     for (let i = this.effects.projectiles.length - 1; i >= 0; i--) {
@@ -881,28 +1163,30 @@ export class UltramanGameEngine {
       if (proj.fromHero || proj.hitTriggered || proj.kind !== 'kaiju-fireball') continue
       const dz = this.hero.baseZ - proj.pos.z
       const dx = Math.abs(this.hero.currentX - proj.pos.x)
-      if (dz >= -1.2 && dz <= reachZ && dx <= 4.6) {
+      if (dz >= -1.2 && dz <= reachZ && dx <= 4.8) {
         const hitPos = proj.pos.clone()
         this.effects.removeProjectileAt(i)
-        this.effects.spawnBurst(hitPos, 0xfacc15, 22, 26, 1.25)
-        this.effects.spawnImpactRing(hitPos, 0xfef08a, 6.4)
-        this.effects.spawnHitFlash(hitPos, 0xffffff, 1.35)
+        this.effects.spawnBurst(hitPos, 0xfacc15, 24, 28, 1.3)
+        this.effects.spawnImpactRing(hitPos, 0xfef08a, 6.8)
+        this.effects.spawnHitFlash(hitPos, 0xffffff, 1.4)
+        this.effects.flashDynamicLight(hitPos, 0xfacc15, 28, 0.28)
         this.effects.spawnPalmBolt(
           hitPos,
           kaijuCenter,
-          Math.round(46 * this.totalDamageMul),
+          Math.round(52 * this.totalDamageMul),
           'right',
         )
         this.audio.playDeflect()
-        this.gainEnergy(18)
-        this.score += 320
-        this.addHitStop(0.05)
-        this.addTrauma(0.32)
+        this.gainEnergy(20)
+        this.score += 360
+        this.addHitStop(0.06)
+        this.addTrauma(0.35)
+        this.triggerImpactFlash('parry')
         this.spawnFloatingAtWorld(
           hitPos.clone().add(new THREE.Vector3(0, 2.2, 0)),
           'DEFLECT!',
           '#fde047',
-          1.25,
+          1.28,
           'guard',
         )
         deflected = true
@@ -911,11 +1195,67 @@ export class UltramanGameEngine {
     return deflected
   }
 
-  private executePunch(side: 'left' | 'right') {
+  private mapPunchToHeroAction(
+    side: 'left' | 'right',
+    style: PunchStyle,
+    isFinisher: boolean,
+  ): { action: HeroAction; dur: number; slashColor: number; slashEuler: [number, number, number]; impact: Impact } {
+    if (style === 'uppercut') {
+      return {
+        action: side === 'left' ? 'uppercut-left' : 'uppercut-right',
+        dur: 0.44,
+        slashColor: 0xfacc15,
+        slashEuler: [0.65, side === 'left' ? 0.35 : -0.35, side === 'left' ? 0.95 : -0.95],
+        impact: 'heavy',
+      }
+    }
+    if (style === 'hook') {
+      return {
+        action: side === 'left' ? 'hook-left' : 'hook-right',
+        dur: 0.4,
+        slashColor: 0xff5a2c,
+        slashEuler: [0.18, side === 'left' ? 0.25 : -0.25, side === 'left' ? -0.4 : 2.6],
+        impact: isFinisher ? 'heavy' : 'light',
+      }
+    }
+    if (style === 'chop') {
+      return {
+        action: side === 'left' ? 'chop-left' : 'chop-right',
+        dur: 0.38,
+        slashColor: 0x38e8ff,
+        slashEuler: [-0.35, 0.15, side === 'left' ? -1.1 : 1.1],
+        impact: isFinisher ? 'heavy' : 'light',
+      }
+    }
+    if (style === 'palm') {
+      return {
+        action: side === 'left' ? 'palm-left' : 'palm-right',
+        dur: 0.34,
+        slashColor: this.heroProfile.beamColor,
+        slashEuler: [0.12, 0, 0],
+        impact: 'light',
+      }
+    }
+    return {
+      action: isFinisher ? 'punch-heavy' : side === 'left' ? 'punch-left' : 'punch-right',
+      dur: isFinisher ? 0.44 : 0.32,
+      slashColor: isFinisher ? 0xfacc15 : this.heroProfile.burstColor,
+      slashEuler: [0.22, 0.15, side === 'left' ? -0.5 : 2.5],
+      impact: isFinisher ? 'heavy' : 'light',
+    }
+  }
+
+  private executePunch(
+    side: 'left' | 'right',
+    style: PunchStyle = 'jab',
+    power = 0.78,
+    height: StrikeHeight = 'mid',
+  ) {
     if (this.effects.isHeroBeamActive() || this.punchCooldown > 0) return
 
-    // 幕 2 远程阶段：推掌连发蓝白奥特光弹（带清晰特摄节拍间隔）
-    if (this.battleStage === 'ranged') {
+    // 远程或明确推掌距离过远时：发射高速掌心奥特光弹
+    const distZ = this.hero.root.position.z - this.kaiju.getFrontSurfaceZ()
+    if (this.battleStage === 'ranged' || (style === 'palm' && distZ > 9.0)) {
       this.punchCooldown = RANGED_PALM_COOLDOWN
       this.hero.triggerAction(side === 'left' ? 'palm-left' : 'palm-right', 0.32)
       if (this.deflectNearbyFireballs(6.8)) {
@@ -923,8 +1263,8 @@ export class UltramanGameEngine {
         return
       }
       const origin = this.hero.getFistOrigin(side)
-      const target = this.kaiju.getTargetCenter()
-      const dmg = Math.round(30 * this.totalDamageMul)
+      const target = this.kaiju.getTargetCenter(height)
+      const dmg = Math.round((28 + power * 10) * this.totalDamageMul)
       this.effects.spawnPalmBolt(origin, target, dmg, side)
       this.effects.spawnBurst(origin, this.heroProfile.beamColor, 8, 15, 0.7)
       this.audio.playPalmShot()
@@ -932,47 +1272,58 @@ export class UltramanGameEngine {
       return
     }
 
-    // 幕 1 近战贴脸肉搏：5 段沉稳有力特摄武术连招 + 烈焰/电光弧形刀光斩击
+    // 近身真实 1:1 格斗出拳：不发隔空甜甜圈，交由真实接触帧窗口引爆！
     this.punchCooldown = MELEE_PUNCH_COOLDOWN
     this.punchChain = this.chainTimeLeft > 0 && this.lastPunchSide !== side ? this.punchChain + 1 : 1
-    const isFifthCombo = this.comboStep === 4
-    const action = MELEE_COMBO_ACTIONS[this.comboStep]!
-    const slashStyle = MELEE_SLASH_STYLES[this.comboStep]!
-    this.comboStep = (this.comboStep + 1) % MELEE_COMBO_ACTIONS.length
-    const finisher = isFifthCombo || this.punchChain >= 3
+    const isFinisher = this.punchChain >= 3 || style === 'uppercut'
     if (this.punchChain >= 3) this.punchChain = 3
     this.lastPunchSide = side
-    this.chainTimeLeft = finisher ? 0 : 1.85
+    this.chainTimeLeft = isFinisher ? 0 : 1.85
 
-    this.hero.triggerAction(action, isFifthCombo ? 0.56 : finisher ? 0.46 : 0.38)
-    if (finisher) this.fovKick = -3.0
+    const mapped = this.mapPunchToHeroAction(side, style, isFinisher)
+    this.hero.triggerAction(mapped.action, mapped.dur)
+    if (isFinisher) this.fovKick = -2.8
 
-    // 在奥特曼拳脚前方即时挥出红金/青蓝弧形刀光带
     const slashCenter = new THREE.Vector3(
       this.hero.currentX + (side === 'left' ? -0.6 : 0.6),
-      isFifthCombo ? 9.8 : 9.2,
-      this.hero.root.position.z - 3.6,
+      height === 'high' ? 10.6 : 9.1,
+      this.hero.root.position.z - 3.3,
     )
     this.effects.spawnMeleeSlash(
       slashCenter,
-      slashStyle.color,
-      slashStyle.euler,
-      isFifthCombo ? 1.45 : 1.15,
-      slashStyle.spin,
+      mapped.slashColor,
+      mapped.slashEuler,
+      isFinisher ? 1.38 : 1.08,
+      side === 'left' ? -1 : 1,
     )
+    this.audio.playSwing(side, false)
 
-    if (this.deflectNearbyFireballs(6.2) && !finisher) {
+    if (this.deflectNearbyFireballs(6.5) && !isFinisher) {
       this.emitHud()
       return
     }
 
-    const origin = isFifthCombo ? this.hero.getFootOrigin('right') : this.hero.getFistOrigin(side)
-    const target = this.kaiju.getTargetCenter()
-    const damage = Math.round((isFifthCombo ? 58 : finisher ? 46 : 28) * this.totalDamageMul)
-    this.effects.spawnPunchWave(origin, target, damage, side, finisher)
-    this.effects.spawnBurst(origin, slashStyle.color, 9, 16, 0.72)
-    this.audio.playSwing(side, isFifthCombo)
-    if (finisher) this.punchChain = 0
+    const baseDmg =
+      style === 'uppercut'
+        ? 46
+        : style === 'hook' || style === 'chop'
+          ? 36
+          : isFinisher
+            ? 44
+            : 26
+    const finalDmg = Math.round(baseDmg * (0.8 + power * 0.35) * this.totalDamageMul)
+    this.pendingMeleeStrike = {
+      damage: finalDmg,
+      impact: mapped.impact,
+      side,
+      height: style === 'uppercut' ? 'high' : height,
+      color: isFinisher ? '#fef08a' : style === 'chop' ? '#67e8f9' : '#fde047',
+      isCritical: isFinisher || this.counterBonusTimer > 0,
+      isFinisher,
+      isKick: false,
+      settled: false,
+    }
+    if (isFinisher) this.punchChain = 0
     this.emitHud()
   }
 
@@ -980,27 +1331,41 @@ export class UltramanGameEngine {
     if (this.effects.isHeroBeamActive() || this.kickCooldown > 0) return
     this.kickCooldown = KICK_MIN_COOLDOWN
     const action = jumping ? 'jump-kick' : side === 'left' ? 'kick-left' : 'kick-right'
-    this.hero.triggerAction(action, jumping ? 0.58 : 0.48)
+    this.hero.triggerAction(action, jumping ? 0.56 : 0.46)
     this.fovKick = jumping ? -3.6 : -2.6
-    this.deflectNearbyFireballs(6.4)
+    this.deflectNearbyFireballs(6.6)
 
     const slashCenter = new THREE.Vector3(
       this.hero.currentX,
       9.8,
-      this.hero.root.position.z - 3.8,
+      this.hero.root.position.z - 3.6,
     )
     this.effects.spawnMeleeSlash(slashCenter, 0xf97316, [1.18, 0.15, 0], 1.5, -1.6)
-
-    const origin = this.hero.getFootOrigin(side)
-    const target = this.kaiju.getTargetCenter()
-    this.effects.spawnKickWave(
-      origin,
-      target,
-      Math.round((jumping ? 64 : 48) * this.totalDamageMul),
-    )
-    this.effects.spawnBurst(origin, 0xf97316, 14, 20, 0.9)
     this.audio.playSwing(side, true)
     this.showBanner(jumping ? 'bannerJumpKick' : 'bannerKick', 0.85)
+
+    // 近战踢击同样采用真实接触帧爆裂；远程踢击发射火旋踢波
+    if (this.battleStage === 'ranged') {
+      const origin = this.hero.getFootOrigin(side)
+      const target = this.kaiju.getTargetCenter('mid')
+      this.effects.spawnKickWave(
+        origin,
+        target,
+        Math.round((jumping ? 64 : 48) * this.totalDamageMul),
+      )
+    } else {
+      this.pendingMeleeStrike = {
+        damage: Math.round((jumping ? 66 : 52) * this.totalDamageMul),
+        impact: 'heavy',
+        side,
+        height: jumping ? 'high' : 'mid',
+        color: '#fb923c',
+        isCritical: true,
+        isFinisher: true,
+        isKick: true,
+        settled: false,
+      }
+    }
   }
 
   private executeDisc(side: 'left' | 'right') {
@@ -1008,11 +1373,11 @@ export class UltramanGameEngine {
     const cdMul = this.activeForm?.discCooldownMul ?? 1
     this.discCooldown = DISC_MAX_COOLDOWN * cdMul
     this.hero.setDiscCharge(0, side)
-    this.hero.triggerAction('disc', 0.48)
+    this.hero.triggerAction('disc', 0.46)
     this.deflectNearbyFireballs(6.8)
 
     const origin = this.hero.getDiscOrigin(side)
-    const target = this.kaiju.getTargetCenter()
+    const target = this.kaiju.getTargetCenter('mid')
     this.effects.spawnUltraDisc(origin, target, Math.round(74 * this.totalDamageMul))
     this.audio.playDisc()
     this.showBanner(`bannerDisc${this.heroProfile.bannerKey}`, 1.0)
@@ -1021,7 +1386,7 @@ export class UltramanGameEngine {
 
   private executeBeam() {
     if (this.effects.isHeroBeamActive() || this.beamCooldown > 0) return
-    if (this.energy < 35) {
+    if (this.energy < 35 && this.gameMode !== 'practice') {
       this.spawnFloatingAtWorld(
         this.hero.root.position.clone().add(new THREE.Vector3(0, 14, 0)),
         'ENERGY LOW!',
@@ -1031,14 +1396,16 @@ export class UltramanGameEngine {
       return
     }
     const isSuper = this.energy >= 100
-    this.energy = Math.max(0, this.energy - (isSuper ? 100 : 35))
+    if (this.gameMode !== 'practice') {
+      this.energy = Math.max(0, this.energy - (isSuper ? 100 : 35))
+    }
     this.beamCooldown = BEAM_MAX_COOLDOWN
 
     const fight = this.kaiju.encounter
     const spec = MONSTER_WAVES[this.waveIndex]!
     if (
       fight.attack === 'dark-beam' &&
-      ((fight.state === 'windup' && fight.time >= 0.25) || fight.state === 'attack')
+      ((fight.state === 'windup' && fight.time >= 0.2) || fight.state === 'attack')
     ) {
       this.startBeamClash(isSuper, spec.accentColor)
       return
@@ -1047,6 +1414,12 @@ export class UltramanGameEngine {
     const dur = isSuper ? 1.8 : 1.25
     this.hero.triggerAction('beam', dur)
     this.effects.startHeroBeam(isSuper, dur)
+    this.effects.flashDynamicLight(
+      this.hero.root.position.clone().add(new THREE.Vector3(0, 9.5, -2)),
+      isSuper ? this.heroProfile.beamSuperColor : this.heroProfile.beamColor,
+      36,
+      0.45,
+    )
     this.audio.playBeam(isSuper)
     this.addTrauma(isSuper ? 0.65 : 0.42)
     this.fovKick = isSuper ? -4.5 : -3.0
@@ -1062,35 +1435,17 @@ export class UltramanGameEngine {
     this.emitHud()
   }
 
-  // ---- 五幕电影式阶段切换导演 ----
+  // ---- 条件自然触发特摄名场面（角力过肩摔 / 主动必杀终结 / 双光线对波） ----
 
-  /** 进入幕 2 过场：怪兽怒吼退入远端火海，镜头切英雄正面帅气特写，再拉至正后方躲火球走廊 */
-  private beginRangedTransition() {
-    this.rangedTriggered = true
-    this.battleStage = 'transition-ranged'
-    this.stageTimer = 0
-    this.effects.clearAllDynamic()
-    this.kaiju.encounter.directorLocked = true
-    this.kaiju.encounter.enter('roaring')
-    this.kaiju.setStageAnchor(-13.8, 14.5, 0)
-    this.hero.setStageBaseZ(14.5, false)
-    this.hero.setLeanRange(8.2)
-    this.hero.triggerAction('cinematic-taunt', 1.35)
-    this.audio.playRoar()
-    this.addTrauma(0.55)
-    this.showBanner('bannerStageRanged', 1.55)
-    this.emitHud()
-  }
-
-  /** 进入幕 3：侧面超近景角力推力 QTE（精确拉开巨人前倾间距，迪迦居左、怪兽居右正面双掌相抵！） */
   private beginGrappleStage() {
-    this.grappleTriggered = true
+    this.grappleTriggeredThisWave = true
     this.battleStage = 'grapple'
     this.stageTimer = 0
-    this.grappleProgress = 0.45
-    this.grappleTimeLeft = 6.8
+    this.grappleProgress = 0.46
+    this.grappleTimeLeft = 6.2
+    this.pendingMeleeStrike = null
     this.effects.clearAllDynamic()
-    // 按怪兽真实无截断前探距离动态落位：奥特曼在 +7.0（双掌伸至约 +4.2），怪兽最前沿精准停在 +3.2，中间 1m 火花对撞零穿模！
+
     const heroGrappleZ = 7.0
     const kaijuGrappleZ = heroGrappleZ - (this.kaiju.frontExtentZ + 4.4)
     const midZ = (heroGrappleZ + kaijuGrappleZ) * 0.5 + 1.2
@@ -1102,7 +1457,7 @@ export class UltramanGameEngine {
     this.kaiju.encounter.directorLocked = true
     this.kaiju.encounter.enter('grapple')
     this.kaiju.snapToPosition(0, kaijuGrappleZ)
-    // 瞬切净空大道侧面全景特写（严格控制在 x <= 23.2 安全净空大道内，绝不穿入东侧高楼！）
+
     const portrait = THREE.MathUtils.clamp((0.92 - this.viewportAspect) / 0.46, 0, 1)
     this.cameraAnchor.set(
       THREE.MathUtils.lerp(23.0, 21.4, portrait),
@@ -1138,52 +1493,56 @@ export class UltramanGameEngine {
     if (won) {
       this.hero.triggerAction('grapple-throw', 0.85)
       this.kaiju.encounter.enter('thrown')
-      this.kaiju.setStageAnchor(-13.0, 8.8, 0)
+      this.kaiju.setStageAnchor(-13.0, 8.2, 0)
       this.effects.spawnBurst(clashPos, 0xfacc15, 36, 32, 1.45)
+      this.effects.spawnDebris(clashPos, 14, 20)
       this.effects.spawnEnergyShockSphere(clashPos, 0x38e8ff, 8.2)
       this.effects.spawnImpactRing(clashPos, 0xfef08a, 11)
+      this.effects.flashDynamicLight(clashPos, 0xfacc15, 42, 0.4)
       this.audio.playHeavyImpact()
       this.audio.playExplosion()
-      this.addHitStop(0.085)
+      this.addHitStop(0.095)
       this.addTrauma(0.75)
       this.fovKick = -4.5
-      this.gainEnergy(35)
-      this.score += 950
+      this.triggerImpactFlash('heavy')
+      this.gainEnergy(38)
+      this.score += 1100
       this.combo += 5
       this.maxCombo = Math.max(this.maxCombo, this.combo)
       this.comboResetTimer = 4.2
-      // 过肩摔造成巨额伤害并将怪兽压入残血处决线附近
-      const floorHp = Math.max(1, Math.round(this.monsterMaxHp * 0.16))
-      const throwDmg = Math.max(95, this.monsterHp - floorHp)
+
+      const throwDmg = Math.round(185 * this.totalDamageMul)
       this.monsterHp = Math.max(1, this.monsterHp - throwDmg)
       this.spawnFloatingAtWorld(
         this.kaiju.getTargetCenter(),
         `-${throwDmg}!`,
         '#fef08a',
-        1.45,
+        1.48,
         'crit',
       )
       this.showBanner('bannerGrappleWin', 1.4)
     } else {
-      this.hero.triggerAction('hit', 0.5)
+      this.hero.triggerAction('hit-heavy', 0.5)
+      this.hero.triggerHurtFlash(0.85)
       this.kaiju.encounter.enter('recovering')
-      this.kaiju.setStageAnchor(-2.2, 7.0, null)
-      this.hero.setStageBaseZ(7.0, false)
-      this.hero.setLeanRange(5.2)
-      this.heroHp = Math.max(15, this.heroHp - 12)
+      this.kaiju.setStageAnchor(-2.0, 7.6, null)
+      this.hero.setStageBaseZ(7.6, false)
+      this.hero.setLeanRange(5.8)
+      this.heroHp = Math.max(12, this.heroHp - 12)
+      this.totalHeroDamageTaken += 12
       this.audio.playHeroHurt()
       this.addTrauma(0.45)
+      this.triggerImpactFlash('hurt')
     }
     this.emitHud()
   }
 
-  /** 进入幕 4A：残血终结技——奥特曼正面特写双臂展翼七彩棱镜聚能（怪兽稳退远端，零遮挡特写！） */
   private beginFinisherSpread() {
-    this.finisherTriggered = true
     this.battleStage = 'finisher-spread'
     this.stageTimer = 0
     this.finisherSpreadProgress = 0
     this.finisherBeamFired = false
+    this.pendingMeleeStrike = null
     this.effects.clearAllDynamic()
     this.hero.currentX = 0
     this.hero.setLeanRange(0)
@@ -1192,7 +1551,7 @@ export class UltramanGameEngine {
     this.hero.triggerAction('beam-spread', 12)
     this.kaiju.encounter.directorLocked = true
     this.kaiju.encounter.enter('stunned')
-    // 怪兽落位在 Z = -26.0（兼容手机竖屏相机后拉至 Z = -11.6，始终在相机背后十余米零遮挡！）
+
     const portrait = THREE.MathUtils.clamp((0.92 - this.viewportAspect) / 0.46, 0, 1)
     this.kaiju.snapToPosition(0, -26.0)
     this.cameraAnchor.set(0, THREE.MathUtils.lerp(10.15, 9.6, portrait), 0.6 - portrait * 12.2)
@@ -1202,7 +1561,6 @@ export class UltramanGameEngine {
     this.emitHud()
   }
 
-  /** 进入幕 4B：高空斜俯超级光线准备就绪 */
   private enterFinisherBeamStage() {
     this.battleStage = 'finisher-beam'
     this.stageTimer = 0
@@ -1213,26 +1571,27 @@ export class UltramanGameEngine {
     const burstPos = this.hero.root.position.clone().add(new THREE.Vector3(0, 9.6, 0))
     this.effects.spawnBurst(burstPos, 0xfacc15, 32, 28, 1.35)
     this.effects.spawnImpactRing(burstPos, 0x38e8ff, 10)
-    // 电影剪辑瞬切高空宏阔斜俯大片机位（迪迦稳立左下黄金点、光线斜穿全场轰爆右上怪兽！）
+    this.effects.flashDynamicLight(burstPos, 0x38e8ff, 38, 0.4)
     this.cameraAnchor.set(18.5, 18.2, 22.8)
     this.lookAnchor.set(0, 8.4, -2.5)
-    this.audio.playTransform()
+    this.audio.playTransform('type')
     this.addTrauma(0.35)
     this.showBanner('bannerFinisherFire', 1.8)
     this.emitHud()
   }
 
-  /** 发射终结级闪电超级光线，2.1 秒内轰爆怪兽（复刻视频 1 00:07-00:09） */
   private fireFinisherSuperBeam() {
     if (this.finisherBeamFired) return
     this.finisherBeamFired = true
     this.stageTimer = 0
+    this.energy = 0
     this.hero.triggerAction('beam', 2.4)
     this.kaiju.encounter.enter('finisher-hit')
     this.effects.startHeroBeam(true, 2.3)
     this.audio.playBeam(true)
     this.addTrauma(0.75)
     this.fovKick = -5.2
+    this.triggerImpactFlash('heavy')
     this.showBanner(`bannerSuperBeam${this.heroProfile.bannerKey}`, 2.2)
     this.emitHud()
   }
@@ -1274,21 +1633,27 @@ export class UltramanGameEngine {
 
     if (won) {
       const center = this.kaiju.getTargetCenter()
-      this.effects.spawnBurst(center, 0xfef08a, 36, 34, 1.6)
-      this.effects.spawnEnergyShockSphere(center, 0x38e8ff, 7.2)
-      this.effects.spawnImpactRing(center, 0xfacc15, 12)
+      this.effects.spawnBurst(center, 0xfef08a, 38, 34, 1.6)
+      this.effects.spawnDebris(center, 16, 22)
+      this.effects.spawnEnergyShockSphere(center, 0x38e8ff, 7.6)
+      this.effects.spawnImpactRing(center, 0xfacc15, 12.5)
       this.effects.spawnHitFlash(center, 0xffffff, 2.2)
+      this.effects.flashDynamicLight(center, 0xfef08a, 46, 0.45)
+      this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime, 9.5)
       this.audio.playHeavyImpact()
       this.audio.playExplosion()
-      this.kaiju.encounter.enter('staggered')
-      this.gainEnergy(25)
-      this.score += 650
+      this.kaiju.encounter.enter('stunned')
+      this.gainEnergy(28)
+      this.score += 750
+      this.triggerImpactFlash('heavy')
       this.showBanner('bannerClashWin', 1.25)
       this.applyDamageToMonster(
-        Math.round(138 * this.totalDamageMul),
+        Math.round(165 * this.totalDamageMul),
         '#fef08a',
         true,
         'heavy',
+        undefined,
+        'mid',
       )
     } else {
       const spec = MONSTER_WAVES[this.waveIndex]!
@@ -1311,53 +1676,134 @@ export class UltramanGameEngine {
     this.hitStopTimer = Math.max(this.hitStopTimer, seconds)
   }
 
+  private triggerPerfectDodge(label = 'PERFECT DODGE!') {
+    this.perfectDodges++
+    this.bulletTimeLeft = 0.38
+    this.counterBonusTimer = 2.6
+    this.gainEnergy(22)
+    this.score += 380
+    this.audio.playBulletTime()
+    this.fovKick = 4.2
+    this.triggerImpactFlash('dodge')
+    this.effects.spawnImpactRing(
+      new THREE.Vector3(this.hero.currentX, 7.5, this.hero.root.position.z),
+      0x4ade80,
+      7.4,
+    )
+    this.spawnFloatingAtWorld(
+      new THREE.Vector3(this.hero.currentX, 14.2, this.hero.root.position.z),
+      label,
+      '#4ade80',
+      1.3,
+      'dodge',
+    )
+    this.showBanner('bannerPerfectDodge', 1.0)
+    this.emitHud()
+  }
+
   private applyDamageToMonster(
     amount: number,
     color: string,
     isCritical = false,
     impact: Impact = 'light',
     punchSide?: 'left' | 'right',
-    allowLethal = false,
+    hitHeight: StrikeHeight = 'mid',
+    contactWorldPos?: THREE.Vector3,
   ) {
     if (this.phase !== 'fighting' || this.monsterHp <= 0) return
 
-    const id = MONSTER_WAVES[this.waveIndex]!.id
-    amount = this.kaiju.encounter.receiveHit(
-      amount,
-      impact,
-      id === 'zetton' || id === 'gomora-mecha',
-    )
-    if (amount <= 0) return
+    const spec = MONSTER_WAVES[this.waveIndex]!
+    const res = this.kaiju.encounter.receiveHit(amount, impact, spec)
 
-    // 在终结光线演出未触发前，保留 1 点血以丝滑切入燃爆的「二段必杀光线处决」环节！
-    const minRemain = !allowLethal && !this.finisherTriggered ? 1 : 0
-    this.monsterHp = Math.max(minRemain, this.monsterHp - amount)
+    // 杰顿波状护盾吸收光线/光弹后立即反吐火球！
+    if (res.reflectedByShield) {
+      const emitPos = this.kaiju.getAttackEmitOrigin()
+      this.effects.spawnBurst(emitPos, 0x38bdf8, 22, 24, 1.2)
+      this.effects.spawnImpactRing(emitPos, 0x38bdf8, 7.5)
+      this.audio.playDeflect()
+      this.spawnFloatingAtWorld(emitPos, 'ABSORBED!', '#38bdf8', 1.22, 'guard')
+      this.effects.spawnKaijuFireball(
+        emitPos,
+        new THREE.Vector3(this.hero.currentX, 8.8, this.hero.baseZ),
+        0xff9f1c,
+        spec.attackDamage,
+        24,
+      )
+      this.emitHud()
+      return
+    }
+
+    // 加恩Q 吸能紫瞳吸收光弹
+    if (res.absorbed) {
+      const emitPos = this.kaiju.getAttackEmitOrigin()
+      this.effects.spawnImpactRing(emitPos, 0xc084fc, 6.2)
+      this.audio.playDeflect()
+      this.spawnFloatingAtWorld(emitPos, 'ABSORB +1', '#c084fc', 1.15, 'guard')
+      this.emitHud()
+      return
+    }
+
+    if (res.damage <= 0) return
+
+    // 试招靶场不杀死怪兽，血量低于 120 自动回满便于持续练招
+    if (this.gameMode === 'practice') {
+      this.monsterHp = Math.max(120, this.monsterHp - res.damage)
+      if (this.monsterHp <= 130) this.monsterHp = this.monsterMaxHp
+    } else {
+      this.monsterHp = Math.max(0, this.monsterHp - res.damage)
+    }
+
     this.combo += 1
     this.maxCombo = Math.max(this.maxCombo, this.combo)
     this.comboResetTimer = 3.8
-    this.score += amount * (10 + Math.min(25, this.combo))
+    this.score += res.damage * (10 + Math.min(25, this.combo))
 
-    const hitPos = this.kaiju.getTargetCenter()
-    if (punchSide) hitPos.x += punchSide === 'left' ? -1.4 : 1.4
-    this.kaiju.triggerHitFlash(isCritical ? 1 : 0.78, punchSide)
+    const hitPos = contactWorldPos ? contactWorldPos.clone() : this.kaiju.getTargetCenter(hitHeight)
+    if (!contactWorldPos && punchSide) hitPos.x += punchSide === 'left' ? -1.4 : 1.4
+
+    this.kaiju.triggerHitReaction(isCritical || res.guardBroken ? 1 : 0.78, punchSide, hitHeight)
+
+    const sparkHex =
+      spec.armorMaterial === 'metal'
+        ? 0xfef08a
+        : spec.armorMaterial === 'eldritch'
+          ? 0xd946ef
+          : isCritical
+            ? 0xfacc15
+            : this.heroProfile.beamColor
+
     this.effects.spawnBurst(
       hitPos,
-      isCritical ? 0xfacc15 : this.heroProfile.beamColor,
-      isCritical ? 28 : 16,
+      sparkHex,
+      isCritical || res.guardBroken ? 28 : 16,
       isCritical ? 30 : 22,
       isCritical ? 1.32 : 0.98,
     )
 
-    if (impact === 'heavy') {
-      this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime)
-      this.addHitStop(0.088)
-      this.addTrauma(0.45)
-      this.fovKick = -3.0
+    if (res.illusionBroken) {
+      this.showBanner('bannerIllusionBreak', 1.2)
+      this.effects.spawnImpactRing(hitPos, 0x38bdf8, 11)
+      this.effects.flashDynamicLight(hitPos, 0x38bdf8, 38, 0.38)
+      this.triggerImpactFlash('heavy')
+    } else if (res.guardBroken) {
+      this.showBanner('bannerGuardBreak', 1.15)
+      this.effects.spawnDebris(hitPos, 10, 18)
+      this.triggerImpactFlash('heavy')
+    }
+
+    if (impact === 'heavy' || impact === 'disc' || res.guardBroken) {
+      this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime, 5.8)
+      this.addHitStop(res.guardBroken ? 0.11 : 0.088)
+      this.addTrauma(0.46)
+      this.fovKick = -3.2
+      this.effects.spawnDebris(hitPos, 9, 16)
       this.effects.spawnEnergyShockSphere(hitPos, 0x38bdf8, 5.4)
-      this.effects.spawnImpactRing(hitPos, 0xfef08a, 8.0)
+      this.effects.spawnImpactRing(hitPos, 0xfef08a, 8.2)
       this.effects.spawnHitFlash(hitPos, isCritical ? 0xfef08a : 0xffffff, 1.55)
+      this.effects.flashDynamicLight(hitPos, sparkHex, 30, 0.28)
+      this.triggerImpactFlash('heavy')
     } else if (impact === 'light') {
-      this.addHitStop(0.05)
+      this.addHitStop(0.045)
       this.addTrauma(0.24)
       this.fovKick = -1.5
       this.effects.spawnEnergyShockSphere(hitPos, 0x38bdf8, 3.6)
@@ -1370,36 +1816,25 @@ export class UltramanGameEngine {
 
     this.spawnFloatingAtWorld(
       hitPos.clone().add(new THREE.Vector3(0, 1.8, 0)),
-      `-${amount}${isCritical ? '!' : ''}`,
-      color,
-      isCritical ? 1.35 : 1.05,
-      isCritical ? 'crit' : 'normal',
+      `${res.guardBroken ? 'BREAK ' : ''}-${res.damage}${isCritical ? '!' : ''}`,
+      res.guardBroken ? '#fb923c' : color,
+      isCritical || res.guardBroken ? 1.38 : 1.06,
+      isCritical || res.guardBroken ? 'crit' : 'normal',
     )
 
-    // 根据怪兽血量阈值丝滑触发五幕电影式转场
-    const hpRatio = this.monsterHp / this.monsterMaxHp
     if (this.monsterHp <= 0) {
-      this.onMonsterDefeated()
-    } else if (!this.rangedTriggered && this.battleStage === 'melee' && hpRatio <= 0.72) {
-      this.beginRangedTransition()
-    } else if (!this.grappleTriggered && this.battleStage === 'ranged' && hpRatio <= 0.4) {
-      this.beginGrappleStage()
-    } else if (
-      !this.finisherTriggered &&
-      this.battleStage !== 'grapple' &&
-      this.battleStage !== 'grapple-finish' &&
-      hpRatio <= 0.18
-    ) {
-      this.beginFinisherSpread()
+      this.onMonsterDefeated(false)
     }
     this.emitHud()
   }
 
-  private onMonsterDefeated() {
+  private onMonsterDefeated(byFinisher: boolean) {
+    if (byFinisher) this.finisherKillCount++
     this.defeatedCount += 1
-    this.score += 1800 + this.waveIndex * 700
+    this.score += (byFinisher ? 2600 : 1800) + this.waveIndex * 700
     this.beamDamageTicksRemaining = 0
     this.beamClashActive = false
+    this.pendingMeleeStrike = null
     this.effects.setBeamClash(false, 0.5)
     this.effects.stopHeroBeam()
     this.kaiju.encounter.directorLocked = false
@@ -1408,17 +1843,23 @@ export class UltramanGameEngine {
     this.addHitStop(0.14)
     this.addTrauma(0.98)
     this.fovKick = -5.0
+    this.triggerImpactFlash('heavy')
 
     const center = this.kaiju.getTargetCenter()
+    this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime, 12.5)
+    this.effects.spawnDebris(center, 22, 26)
     this.effects.spawnEnergyShockSphere(center, 0xff5a2c, 11.5)
     this.effects.spawnImpactRing(center, 0xffd28a, 15)
     this.effects.spawnBurst(center, 0xff6b2b, 48, 38, 1.8)
     this.effects.spawnBurst(center.clone().add(new THREE.Vector3(0, 3, 1)), 0xfacc15, 34, 30, 1.5)
     this.effects.spawnHitFlash(center, 0xffffff, 2.8)
+    this.effects.flashDynamicLight(center, 0xff7b29, 64, 0.55)
 
     if (this.waveIndex + 1 >= MONSTER_WAVES.length) {
       this.phase = 'victory'
       this.audio.setDangerAlarm(false)
+      this.audio.setChargeHum(0)
+      this.audio.setAmbience(this.arena.getTheme(), false)
       this.kaiju.root.visible = false
       this.arena.setCosmicMode(true)
       this.hero.triggerAction('victory', 10)
@@ -1458,117 +1899,155 @@ export class UltramanGameEngine {
       return
     }
 
-    // 远程大步闪避判定（火球偏离英雄横向超过 3.1m 即判定完美闪避！）
-    if (attack === 'fireball' && Math.abs(this.hero.currentX - attackX) > 3.05) {
-      this.gainEnergy(16)
-      this.score += 260
-      this.audio.playDodge()
-      this.spawnFloatingAtWorld(
-        new THREE.Vector3(this.hero.currentX, 14.2, this.hero.baseZ),
-        'DODGE!',
-        '#4ade80',
-        1.22,
-        'dodge',
-      )
-      this.emitHud()
+    const isCrouching = this.manualCrouch || this.gestureCrouching
+    const isJumping =
+      this.manualJumpTimer > 0 || this.gestureJumping || this.hero.getAction() === 'jump-kick'
+
+    // 1. 真实空间立体闪避判定：高位横扫靠深蹲潜闪、低位横扫靠起跳跃过、火球靠跨步侧移！
+    if (attack === 'melee-high' && isCrouching) {
+      this.hero.triggerAction('crouch-dodge', 0.45)
+      this.triggerPerfectDodge('DUCK DODGE!')
+      return
+    }
+    if (attack === 'melee-low' && isJumping) {
+      this.triggerPerfectDodge('JUMP DODGE!')
+      return
+    }
+    if (attack === 'fireball' && Math.abs(this.hero.currentX - attackX) > 2.95) {
+      this.triggerPerfectDodge('PERFECT DODGE!')
       return
     }
 
+    // 2. 机械哥莫拉/巨兽重装冲锋（charge）：正面迎击或抬盾自然切入高燃角力过肩摔！
     const isGuarding = this.isHeroGuarding()
-    if (isGuarding) {
-      const isJustGuard = this.elapsedTime - this.guardStartedAt <= 0.85
-      this.audio.playGuardBlock()
+    if (
+      attack === 'charge' &&
+      !this.grappleTriggeredThisWave &&
+      this.gameMode === 'story' &&
+      (isGuarding || this.pendingMeleeStrike !== null)
+    ) {
+      this.beginGrappleStage()
+      return
+    }
+
+    // 3. 能量护盾防御 & 精准弹反（Parry）
+    if (isGuarding && this.guardBrokenCooldown <= 0) {
+      const isJustGuard = this.elapsedTime - this.guardStartedAt <= 0.52
       this.effects.triggerShieldBlockFlash()
-      this.effects.spawnBurst(
-        new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ - 2.8),
-        isJustGuard ? 0xfef08a : 0x7dd3fc,
-        isJustGuard ? 24 : 14,
-        24,
-        1.15,
-      )
-      this.effects.spawnImpactRing(
-        new THREE.Vector3(this.hero.currentX, 9.0, this.hero.baseZ - 2.8),
-        isJustGuard ? 0xfef08a : 0x38bdf8,
-        isJustGuard ? 7.2 : 5.2,
-      )
-      this.addHitStop(isJustGuard ? 0.05 : 0.03)
-      this.addTrauma(isJustGuard ? 0.34 : 0.2)
+      const shieldPos = new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ - 2.6)
 
       if (isJustGuard) {
-        if (attack === 'melee' && this.kaiju.encounter.state === 'attack') {
+        this.audio.playParry()
+        this.hero.triggerAction('guard-parry', 0.44)
+        this.guardStamina = 100
+        if (this.kaiju.encounter.isMeleeLike(attack)) {
           this.kaiju.encounter.enter('staggered')
         }
         this.perfectGuards += 1
-        this.gainEnergy(28)
-        this.score += 420
+        this.counterBonusTimer = 2.6
+        this.gainEnergy(30)
+        this.score += 480
+        this.addHitStop(0.085)
+        this.addTrauma(0.38)
+        this.triggerImpactFlash('parry')
+        this.effects.spawnBurst(shieldPos, 0xfef08a, 28, 28, 1.3)
+        this.effects.spawnImpactRing(shieldPos, 0xfef08a, 8.2)
+        this.effects.flashDynamicLight(shieldPos, 0xfef08a, 34, 0.3)
         this.spawnFloatingAtWorld(
           new THREE.Vector3(this.hero.currentX, 14.6, this.hero.baseZ),
-          'PERFECT GUARD!',
+          'PARRY!',
           '#38bdf8',
-          1.26,
+          1.34,
           'guard',
         )
-        this.showBanner('bannerPerfectGuard', 0.95)
+        this.showBanner('bannerPerfectGuard', 1.0)
       } else {
-        const chipDamage = Math.max(2, Math.round(damage * 0.18))
+        this.audio.playGuardBlock()
+        this.guardStamina = Math.max(0, this.guardStamina - (attack === 'dark-beam' ? 38 : 26))
+        const chipDamage = this.gameMode === 'practice' ? 0 : Math.max(2, Math.round(damage * 0.16))
         this.heroHp = Math.max(1, this.heroHp - chipDamage)
-        this.gainEnergy(12)
-        this.score += 140
-        this.spawnFloatingAtWorld(
-          new THREE.Vector3(this.hero.currentX, 14.4, this.hero.baseZ),
-          `GUARD -${chipDamage}`,
-          '#93c5fd',
-          1.0,
-          'guard',
-        )
+        this.totalHeroDamageTaken += chipDamage
+        this.gainEnergy(10)
+        this.score += 120
+        this.addHitStop(0.035)
+        this.addTrauma(0.22)
+        this.effects.spawnBurst(shieldPos, 0x7dd3fc, 14, 22, 1.05)
+        this.effects.spawnImpactRing(shieldPos, 0x38bdf8, 5.2)
+        if (this.guardStamina <= 0) {
+          this.guardBrokenCooldown = 1.6
+          this.manualGuard = false
+          this.hero.triggerAction('hit-heavy', 0.55)
+          this.spawnFloatingAtWorld(
+            new THREE.Vector3(this.hero.currentX, 14.5, this.hero.baseZ),
+            'GUARD BROKEN!',
+            '#fb923c',
+            1.28,
+            'crit',
+          )
+        } else {
+          this.spawnFloatingAtWorld(
+            new THREE.Vector3(this.hero.currentX, 14.4, this.hero.baseZ),
+            `GUARD -${chipDamage}`,
+            '#93c5fd',
+            1.0,
+            'guard',
+          )
+        }
       }
       this.emitHud()
       return
     }
 
+    // 4. 英雄实打实受击（方向/重击分化 + 皮套闪红 + 试招靶场不致死）
     this.chainTimeLeft = 0
     this.punchChain = 0
-    this.heroHp = Math.max(0, this.heroHp - damage)
     this.combo = 0
-    this.hero.triggerAction('hit', 0.4)
+    const actualDmg = this.gameMode === 'practice' ? 0 : damage
+    this.heroHp = Math.max(0, this.heroHp - actualDmg)
+    this.totalHeroDamageTaken += actualDmg
+
+    const hurtAction: HeroAction =
+      attack === 'dark-beam' || attack === 'charge'
+        ? 'hit-heavy'
+        : attackX < this.hero.currentX - 0.6
+          ? 'hit-left'
+          : attackX > this.hero.currentX + 0.6
+            ? 'hit-right'
+            : 'hit'
+    this.hero.triggerAction(hurtAction, hurtAction === 'hit-heavy' ? 0.54 : 0.4)
+    this.hero.triggerHurtFlash(1)
     this.audio.playHeroHurt()
-    this.addHitStop(0.07)
+    this.addHitStop(0.075)
     this.addTrauma(0.56)
-    this.effects.spawnBurst(
-      new THREE.Vector3(this.hero.currentX, 9.5, this.hero.baseZ - 1.2),
-      0xff4444,
-      18,
-      20,
-      1.1,
-    )
-    this.effects.spawnImpactRing(
-      new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ - 1.4),
-      0xff8888,
-      5.5,
-    )
-    this.effects.spawnHitFlash(
-      new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ - 1.4),
-      0xff8888,
-      1.15,
-    )
+    this.triggerImpactFlash('hurt')
+
+    const hurtPos = new THREE.Vector3(this.hero.currentX, 9.5, this.hero.baseZ - 1.2)
+    this.effects.spawnBurst(hurtPos, 0xff4444, 18, 22, 1.12)
+    this.effects.spawnImpactRing(hurtPos, 0xff8888, 5.8)
+    this.effects.spawnHitFlash(hurtPos, 0xff8888, 1.2)
+    this.effects.flashDynamicLight(hurtPos, 0xff3b30, 26, 0.28)
     this.spawnFloatingAtWorld(
       new THREE.Vector3(this.hero.currentX, 14.5, this.hero.baseZ),
-      `-${damage}`,
+      this.gameMode === 'practice' ? 'HIT!' : `-${actualDmg}`,
       '#ff4d4f',
       1.25,
     )
 
-    if (this.heroHp <= 0) {
+    if (this.heroHp <= 0 && this.gameMode !== 'practice') {
       this.phase = 'defeat'
       this.audio.setDangerAlarm(false)
+      this.audio.setChargeHum(0)
+      this.audio.setAmbience(this.arena.getTheme(), false)
+      this.hero.triggerAction('defeat', 99)
       this.showBanner('bannerDefeat', 3.0)
-    } else if (this.heroHp <= this.heroMaxHp * 0.3) {
+    } else if (this.heroHp <= this.heroMaxHp * 0.3 && this.gameMode !== 'practice') {
       this.audio.setDangerAlarm(true)
     }
     this.emitHud()
   }
 
   private isHeroGuarding(): boolean {
+    if (this.guardBrokenCooldown > 0) return false
     return this.manualGuard || this.gestureGuard
   }
 
@@ -1597,6 +2076,26 @@ export class UltramanGameEngine {
     })
   }
 
+  private computeBattleRankAndBadges(): { rank: BattleRank; badges: string[] } {
+    const badges: string[] = []
+    if (this.totalHeroDamageTaken === 0 && this.defeatedCount > 0) badges.push('badgeNoDamage')
+    if (this.perfectGuards >= 2) badges.push('badgeParryMaster')
+    if (this.perfectDodges >= 2) badges.push('badgePhantomDodge')
+    if (this.maxCombo >= 12) badges.push('badgeComboKing')
+    if (this.finisherKillCount >= 1) badges.push('badgeLightFinisher')
+
+    let pts = 0
+    if (this.heroHp >= 85) pts += 35
+    else if (this.heroHp >= 55) pts += 22
+    else pts += 10
+    pts += Math.min(25, this.maxCombo * 1.8)
+    pts += Math.min(25, (this.perfectGuards + this.perfectDodges) * 6)
+    pts += Math.min(15, this.finisherKillCount * 8)
+
+    const rank: BattleRank = pts >= 78 ? 'S' : pts >= 56 ? 'A' : pts >= 36 ? 'B' : 'C'
+    return { rank, badges }
+  }
+
   private loop = (now: number) => {
     if (this.disposed) return
     this.rafId = requestAnimationFrame(this.loop)
@@ -1606,10 +2105,16 @@ export class UltramanGameEngine {
     if (this.paused) return
     this.elapsedTime += rawDt
 
+    // 分层顿帧与完美闪避子弹时间流速调度
     let dt = rawDt
     if (this.hitStopTimer > 0) {
-      this.hitStopTimer -= rawDt
-      dt = rawDt * 0.12
+      this.hitStopTimer = Math.max(0, this.hitStopTimer - rawDt)
+      dt = rawDt * 0.08
+      // 顿帧冻结期间单独驱动怪兽高频肉体微抖，呈现拳拳到肉的扎实硬直震感！
+      this.kaiju.stepHitstopVibration(rawDt)
+    } else if (this.bulletTimeLeft > 0) {
+      this.bulletTimeLeft = Math.max(0, this.bulletTimeLeft - rawDt)
+      dt = rawDt * 0.28
     }
 
     this.stepSimulation(dt, rawDt, now)
@@ -1621,8 +2126,23 @@ export class UltramanGameEngine {
     if (this.discCooldown > 0) this.discCooldown = Math.max(0, this.discCooldown - dt)
     if (this.punchCooldown > 0) this.punchCooldown = Math.max(0, this.punchCooldown - rawDt)
     if (this.kickCooldown > 0) this.kickCooldown = Math.max(0, this.kickCooldown - rawDt)
-    if (this.grappleSfxCooldown > 0) this.grappleSfxCooldown = Math.max(0, this.grappleSfxCooldown - rawDt)
-    if (this.rainbowSfxCooldown > 0) this.rainbowSfxCooldown = Math.max(0, this.rainbowSfxCooldown - rawDt)
+    if (this.manualJumpTimer > 0) this.manualJumpTimer = Math.max(0, this.manualJumpTimer - rawDt)
+    if (this.counterBonusTimer > 0) {
+      this.counterBonusTimer = Math.max(0, this.counterBonusTimer - rawDt)
+    }
+    if (this.guardBrokenCooldown > 0) {
+      this.guardBrokenCooldown = Math.max(0, this.guardBrokenCooldown - rawDt)
+    }
+    if (this.menuFocusTimer > 0) {
+      this.menuFocusTimer = Math.max(0, this.menuFocusTimer - rawDt)
+      if (this.menuFocusTimer <= 0) this.menuOrbitFocus = 'center'
+    }
+    if (this.grappleSfxCooldown > 0) {
+      this.grappleSfxCooldown = Math.max(0, this.grappleSfxCooldown - rawDt)
+    }
+    if (this.rainbowSfxCooldown > 0) {
+      this.rainbowSfxCooldown = Math.max(0, this.rainbowSfxCooldown - rawDt)
+    }
     if (this.skillBannerTimer > 0) {
       this.skillBannerTimer = Math.max(0, this.skillBannerTimer - dt)
       if (this.skillBannerTimer <= 0) this.skillBannerKey = null
@@ -1632,6 +2152,15 @@ export class UltramanGameEngine {
     if (this.combo > 0) {
       this.comboResetTimer -= dt
       if (this.comboResetTimer <= 0) this.combo = 0
+    }
+
+    // 消耗 160ms 输入缓冲队列
+    if (this.bufferedInput && this.phase === 'fighting') {
+      if (this.elapsedTime > this.bufferedInput.expiresAt) {
+        this.bufferedInput = null
+      } else if (this.tryExecuteInput(this.bufferedInput)) {
+        this.bufferedInput = null
+      }
     }
 
     const canMoveLateral =
@@ -1650,6 +2179,17 @@ export class UltramanGameEngine {
     }
     this.wasGuarding = guarding
 
+    // 护盾耐力动态消耗与恢复
+    if (guarding) {
+      this.guardStamina = Math.max(0, this.guardStamina - rawDt * 20)
+      if (this.guardStamina <= 0) {
+        this.guardBrokenCooldown = 1.4
+        this.manualGuard = false
+      }
+    } else {
+      this.guardStamina = Math.min(100, this.guardStamina + rawDt * 30)
+    }
+
     this.hero.setLean(combinedLean)
     this.hero.setGuard(guarding)
     this.hero.setBeamCharge(
@@ -1661,34 +2201,67 @@ export class UltramanGameEngine {
       this.gestureDiscSide,
     )
 
-    const dangerTimer = this.phase === 'fighting' && this.heroHp <= this.heroMaxHp * 0.3
-    // 先更新怪兽世界变换，再向英雄注入基于怪兽真实前表面的实时防穿模硬屏障 Z！
+    // 连续蓄力嗡鸣随蓄力进度平滑升降调
+    const activeChargeLevel =
+      this.phase === 'transform'
+        ? this.transformProgress
+        : this.battleStage === 'finisher-spread'
+          ? this.finisherSpreadProgress
+          : Math.max(this.gestureBeamCharge, this.gestureDiscCharge, this.gestureTypeCharge)
+    this.audio.setChargeHum(activeChargeLevel)
+
+    const dangerTimer =
+      this.phase === 'fighting' &&
+      this.gameMode !== 'practice' &&
+      this.heroHp <= this.heroMaxHp * 0.3
+
     if (this.phase !== 'fighting') this.advanceEncounter(dt, false)
     this.kaiju.update(dt, this.elapsedTime, this.hero.currentX)
+
     const enforceCollision =
       this.phase === 'fighting' &&
       this.kaiju.root.visible &&
       this.kaiju.encounter.state !== 'dying' &&
       this.kaiju.encounter.state !== 'thrown'
     this.hero.setMinSafeWorldZ(
-      enforceCollision ? this.kaiju.getFrontSurfaceZ() + 2.85 : -Infinity,
+      enforceCollision ? this.kaiju.getFrontSurfaceZ() + 2.45 : -Infinity,
     )
+
+    // 奥特曼头部实时死锁怪兽头部视线，彻底告别僵直目视空气！
+    if (this.phase === 'fighting' && this.kaiju.root.visible) {
+      this.hero.setLookTarget(this.kaiju.getTargetCenter('high'))
+    } else {
+      this.hero.setLookTarget(null)
+    }
+
     this.hero.update(dt, this.elapsedTime, dangerTimer, nowMs, rawDt)
     this.arena.update(
       this.elapsedTime,
       this.hero.root.position,
       this.kaiju.root.position,
       this.kaiju.root.visible,
+      this.camera.position,
+      rawDt,
     )
 
-    // 幕 0：宇宙星空变身仪式更新
-    if (this.phase === 'transform') {
+    // 站位校准阶段（追踪稳定且站距合适 1.3s 自动完成，或 3.8s 保底放行，亦可随时跳过）
+    if (this.phase === 'calibrating') {
+      const good = this.gestureTracking && this.gestureDistanceHint === 'ok'
+      const rate = good ? 0.82 : this.gestureTracking ? 0.38 : 0.12
+      this.calibrationProgress = Math.min(1, this.calibrationProgress + rawDt * rate)
+      if (this.calibrationProgress >= 1) {
+        if (this.gameMode === 'practice') {
+          void this.loadWave(this.waveIndex, true)
+        } else {
+          this.beginTransformPhase()
+        }
+      }
+    } else if (this.phase === 'transform') {
       if (!this.transformBurstPlayed) {
         if (this.controlMode === 'keyboard') {
-          this.transformProgress = Math.min(1, this.transformProgress + rawDt * 0.72)
+          this.transformProgress = Math.min(1, this.transformProgress + rawDt * 0.78)
           if (this.transformProgress >= 1) this.completeTransformBurst()
         }
-        // 高举手时英雄掌心绽放聚能光环
         const handPos = this.hero.getFistOrigin('right')
         this.effects.updateRainbowGather(
           this.transformProgress > 0.08,
@@ -1712,7 +2285,7 @@ export class UltramanGameEngine {
     } else if (this.phase === 'wave-clear') {
       this.waveTransitionTimer -= dt
       if (this.waveTransitionTimer <= 0) {
-        this.heroHp = Math.min(this.heroMaxHp, this.heroHp + 40)
+        this.heroHp = Math.min(this.heroMaxHp, this.heroHp + 45)
         if (this.heroHp > this.heroMaxHp * 0.3) {
           this.audio.setDangerAlarm(false)
         }
@@ -1721,6 +2294,38 @@ export class UltramanGameEngine {
     } else if (this.phase === 'fighting') {
       this.stepCombat(dt, rawDt)
     }
+
+    // 同步拳脚真实骨骼动态拖尾丝带（高速出招段在拳/脚尖拉出流光气劲）
+    const strikeInfo = this.hero.getStrikeContactInfo()
+    const trailColor = this.heroProfile.accentColor
+    this.effects.updateLimbTrail(
+      'handL',
+      strikeInfo.limb === 'handL' && strikeInfo.progress >= 0.12 && strikeInfo.progress <= 0.56,
+      this.hero.getFistOrigin('left'),
+      trailColor,
+      rawDt,
+    )
+    this.effects.updateLimbTrail(
+      'handR',
+      strikeInfo.limb === 'handR' && strikeInfo.progress >= 0.12 && strikeInfo.progress <= 0.56,
+      this.hero.getFistOrigin('right'),
+      trailColor,
+      rawDt,
+    )
+    this.effects.updateLimbTrail(
+      'footL',
+      strikeInfo.limb === 'footL' && strikeInfo.progress >= 0.12 && strikeInfo.progress <= 0.62,
+      this.hero.getFootOrigin('left'),
+      0xf97316,
+      rawDt,
+    )
+    this.effects.updateLimbTrail(
+      'footR',
+      strikeInfo.limb === 'footR' && strikeInfo.progress >= 0.12 && strikeInfo.progress <= 0.62,
+      this.hero.getFootOrigin('right'),
+      0xf97316,
+      rawDt,
+    )
 
     const beamSeg = this.hero.getBeamOriginSegment()
     const kaijuTarget = this.kaiju.getTargetCenter()
@@ -1737,6 +2342,7 @@ export class UltramanGameEngine {
       kaijuEmit,
       heroCenter,
       this.camera.quaternion,
+      this.camera.position,
     )
     this.effects.updateShield(
       guarding,
@@ -1761,7 +2367,6 @@ export class UltramanGameEngine {
       this.elapsedTime,
     )
 
-    // 展臂七彩棱镜聚能特效同步（中心置于英雄身后 +1.8m，确保七彩光芒环绕周身绝不遮糊面部与胸甲）
     if (this.phase !== 'transform') {
       const showRainbow = this.phase === 'fighting' && this.battleStage === 'finisher-spread'
       const backAuraCenter = this.hero.root.position.clone().add(new THREE.Vector3(0, 9.4, 1.8))
@@ -1787,12 +2392,19 @@ export class UltramanGameEngine {
       spec.accentColor,
       this.elapsedTime,
     )
+    const warnTint =
+      fight.attack === 'melee-high'
+        ? 0xf59e0b
+        : fight.attack === 'melee-low'
+          ? 0x38bdf8
+          : 0xff422a
     this.effects.updateWarningRing(
       isWarning,
       fight.attack === 'fireball' ? fight.targetX : this.hero.currentX,
       this.hero.baseZ,
       isWarning ? fight.time / WINDUP_TIME : 0,
       this.elapsedTime,
+      warnTint,
     )
 
     this.updateCamera(rawDt)
@@ -1806,25 +2418,48 @@ export class UltramanGameEngine {
 
   private stepCombat(dt: number, rawDt: number) {
     this.stageTimer += rawDt
+    const spec = MONSTER_WAVES[this.waveIndex]!
 
-    // 1. 幕 2 过场特写演出 -> 自动进入远程火球对峙
-    if (this.battleStage === 'transition-ranged') {
-      if (this.stageTimer >= 1.55) {
-        this.battleStage = 'ranged'
-        this.stageTimer = 0
-        this.rangedFireballTimer = 0.85
-        this.kaiju.encounter.directorLocked = false
-        this.kaiju.encounter.enter('idle')
-        this.emitHud()
+    // 1. 真实物理接触帧近战结算（拳/脚进入 Active Hit Frame 瞬间引爆接触点！）
+    if (this.pendingMeleeStrike && !this.pendingMeleeStrike.settled) {
+      const info = this.hero.getStrikeContactInfo()
+      if (info.active) {
+        const st = this.pendingMeleeStrike
+        st.settled = true
+        this.pendingMeleeStrike = null
+
+        const limbPos = st.isKick
+          ? this.hero.getFootOrigin(st.side)
+          : this.hero.getFistOrigin(st.side)
+        const targetPos = this.kaiju.getTargetCenter(st.height)
+        // 接触火花点精准落在拳/脚与怪兽表皮之间（70% 贴近怪兽面）
+        const contactPos = limbPos.clone().lerp(targetPos, 0.58)
+        const pan = st.side === 'left' ? -0.35 : 0.35
+
+        this.gainEnergy(st.isFinisher ? 16 : 11)
+        this.audio.playImpact(spec.armorMaterial, st.impact === 'heavy', this.combo + 1, pan)
+        if (st.isFinisher && !st.isKick) {
+          this.showBanner('bannerTriple', 0.9)
+        }
+        this.applyDamageToMonster(
+          st.damage,
+          st.color,
+          st.isCritical,
+          st.impact,
+          st.side,
+          st.height,
+          contactPos,
+        )
+        if (this.phase !== 'fighting') return
+      } else if (info.progress > 0.55 || info.limb === null) {
+        this.pendingMeleeStrike = null
       }
-      return
     }
 
-    // 2. 幕 3：近身侧面角力推力 QTE（复刻视频 2 1:04-1:12）
+    // 2. 近身侧面角力 QTE
     if (this.battleStage === 'grapple') {
       this.grappleTimeLeft -= rawDt
-      const camPush =
-        this.controlMode === 'camera' ? this.gestureStrugglePower * 0.72 : 0
+      const camPush = this.controlMode === 'camera' ? this.gestureStrugglePower * 0.72 : 0
       const kaijuResist = 0.19
       this.grappleProgress = THREE.MathUtils.clamp(
         this.grappleProgress + (camPush - kaijuResist) * rawDt,
@@ -1835,7 +2470,6 @@ export class UltramanGameEngine {
         this.audio.playGrapplePush()
         this.grappleSfxCooldown = 0.22
       }
-      // 角力交锋处持续迸射能量火花（精确贴合双方双掌对抵点）
       if (Math.random() < 0.72) {
         this.effects.spawnBurst(
           new THREE.Vector3(0, 9.3, this.hero.root.position.z - 2.6),
@@ -1855,33 +2489,30 @@ export class UltramanGameEngine {
       return
     }
 
-    // 3. 角力收尾过肩摔 + 后空翻落地起身特写（复刻视频 2 1:12-1:18）
     if (this.battleStage === 'grapple-finish') {
       if (this.stageTimer >= 0.85 && this.hero.getAction() !== 'backflip-land') {
-        this.hero.triggerAction('backflip-land', 1.2)
+        this.hero.triggerAction('backflip-land', 1.15)
+        this.audio.playFootstep(true)
       }
-      if (this.stageTimer >= 2.1) {
-        if (this.monsterHp / this.monsterMaxHp <= 0.2) {
-          this.beginFinisherSpread()
-        } else {
-          this.battleStage = 'melee'
-          this.stageTimer = 0
-          this.hero.setStageBaseZ(8.4, false)
-          this.hero.setLeanRange(4.8)
-          this.kaiju.setStageAnchor(-2.2, 8.4, null)
-          this.kaiju.encounter.directorLocked = false
-          this.kaiju.encounter.enter('staggered')
-        }
+      if (this.stageTimer >= 2.05) {
+        this.battleStage = 'melee'
+        this.stageTimer = 0
+        this.hero.setStageBaseZ(7.6, false)
+        this.hero.setLeanRange(5.8)
+        const safeKaijuZ = Math.min(-1.8, -(this.kaiju.frontExtentZ - 0.8))
+        this.kaiju.setStageAnchor(safeKaijuZ, 7.6, null)
+        this.kaiju.encounter.directorLocked = false
+        this.kaiju.encounter.enter('stunned')
         this.emitHud()
       }
       return
     }
 
-    // 4. 幕 4A：双臂展翼七彩棱镜聚能（大幅提速：展臂/按住约 0.52s 聚满，自然保底约 1.7s 自动聚满，告别漫长举手等待）
+    // 3. 主动终结技：双臂展翼七彩聚能 -> 高空斜俯超级光线轰爆
     if (this.battleStage === 'finisher-spread') {
       const spreading =
         this.controlMode === 'camera' ? this.gestureSpreading : this.manualSpreadHeld
-      const chargeSpeed = spreading ? 1.9 : 0.58
+      const chargeSpeed = spreading ? 1.9 : 0.65
       this.finisherSpreadProgress = Math.min(1, this.finisherSpreadProgress + rawDt * chargeSpeed)
       if (spreading && this.rainbowSfxCooldown <= 0) {
         this.audio.playRainbowCharge()
@@ -1893,12 +2524,10 @@ export class UltramanGameEngine {
       return
     }
 
-    // 5. 幕 4B：高空斜俯超级光线绝杀
     if (this.battleStage === 'finisher-beam') {
       if (!this.finisherBeamFired) {
         this.finisherBeamWaitTimer += rawDt
-        // 超过 2.2s 自动辅助激发，保证收尾节奏干脆爽快
-        if (this.finisherBeamWaitTimer >= 2.2) {
+        if (this.finisherBeamWaitTimer >= 2.1) {
           this.fireFinisherSuperBeam()
         }
       } else {
@@ -1907,17 +2536,23 @@ export class UltramanGameEngine {
         if (this.finisherTickTimer <= 0) {
           this.finisherTickTimer = 0.28
           const hitPos = this.kaiju.getTargetCenter()
-          this.spawnFloatingAtWorld(hitPos, `-${Math.round(95 * this.totalDamageMul)}!`, '#38e8ff', 1.38, 'crit')
+          this.spawnFloatingAtWorld(
+            hitPos,
+            `-${Math.round(105 * this.totalDamageMul)}!`,
+            '#38e8ff',
+            1.4,
+            'crit',
+          )
         }
         if (this.stageTimer >= 2.15) {
           this.monsterHp = 0
-          this.onMonsterDefeated()
+          this.onMonsterDefeated(true)
         }
       }
       return
     }
 
-    // 6. 宿命双光线对波结算循环
+    // 4. 双光线对波结算
     if (this.beamClashActive) {
       this.beamClashTimer -= dt
       const pushUp =
@@ -1948,24 +2583,7 @@ export class UltramanGameEngine {
       }
     }
 
-    // 7. 远程阶段专用高频三车道熔岩火球雨（复刻视频 2 0:46-1:03）
-    if (this.battleStage === 'ranged') {
-      this.rangedFireballTimer -= dt
-      if (this.rangedFireballTimer <= 0 && this.kaiju.encounter.state !== 'windup') {
-        const lanes = [-5.6, 0, 5.6]
-        // 交替瞄准玩家当前所在车道与相邻车道，诱导玩家畅快左右大步横移！
-        const targetLane =
-          this.rangedLaneCursor % 2 === 0
-            ? THREE.MathUtils.clamp(this.hero.currentX, -6.2, 6.2)
-            : lanes[this.rangedLaneCursor % lanes.length]!
-        this.rangedLaneCursor++
-        this.kaiju.encounter.forceAttack('fireball', targetLane)
-        this.audio.playWarning()
-        this.rangedFireballTimer = 2.65
-      }
-    }
-
-    // 8. 抛射物碰撞与空中消弹（若某发命中触发阶段切换并重置特效数组，则立刻中止剩余旧弹幕结算）
+    // 5. 远程抛射物碰撞与空中消弹
     const stageBefore = this.battleStage
     const kaijuCenter = this.kaiju.getTargetCenter()
     for (let i = this.effects.projectiles.length - 1; i >= 0; i--) {
@@ -1990,37 +2608,22 @@ export class UltramanGameEngine {
 
         if (proj.pos.z <= kaijuCenter.z + 3.8) {
           proj.hitTriggered = true
-          if (proj.kind === 'punch-wave') {
-            this.gainEnergy(proj.finisher ? 16 : 12)
-            if (proj.finisher) {
-              this.audio.playHeavyImpact()
-              this.showBanner('bannerTriple', 0.95)
-            } else {
-              this.audio.playPunch(true)
-            }
-            this.applyDamageToMonster(
-              proj.damage,
-              proj.finisher ? '#fef08a' : '#fde047',
-              !!proj.finisher,
-              proj.finisher ? 'heavy' : 'light',
-              proj.punchSide,
-            )
-          } else if (proj.kind === 'palm-bolt') {
+          if (proj.kind === 'palm-bolt') {
             this.gainEnergy(10)
-            this.audio.playPunch(true)
+            this.audio.playImpact(spec.armorMaterial, false, this.combo + 1)
             this.applyDamageToMonster(proj.damage, '#67e8f9', false, 'light', proj.punchSide)
           } else if (proj.kind === 'kick-wave') {
             this.gainEnergy(16)
-            this.audio.playHeavyImpact()
+            this.audio.playImpact(spec.armorMaterial, true, this.combo + 1)
             this.applyDamageToMonster(proj.damage, '#fb923c', true, 'heavy')
           } else if (proj.kind === 'ultra-disc') {
             this.gainEnergy(18)
-            this.audio.playHeavyImpact()
+            this.audio.playImpact(spec.armorMaterial, true, this.combo + 1)
             if (this.kaiju.encounter.state === 'windup') {
               this.kaiju.encounter.enter('staggered')
               this.showBanner('bannerInterrupt', 1.0)
             }
-            this.applyDamageToMonster(proj.damage, '#67e8f9', true, 'heavy')
+            this.applyDamageToMonster(proj.damage, '#67e8f9', true, 'disc')
           }
         }
       } else {
@@ -2037,37 +2640,51 @@ export class UltramanGameEngine {
   private advanceEncounter(dt: number, fighting: boolean) {
     const fight = this.kaiju.encounter
     const spec = MONSTER_WAVES[this.waveIndex]!
-    const allowed: MonsterAttackKind[] | undefined =
-      this.battleStage === 'melee'
-        ? ['melee', 'melee', 'fireball']
-        : this.battleStage === 'ranged'
-          ? ['fireball', 'fireball', 'dark-beam']
-          : undefined
     const event: EncounterEvent | undefined = fight.advance(
       dt,
       fighting,
       this.monsterHp / this.monsterMaxHp,
       this.hero.currentX,
       spec,
-      allowed,
-      this.battleStage === 'ranged' ? 1.4 : 1.0,
+      undefined,
+      1.0,
+      this.gameMode === 'practice',
     )
     if (event === 'warn') {
       this.audio.playWarning()
       this.emitHud()
+    } else if (event === 'illusion-start') {
+      this.audio.playRoar('baltan')
+      this.showBanner('bannerBaltanIllusion', 1.4)
+      this.emitHud()
+    } else if (event === 'absorb-start') {
+      this.audio.playRoar('ganq')
+      this.showBanner('bannerGanqAbsorb', 1.3)
+      this.emitHud()
+    } else if (event === 'absorb-release') {
+      const dmg = spec.attackDamage + fight.absorbedCharge * 6
+      this.effects.spawnKaijuFireball(
+        this.kaiju.getAttackEmitOrigin(),
+        new THREE.Vector3(this.hero.currentX, 8.8, this.hero.baseZ),
+        0xc084fc,
+        dmg,
+        22,
+      )
+      this.audio.playBeam(false)
+      fight.absorbedCharge = 0
     } else if (event === 'land' || event === 'roar' || event === 'collapse') {
-      this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime)
+      this.arena.groundImpact(this.kaiju.currentX, this.kaiju.currentZ, this.elapsedTime, 5.5)
+      this.audio.playFootstep(true)
       this.addTrauma(event === 'roar' ? 0.34 : 0.45)
       if (event === 'roar') this.audio.playRoar()
     } else if (event === 'strike') {
       if (fight.attack === 'fireball') {
-        const fbSpeed = this.battleStage === 'ranged' ? 18.5 : 17.5
         this.effects.spawnKaijuFireball(
           this.kaiju.getAttackEmitOrigin(),
           new THREE.Vector3(fight.targetX, 8.8, this.hero.baseZ),
           spec.accentColor,
           spec.attackDamage,
-          fbSpeed,
+          19,
         )
       } else {
         if (fight.attack === 'dark-beam') this.effects.startKaijuBeam(spec.accentColor)
@@ -2080,33 +2697,39 @@ export class UltramanGameEngine {
     }
   }
 
-  /**
-   * 悦动元气机电影级分镜运镜导演：
-   * 每个阶段独立定制最震撼的特摄焦段与构图，并用指数阻尼无缝推拉运镜。
-   */
   private updateCamera(dt: number) {
     const wideFactor = THREE.MathUtils.clamp((this.viewportAspect - 0.68) / 0.72, 0, 1)
-    // 手机竖屏因子（aspect <= 0.92 时平滑增至 1）：按水平视宽等比后拉相机，杜绝角色/双臂/角力被左右切边
     const portraitFactor = THREE.MathUtils.clamp((0.92 - this.viewportAspect) / 0.46, 0, 1)
     const targetCam = new THREE.Vector3()
     const targetLook = new THREE.Vector3()
     let desiredBaseFov = 46
 
     if (this.phase === 'menu') {
-      const sway = Math.sin(this.elapsedTime * 0.55) * 0.55
-      const menuOffsetX = THREE.MathUtils.lerp(0.6, 6.2, wideFactor)
-      targetCam.set(
-        menuOffsetX + sway,
-        THREE.MathUtils.lerp(9.6, 10.6, portraitFactor),
-        THREE.MathUtils.lerp(28.8, 36.2, portraitFactor),
-      )
-      targetLook.set(
-        THREE.MathUtils.lerp(-0.3, 0, portraitFactor),
-        THREE.MathUtils.lerp(7.2, 5.2, portraitFactor),
-        3.2,
-      )
-    } else if (this.phase === 'transform') {
-      // 宇宙变身正面仰拍特写（竖屏略后拉确保高举双臂不裁顶）
+      const sway = Math.sin(this.elapsedTime * 0.52) * 0.6
+      if (this.menuOrbitFocus === 'monster') {
+        // 切换怪兽时按怪兽实际纵深自适应聚焦，避免巨型外壳（如加坦杰厄）贴近裁切相机近平面
+        const depthPad = Math.max(0, this.kaiju.frontExtentZ - 3.6) * 2.4
+        targetCam.set(5.2 + sway, 11.4 + depthPad * 0.25, 22.8 + depthPad + portraitFactor * 8)
+        targetLook.set(0, 8.2, -3.2)
+        desiredBaseFov = 44
+      } else if (this.menuOrbitFocus === 'hero') {
+        targetCam.set(3.2 + sway, 9.2, 23.8 + portraitFactor * 6)
+        targetLook.set(0, 7.6, 11.4)
+        desiredBaseFov = 42
+      } else {
+        const menuOffsetX = THREE.MathUtils.lerp(0.6, 6.2, wideFactor)
+        targetCam.set(
+          menuOffsetX + sway,
+          THREE.MathUtils.lerp(9.6, 10.6, portraitFactor),
+          THREE.MathUtils.lerp(28.8, 36.2, portraitFactor),
+        )
+        targetLook.set(
+          THREE.MathUtils.lerp(-0.3, 0, portraitFactor),
+          THREE.MathUtils.lerp(7.2, 5.2, portraitFactor),
+          3.2,
+        )
+      }
+    } else if (this.phase === 'calibrating' || this.phase === 'transform') {
       targetCam.set(
         Math.sin(this.elapsedTime * 0.8) * 1.1,
         THREE.MathUtils.lerp(8.8, 9.5, portraitFactor),
@@ -2115,7 +2738,6 @@ export class UltramanGameEngine {
       targetLook.set(0, THREE.MathUtils.lerp(8.2, 7.2, portraitFactor), 12.2)
       desiredBaseFov = 44
     } else if (this.phase === 'victory') {
-      // 英雄合影构图（竖屏适度后拉并留出下方操作区）
       targetCam.set(
         THREE.MathUtils.lerp(0.4, 0, portraitFactor),
         THREE.MathUtils.lerp(8.6, 9.2, portraitFactor),
@@ -2127,26 +2749,7 @@ export class UltramanGameEngine {
         12.2,
       )
       desiredBaseFov = 43
-    } else if (this.battleStage === 'transition-ranged') {
-      if (this.stageTimer < 1.05) {
-        targetCam.set(
-          this.hero.currentX + THREE.MathUtils.lerp(2.8, 1.4, portraitFactor),
-          10.6,
-          this.hero.root.position.z - THREE.MathUtils.lerp(8.2, 11.4, portraitFactor),
-        )
-        targetLook.set(this.hero.currentX, 9.8, this.hero.root.position.z)
-        desiredBaseFov = 38
-      } else {
-        targetCam.set(
-          0,
-          THREE.MathUtils.lerp(15.2, 17.6, portraitFactor),
-          THREE.MathUtils.lerp(29.8, 36.2, portraitFactor),
-        )
-        targetLook.set(0, 8.4, -8.5)
-        desiredBaseFov = 50
-      }
     } else if (this.battleStage === 'grapple') {
-      // 净空大道侧面角力全景特写（严格锁在 x <= 23.2 大道净空内绝不穿楼；竖屏沿大道纵轴斜偏 + 抬升微俯，完整拍全双雄对推！）
       const sideDist = THREE.MathUtils.lerp(21.4, 23.2, wideFactor)
       const clashMidZ = (this.hero.root.position.z + this.kaiju.getFrontSurfaceZ()) * 0.5
       const jitter = Math.sin(this.elapsedTime * 22) * 0.14
@@ -2172,14 +2775,12 @@ export class UltramanGameEngine {
         desiredBaseFov = 39 + portraitFactor * 4
       }
     } else if (this.battleStage === 'finisher-spread') {
-      // 奥特曼正中对称庄严大特写双臂展开七彩聚能（竖屏向 -Z 拉远 12.2m，完整入画整对展开双臂与十指！）
       const camZ =
         THREE.MathUtils.lerp(0.6, 2.1, this.finisherSpreadProgress) - portraitFactor * 12.2
       targetCam.set(0, THREE.MathUtils.lerp(10.15, 9.6, portraitFactor), camZ)
       targetLook.set(0, THREE.MathUtils.lerp(9.85, 8.8, portraitFactor), 12.0)
       desiredBaseFov = THREE.MathUtils.lerp(44, 52, portraitFactor)
     } else if (this.battleStage === 'finisher-beam') {
-      // 高空宏阔斜俯大片机位（严格控制在大道安全净空内绝不撞楼，竖屏拉远确保左下迪迦与右上怪兽同框）
       const sideX = Math.min(22.2, THREE.MathUtils.lerp(14.5, 18.5, wideFactor) + portraitFactor * 4.5)
       targetCam.set(
         sideX,
@@ -2203,38 +2804,26 @@ export class UltramanGameEngine {
       )
       targetLook.set(this.kaiju.currentX * 0.45, 9.2, this.kaiju.currentZ + 2.5)
       desiredBaseFov = 48
-    } else if (this.battleStage === 'ranged') {
-      // 宏阔正后方街道走廊视角（竖屏后拉以完整覆盖左中右三车道火球轨迹）
-      targetCam.set(
-        this.hero.currentX * 0.34,
-        THREE.MathUtils.lerp(15.2, 17.8, portraitFactor),
-        THREE.MathUtils.lerp(30.2, 36.8, portraitFactor),
-      )
-      targetLook.set(
-        this.hero.currentX * 0.2,
-        THREE.MathUtils.lerp(8.2, 7.0, portraitFactor),
-        -9.0,
-      )
-      desiredBaseFov = 50
     } else {
-      // 贴身近战低机位斜后特摄仰拍（竖屏适度居中拉远，避免英雄和怪兽肩膀被竖屏裁边）
-      const sideOffset = THREE.MathUtils.lerp(1.8, 5.8, wideFactor)
+      // 贴身自由激斗低机位斜后特摄仰拍（子弹时间微推微旋增强慢镜电影感）
+      const btZoom = this.bulletTimeLeft > 0 ? -1.8 : 0
+      const sideOffset = THREE.MathUtils.lerp(1.8, 5.6, wideFactor)
       targetCam.set(
-        this.hero.currentX * 0.45 + sideOffset,
-        THREE.MathUtils.lerp(9.8, 10.8, portraitFactor),
-        THREE.MathUtils.lerp(22.0, 27.4, portraitFactor),
+        this.hero.currentX * 0.48 + sideOffset,
+        THREE.MathUtils.lerp(9.6, 10.6, portraitFactor),
+        THREE.MathUtils.lerp(20.6, 26.2, portraitFactor) + btZoom,
       )
       targetLook.set(
-        this.hero.currentX * 0.25 - THREE.MathUtils.lerp(0.5, 0.1, portraitFactor),
+        this.hero.currentX * 0.28 + this.kaiju.currentX * 0.16 - THREE.MathUtils.lerp(0.4, 0.1, portraitFactor),
         THREE.MathUtils.lerp(8.8, 7.4, portraitFactor),
-        0.6,
+        0.5,
       )
       desiredBaseFov = 46
     }
 
     const camRate =
       this.phase === 'menu'
-        ? 4.5
+        ? 4.2
         : this.battleStage === 'grapple' || this.battleStage === 'finisher-spread'
           ? 8.5
           : 6.8
@@ -2275,11 +2864,15 @@ export class UltramanGameEngine {
     if (this.battleStage === 'grapple') return 'grapple'
     if (this.battleStage === 'transition-ranged' || this.battleStage === 'grapple-finish') return null
     const fight = this.kaiju.encounter
-    if (fight.state === 'windup' && !this.beamClashActive) {
-      return this.battleStage === 'ranged' && fight.attack === 'fireball' ? 'dodge-shoot' : 'guard'
-    }
+    if (fight.state === 'illusion') return 'disc-illusion'
     if (fight.state === 'guarding') return 'kick-break'
-    if (this.battleStage === 'ranged') return 'dodge-shoot'
+    if (fight.state === 'windup' && !this.beamClashActive) {
+      if (fight.attack === 'melee-high') return 'crouch-dodge'
+      if (fight.attack === 'melee-low') return 'jump-dodge'
+      if (fight.attack === 'fireball') return 'dodge-shoot'
+      return 'guard'
+    }
+    if (this.isFinisherReady()) return 'beam-spread'
     return 'punch'
   }
 
@@ -2299,7 +2892,13 @@ export class UltramanGameEngine {
           ? 'warningFireball'
           : fight.attack === 'dark-beam'
             ? 'warningDarkBeam'
-            : 'warningMelee'
+            : fight.attack === 'melee-high'
+              ? 'warningMeleeHigh'
+              : fight.attack === 'melee-low'
+                ? 'warningMeleeLow'
+                : fight.attack === 'charge'
+                  ? 'warningCharge'
+                  : 'warningMelee'
     }
 
     let chargeKind: BattleHudState['chargeKind'] = null
@@ -2312,7 +2911,7 @@ export class UltramanGameEngine {
       chargeProgress = this.finisherSpreadProgress
     } else if (this.isHeroGuarding()) {
       chargeKind = 'guard'
-      chargeProgress = 1
+      chargeProgress = this.guardStamina / 100
     } else if (this.gestureBeamCharge > 0.05) {
       chargeKind = 'beam'
       chargeProgress = this.gestureBeamCharge
@@ -2331,12 +2930,17 @@ export class UltramanGameEngine {
         : this.battleStage === 'finisher-beam'
           ? 'beam'
           : 'none'
+    const { rank, badges } = this.computeBattleRankAndBadges()
 
     return {
       phase: this.phase,
+      gameMode: this.gameMode,
       battleStage: this.battleStage,
       controlMode: this.controlMode,
       loadingProgress: this.loadingProgress,
+      calibrationProgress: this.calibrationProgress,
+      distanceHint: this.gestureDistanceHint,
+      activeGestureCue: this.gestureActiveCue,
       heroId: this.heroProfile.id,
       heroForm: this.activeForm?.id ?? 'base',
       hasForms: !!this.heroProfile.forms,
@@ -2346,14 +2950,17 @@ export class UltramanGameEngine {
       monsterId: spec.id,
       monsterHp: Math.round(this.monsterHp),
       monsterMaxHp: this.monsterMaxHp,
+      monsterSpecialHintKey: fight.specialHintKey,
       heroHp: Math.round(this.heroHp),
       heroMaxHp: this.heroMaxHp,
+      guardStamina: Math.round(this.guardStamina),
       energy: Math.round(this.energy),
       score: Math.round(this.score),
       punchChain: this.punchChain,
       combo: this.combo,
       maxCombo: this.maxCombo,
       perfectGuards: this.perfectGuards,
+      perfectDodges: this.perfectDodges,
       defeatedCount: this.defeatedCount,
       warningTextKey,
       warningUrgency: warningTextKey ? Math.min(1, fight.time / WINDUP_TIME) : 0,
@@ -2367,16 +2974,24 @@ export class UltramanGameEngine {
       grappleActive: this.phase === 'fighting' && this.battleStage === 'grapple',
       grappleProgress: this.grappleProgress,
       transformProgress: this.transformProgress,
+      finisherReady: this.isFinisherReady(),
       finisherPhase,
       finisherProgress:
         finisherPhase === 'spread' ? this.finisherSpreadProgress : this.finisherBeamFired ? 1 : 0,
       actionGuide: this.resolveActionGuide(),
       activeSkillBannerKey: this.skillBannerKey,
+      impactFlashKind: this.impactFlashKind,
+      impactFlashSeq: this.impactFlashSeq,
       tracking: this.gestureTracking,
       bodyCoverage: this.gestureCoverage,
       mirroredCenterX: this.gestureMirroredX,
       poseHintKey: this.gestureHintKey,
-      timerDanger: this.phase === 'fighting' && this.heroHp <= this.heroMaxHp * 0.3,
+      timerDanger:
+        this.phase === 'fighting' &&
+        this.gameMode !== 'practice' &&
+        this.heroHp <= this.heroMaxHp * 0.3,
+      battleRank: rank,
+      badges,
     }
   }
 

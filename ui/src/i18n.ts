@@ -99,16 +99,35 @@ const messages = {
         instructionsHand: '抬起左手/右手切换车道，双手上抬跳跃'
       },
       ultramanView: {
+        practiceButton: '体感试招靶场',
+        practiceBadge: '试招靶场',
+        guardStamina: '护盾耐力',
+        finisherReadyBtn: '光能充盈 · 释放终结光线！',
+        calibrateTitle: '光之站位校准',
+        calibrateDesc: '请站于镜头中央并保持半步距离，让双臂完整入镜以精准捕捉招式',
+        calibrateSkip: '立即开始',
+        distanceHints: {
+          ok: '站距完美',
+          'too-close': '请退后半步',
+          'too-far': '请走近半步',
+          'off-center': '请移回中央'
+        },
+        specialHints: {
+          breakIllusion: '巴尔坦三体分身！发八分光轮或飞踢一举破除！',
+          ganqAbsorb: '加恩Q巨瞳吸收光弹中！改用近身重击打断！',
+          zettonShield: '杰顿波状护盾吸收光线！用飞踢或重拳破盾！',
+          breakGuard: '怪兽重甲防御中！飞踢或上勾重拳强行破防！'
+        },
         split: '双人同屏对决',
         splitHelp: '第三人称 3D 同场分屏格斗！P1 与 P2 面对面真刀真枪对决（三局两胜制），支持单镜头双人体感或同键盘对战！',
         pvpTargetEnemy: '锁定对手',
         pvpStartMatch: '双人变身 · 开始对决！',
         pvpRematch: '再战一场',
         pvpRoundLabel: 'ROUND {round}',
-        pvpIncomingBeamCam: '⚠ 对手释放必杀光线！快双臂交叉防御，或摆 L/十字 对波反制！',
-        pvpIncomingBeamKey: '⚠ 对手释放必杀光线！快按防御键，或按光线键触发宿命对波！',
-        pvpClashCam: '⚡ P1 VS P2 宿命光线对波！狂挥双拳 / 保持手势压倒对手！',
-        pvpClashKey: '⚡ P1 [F/G/V] VS P2 [J/K/L] 宿命光线对波！狂按按键压倒对手！',
+        pvpIncomingBeamCam: '对手释放必杀光线！快双臂交叉防御，或摆 L/十字 对波反制！',
+        pvpIncomingBeamKey: '对手释放必杀光线！快按防御键，或按光线键触发宿命对波！',
+        pvpClashCam: 'P1 VS P2 宿命光线对波！狂挥双拳 / 保持手势压倒对手！',
+        pvpClashKey: 'P1 [F/G/V] VS P2 [J/K/L] 宿命光线对波！狂按按键压倒对手！',
         waitingPair: '等待两位光之战士入镜就位',
         forceStartSingle: '直接开战',
         splitKeyboard: '本地双人键盘',
@@ -123,10 +142,10 @@ const messages = {
           dyna: '三形态爆发 · 索尔捷特光线',
           zeta: '超速聚能 · 泽斯帝姆光线'
         },
-        reactions: { guarding: '护甲防御 · 飞踢/光轮破防！', staggered: '破防失衡 · 全力追击！', roaring: '狂暴觉醒 · 攻势加剧', recovering: '攻击硬直 · 反击良机' },
+        reactions: { guarding: '护甲防御 · 飞踢/光轮破防！', staggered: '破防失衡 · 全力追击！', roaring: '狂暴觉醒 · 攻势加剧', recovering: '攻击硬直 · 反击良机' , illusion: '三体分身 · 光轮破除！', absorbing: '巨瞳吸能 · 近战打断！', stunned: '重创眩晕 · 终结良机！' },
         chainCue: '左右连拳',
-        clashPromptCam: '⚡ 宿命对波！保持光线手势或挥拳压倒怪兽！',
-        clashPromptKey: '⚡ 宿命对波！连按【空格 / J / K】全力推进光束！',
+        clashPromptCam: '宿命对波！保持光线手势或挥拳压倒怪兽！',
+        clashPromptKey: '宿命对波！连按【空格 / J / K】全力推进光束！',
         title: '光之战士 · 体感超激斗',
         subtitle: '第三人称 3D 全身动捕特摄格斗 · 迎战五大经典宇宙怪兽',
         cameraMode: '体感动捕（摄像头）',
@@ -166,7 +185,7 @@ const messages = {
           transformTitle: '模仿动作 · 光之变身！',
           transformCam: '单手高举过头顶召唤奥特曼',
           transformKey: '按 空格 或点击按钮召唤光之巨人',
-          transformSkip: '⚡ 立即变身',
+          transformSkip: '立即变身',
           punchTitle: '左右挥拳连击！',
           punchCam: '快速左右挥臂或摆拳打出五段刀光连招',
           punchKey: '交替连按 J / K 打出五段刀光连招',
@@ -187,7 +206,16 @@ const messages = {
           beamFireKey: '立刻按 空格 爆射终极闪电光线！',
           kickBreakTitle: '护甲防御！飞踢破防！',
           kickBreakCam: '抬腿踢击或高举劈斩光轮震碎护甲',
-          kickBreakKey: '按 I 飞踢或 U 光轮击破怪兽防御'
+          kickBreakKey: '按 I 飞踢或 U 光轮击破怪兽防御',
+          crouchDodgeTitle: '高位横扫 · 立刻深蹲躲避！',
+          crouchDodgeCam: '立刻深蹲潜闪躲过高位横扫，触发子弹时间！',
+          crouchDodgeKey: '按 C 深蹲潜闪躲过高位横扫，触发子弹时间！',
+          jumpDodgeTitle: '低位扫地 · 立刻起跳躲避！',
+          jumpDodgeCam: '立刻起跳或腾空飞踢跃过低位横扫！',
+          jumpDodgeKey: '按 W 起跳或 I 飞踢跃过低位横扫！',
+          discIllusionTitle: '识破分身 · 发射八分光轮！',
+          discIllusionCam: '单手高举劈斩八分光轮，瞬间震碎全部分身！',
+          discIllusionKey: '按 U 发射八分光轮，一举击破三体分身！'
         },
         photo: {
           title: '光之凯旋 · 合影留念',
@@ -276,12 +304,18 @@ const messages = {
         warnings: {
           warningFireball: '危险！火球袭来 — 侧身闪避 / 交叉防御 / 挥拳击碎！',
           warningMelee: '危险！怪兽猛扑重击 — 看准时机双臂交叉完美弹反！',
-          warningDarkBeam: '高能警告！暗黑光线 — 双臂交叉防御，或释放光线正面硬拼对波！'
+          warningDarkBeam: '高能警告！暗黑光线 — 双臂交叉防御，或释放光线正面硬拼对波！',
+          warningMeleeHigh: '高位横扫袭来！立刻深蹲闪避触发子弹时间，或交叉弹反！',
+          warningMeleeLow: '低位扫地袭来！立刻起跳飞踢闪避，或交叉弹反！',
+          warningCharge: '巨兽重装冲锋！正面交叉迎击或重拳抵挡切入角力！'
         },
         warningsKey: {
           warningFireball: '危险！火球袭来 — 按 A/D 闪避 · S 防御 · J/K 挥拳击碎！',
           warningMelee: '危险！怪兽猛扑重击 — 按住 S 展开奥特屏障完美弹反！',
-          warningDarkBeam: '高能警告！暗黑光线 — 按住 S 防御，或按 空格 释放光线宿命对波！'
+          warningDarkBeam: '高能警告！暗黑光线 — 按住 S 防御，或按 空格 释放光线宿命对波！',
+          warningMeleeHigh: '高位横扫袭来！按 C 深蹲闪避触发子弹时间，或按 S 弹反！',
+          warningMeleeLow: '低位扫地袭来！按 W 起跳闪避触发子弹时间，或按 S 弹反！',
+          warningCharge: '巨兽重装冲锋！按 S 正面迎击切入霸气角力！'
         },
         banners: {
           bannerBeamDyna: '索尔捷特光线！',
@@ -326,7 +360,13 @@ const messages = {
           bannerInterrupt: '精准打断怪兽蓄力！',
           bannerWaveClear: '目标击破！光能修复！',
           bannerVictory: '地球和平已守护！光之凯旋！',
-          bannerDefeat: '计时器熄灭…再一次相信光！'
+          bannerDefeat: '计时器熄灭…再一次相信光！',
+          bannerPracticeStart: '体感试招靶场 · 自由连招测试！',
+          bannerPerfectDodge: '极限闪避 · 时空减速反击！',
+          bannerGuardBreak: '重击破防！怪兽护甲碎裂！',
+          bannerIllusionBreak: '真身识破！巴尔坦分身全灭！',
+          bannerBaltanIllusion: '巴尔坦三体分身！八分光轮破除！',
+          bannerGanqAbsorb: '加恩Q巨瞳吸能！慎用光弹！'
         },
         controls: {
           left: '左闪',
@@ -338,7 +378,9 @@ const messages = {
           disc: '光轮',
           beam: '必杀光线',
           form: '切形态',
-          keyboardHint: 'A/D 闪避 · S 屏障 · J/K 连拳(碎火球) · I 飞踢 · U 光轮 · T 形态 · 空格 光线'
+          keyboardHint: 'A/D 闪避 · S 屏障 · J/K 连拳(碎火球) · I 飞踢 · U 光轮 · T 形态 · 空格 光线',
+          crouch: '深蹲闪',
+          jump: '起跳闪'
         },
         result: {
           victoryTitle: '光之巨人 · 全战线制霸！',
@@ -349,7 +391,16 @@ const messages = {
           perfectGuards: '完美防御',
           playAgain: '再度出击',
           backMenu: '返回机库',
-          backHome: '返回大厅'
+          backHome: '返回大厅',
+          perfectDodges: '极限闪避',
+          rankLabel: '防卫队战评',
+          badges: {
+            badgeNoDamage: '无伤光之守护者',
+            badgeParryMaster: '完美弹反宗师',
+            badgePhantomDodge: '疾风时空闪避',
+            badgeComboKing: '狂澜连击之光',
+            badgeLightFinisher: '闪耀终结者'
+          }
         }
       },
       ultramanDuelView: {
@@ -543,16 +594,35 @@ const messages = {
         instructionsHand: 'Raise left/right hand to switch lane, raise both to jump'
       },
       ultramanView: {
+        practiceButton: 'Practice Dojo',
+        practiceBadge: 'PRACTICE DOJO',
+        guardStamina: 'Shield',
+        finisherReadyBtn: 'FINISHER READY · UNLEASH!',
+        calibrateTitle: 'Stance Calibration',
+        calibrateDesc: 'Stand centered with both arms clearly visible for crisp motion capture',
+        calibrateSkip: 'Start Now',
+        distanceHints: {
+          ok: 'Distance OK',
+          'too-close': 'Step Back',
+          'too-far': 'Step Closer',
+          'off-center': 'Center Up'
+        },
+        specialHints: {
+          breakIllusion: 'Baltan illusions active! Throw Ultra Disc or Kick to shatter!',
+          ganqAbsorb: 'Gan-Q is absorbing energy! Break with heavy melee strikes!',
+          zettonShield: 'Zetton shield absorbs beams! Break it with Kick or Uppercut!',
+          breakGuard: 'Armored guard up! Shatter with Kick or Heavy Punch!'
+        },
         split: '2P Split Versus',
         splitHelp: '3D Split-Screen Arena Duel! P1 vs P2 face-to-face combat (Best of 3) via single-camera motion or shared keyboard!',
         pvpTargetEnemy: 'TARGET',
         pvpStartMatch: 'DUAL TRANSFORM · DUEL!',
         pvpRematch: 'REMATCH',
         pvpRoundLabel: 'ROUND {round}',
-        pvpIncomingBeamCam: '⚠ INCOMING ULTRA RAY! Cross Arms to Guard or Fire Ray to CLASH!',
-        pvpIncomingBeamKey: '⚠ INCOMING ULTRA RAY! Hold Guard or Press Ray Key to CLASH!',
-        pvpClashCam: '⚡ P1 VS P2 BEAM CLASH! Punch or Hold Ray Pose to Overpower!',
-        pvpClashKey: '⚡ P1 [F/G/V] VS P2 [J/K/L] BEAM CLASH! Mash Keys to Win!',
+        pvpIncomingBeamCam: 'INCOMING ULTRA RAY! Cross Arms to Guard or Fire Ray to CLASH!',
+        pvpIncomingBeamKey: 'INCOMING ULTRA RAY! Hold Guard or Press Ray Key to CLASH!',
+        pvpClashCam: 'P1 VS P2 BEAM CLASH! Punch or Hold Ray Pose to Overpower!',
+        pvpClashKey: 'P1 [F/G/V] VS P2 [J/K/L] BEAM CLASH! Mash Keys to Win!',
         waitingPair: 'Waiting for both warriors in frame',
         forceStartSingle: 'Start Now',
         splitKeyboard: '2P Keyboard',
@@ -567,10 +637,10 @@ const messages = {
           dyna: 'Tri-Form Buster · Solgent Ray',
           zeta: 'Hyper Charger · Zestium Beam'
         },
-        reactions: { guarding: 'Armored · Kick/Slash to Break!', staggered: 'Staggered · Strike Now!', roaring: 'Enraged · Faster Attacks', recovering: 'Open to Counter!' },
+        reactions: { guarding: 'Armored · Kick/Slash to Break!', staggered: 'Staggered · Strike Now!', roaring: 'Enraged · Faster Attacks', recovering: 'Open to Counter!' , illusion: 'ILLUSIONS · USE DISC!', absorbing: 'ABSORBING · MELEE BREAK!', stunned: 'STUNNED · FINISHER READY!' },
         chainCue: 'Combo Chain',
-        clashPromptCam: '⚡ BEAM CLASH! Hold Ray Pose or Punch to Push Back!',
-        clashPromptKey: '⚡ BEAM CLASH! Mash [SPACE / J / K] to Overpower!',
+        clashPromptCam: 'BEAM CLASH! Hold Ray Pose or Punch to Push Back!',
+        clashPromptKey: 'BEAM CLASH! Mash [SPACE / J / K] to Overpower!',
         title: 'WARRIOR OF LIGHT · MOTION BATTLE',
         subtitle: '3D Full-Body Motion Tokusatsu Action · Defend Earth Against 5 Kaiju!',
         cameraMode: 'Motion Camera',
@@ -610,7 +680,7 @@ const messages = {
           transformTitle: 'ULTRA TRANSFORM!',
           transformCam: 'Raise one hand high to summon the Giant of Light',
           transformKey: 'Press Space or click to transform now',
-          transformSkip: '⚡ TRANSFORM NOW',
+          transformSkip: 'TRANSFORM NOW',
           punchTitle: 'SLASH COMBO!',
           punchCam: 'Swing left & right fists for 5-hit blazing combos',
           punchKey: 'Alternate J / K for 5-hit slash combos',
@@ -631,7 +701,16 @@ const messages = {
           beamFireKey: 'Press SPACE now to unleash the Ultimate Ray!',
           kickBreakTitle: 'SHATTER ARMOR!',
           kickBreakCam: 'High kick or throw Ultra Slash to break guard',
-          kickBreakKey: 'Press I Kick or U Slash to break armor'
+          kickBreakKey: 'Press I Kick or U Slash to break armor',
+          crouchDodgeTitle: 'HIGH SWEEP · CROUCH NOW!',
+          crouchDodgeCam: 'Duck low to dodge the high sweep and trigger Bullet Time!',
+          crouchDodgeKey: 'Press C to duck under the high sweep for Bullet Time!',
+          jumpDodgeTitle: 'LOW SWEEP · JUMP NOW!',
+          jumpDodgeCam: 'Jump or flying kick over the low sweep for Bullet Time!',
+          jumpDodgeKey: 'Press W to jump over the low sweep for Bullet Time!',
+          discIllusionTitle: 'SHATTER ILLUSIONS · ULTRA DISC!',
+          discIllusionCam: 'Raise and slash down for Ultra Disc to wipe illusions!',
+          discIllusionKey: 'Press U for Ultra Disc to shatter all illusions!'
         },
         photo: {
           title: 'VICTORY PHOTO',
@@ -720,12 +799,18 @@ const messages = {
         warnings: {
           warningFireball: 'DANGER! Fireball — Dodge, Cross Guard, or Punch to Deflect!',
           warningMelee: 'DANGER! Kaiju Lunge — Cross Arms for Perfect Guard!',
-          warningDarkBeam: 'ALERT! Dark Beam — Cross Guard or Fire Ray for BEAM CLASH!'
+          warningDarkBeam: 'ALERT! Dark Beam — Cross Guard or Fire Ray for BEAM CLASH!',
+          warningMeleeHigh: 'HIGH SWEEP! Crouch down for Bullet Time or cross arms to parry!',
+          warningMeleeLow: 'LOW SWEEP! Jump up for Bullet Time or cross arms to parry!',
+          warningCharge: 'HEAVY CHARGE! Meet head-on with guard or strike to enter Grapple!'
         },
         warningsKey: {
           warningFireball: 'DANGER! Fireball — A/D Dodge · S Guard · J/K Deflect!',
           warningMelee: 'DANGER! Kaiju Lunge — Hold S for Perfect Guard!',
-          warningDarkBeam: 'ALERT! Dark Beam — Hold S or Press Space for BEAM CLASH!'
+          warningDarkBeam: 'ALERT! Dark Beam — Hold S or Press Space for BEAM CLASH!',
+          warningMeleeHigh: 'HIGH SWEEP! Press C to duck for Bullet Time or S to parry!',
+          warningMeleeLow: 'LOW SWEEP! Press W to jump for Bullet Time or S to parry!',
+          warningCharge: 'HEAVY CHARGE! Hold S to clash head-on into Grapple!'
         },
         banners: {
           bannerBeamDyna: 'SOLGENT RAY!',
@@ -770,7 +855,13 @@ const messages = {
           bannerInterrupt: 'WINDUP INTERRUPTED!',
           bannerWaveClear: 'KAIJU ELIMINATED!',
           bannerVictory: 'PEACE RESTORED! VICTORY!',
-          bannerDefeat: 'COLOR TIMER EXTINGUISHED...'
+          bannerDefeat: 'COLOR TIMER EXTINGUISHED...',
+          bannerPracticeStart: 'PRACTICE DOJO · FREE COMBO TRAINING!',
+          bannerPerfectDodge: 'PERFECT DODGE · BULLET TIME!',
+          bannerGuardBreak: 'GUARD SHATTERED!',
+          bannerIllusionBreak: 'ILLUSIONS DESTROYED!',
+          bannerBaltanIllusion: 'BALTAN CLONES · THROW DISC!',
+          bannerGanqAbsorb: 'GAN-Q ABSORBING ENERGY!'
         },
         controls: {
           left: 'LEFT',
@@ -782,7 +873,9 @@ const messages = {
           disc: 'SLASH',
           beam: 'ULTRA RAY',
           form: 'FORM',
-          keyboardHint: 'A/D Dodge · S Shield · J/K Punch(Deflect) · I Kick · U Slash · T Form · Space Ray'
+          keyboardHint: 'A/D Dodge · S Shield · J/K Punch(Deflect) · I Kick · U Slash · T Form · Space Ray',
+          crouch: 'Duck',
+          jump: 'Jump'
         },
         result: {
           victoryTitle: 'GIANT OF LIGHT · ALL CLEAR!',
@@ -793,7 +886,16 @@ const messages = {
           perfectGuards: 'PERFECT PARRIES',
           playAgain: 'SORTIE AGAIN',
           backMenu: 'HANGAR',
-          backHome: 'LOBBY'
+          backHome: 'LOBBY',
+          perfectDodges: 'Perfect Dodges',
+          rankLabel: 'GUTS RANK',
+          badges: {
+            badgeNoDamage: 'Flawless Guardian',
+            badgeParryMaster: 'Parry Master',
+            badgePhantomDodge: 'Phantom Dodger',
+            badgeComboKing: 'Combo Virtuoso',
+            badgeLightFinisher: 'Light Finisher'
+          }
         }
       },
       ultramanDuelView: {
@@ -987,16 +1089,35 @@ const messages = {
         instructionsHand: '左右の手を上げてレーン切り替え、両手上げでジャンプ'
       },
       ultramanView: {
+        practiceButton: 'フリー練習道場',
+        practiceBadge: '練習道場',
+        guardStamina: 'シールド',
+        finisherReadyBtn: 'フィニッシュ発動！',
+        calibrateTitle: 'スタンス調整',
+        calibrateDesc: 'カメラ中央に立ち、両腕が画面に収まる距離に調整してください',
+        calibrateSkip: 'すぐ開始',
+        distanceHints: {
+          ok: '距離OK',
+          'too-close': '少し下がって',
+          'too-far': '少し近づいて',
+          'off-center': '中央へ移動'
+        },
+        specialHints: {
+          breakIllusion: 'バルタン分身！八つ裂き光輪かキックで一掃せよ！',
+          ganqAbsorb: 'ガンQが光弾を吸収中！近接強打で阻止せよ！',
+          zettonShield: 'ゼットンバリアは光線吸収！キックで破壊せよ！',
+          breakGuard: '重装甲ガード中！キックかアッパーで粉砕せよ！'
+        },
         split: '2人画面分割対戦',
         splitHelp: '3Dスプリット画面でP1とP2が正面激突（2本先取）！1台のカメラ体感または2人キーボード対応！',
         pvpTargetEnemy: '対戦相手',
         pvpStartMatch: 'ダブル変身 · 決闘開始！',
         pvpRematch: '再戦する',
         pvpRoundLabel: 'ROUND {round}',
-        pvpIncomingBeamCam: '⚠ 相手の必殺光線！XガードかL字光線で押し返せ！',
-        pvpIncomingBeamKey: '⚠ 相手の必殺光線！防御キーか光線キーで激突せよ！',
-        pvpClashCam: '⚡ P1 VS P2 光線激突！パンチ連打かポーズ維持で押し切れ！',
-        pvpClashKey: '⚡ P1 [F/G/V] VS P2 [J/K/L] 光線激突！連打で押し切れ！',
+        pvpIncomingBeamCam: '相手の必殺光線！XガードかL字光線で押し返せ！',
+        pvpIncomingBeamKey: '相手の必殺光線！防御キーか光線キーで激突せよ！',
+        pvpClashCam: 'P1 VS P2 光線激突！パンチ連打かポーズ維持で押し切れ！',
+        pvpClashKey: 'P1 [F/G/V] VS P2 [J/K/L] 光線激突！連打で押し切れ！',
         waitingPair: '2人の戦士が映るのを待機中',
         forceStartSingle: 'このまま出撃',
         splitKeyboard: '2人キーボード',
@@ -1011,10 +1132,10 @@ const messages = {
           dyna: '3タイプ豪腕 · ソルジェント光線',
           zeta: '超速チャージ · ゼスティウム光線'
         },
-        reactions: { guarding: '装甲防御 · キック/光輪で崩せ！', staggered: '体勢崩壊 · 一気に追撃！', roaring: '狂暴化 · 攻撃加速', recovering: '隙あり · 反撃せよ' },
+        reactions: { guarding: '装甲防御 · キック/光輪で崩せ！', staggered: '体勢崩壊 · 一気に追撃！', roaring: '狂暴化 · 攻撃加速', recovering: '隙あり · 反撃せよ' , illusion: '分身展開・光輪で撃破！', absorbing: 'エネルギー吸収中・近接強打！', stunned: 'ダウン中・必殺の好機！' },
         chainCue: '左右連打',
-        clashPromptCam: '⚡ 光線激突！ポーズ維持またはパンチで押し返せ！',
-        clashPromptKey: '⚡ 光線激突！【Space / J / K】連打で押し返せ！',
+        clashPromptCam: '光線激突！ポーズ維持またはパンチで押し返せ！',
+        clashPromptKey: '光線激突！【Space / J / K】連打で押し返せ！',
         title: '光の戦士・体感バトル',
         subtitle: '3D全身モーション特撮アクション · 5大宇宙怪獣を迎撃せよ！',
         cameraMode: '体感カメラ',
@@ -1054,7 +1175,7 @@ const messages = {
           transformTitle: 'ポーズで変身！',
           transformCam: '片手を高く掲げて光の巨人を召喚',
           transformKey: 'Spaceキーまたはボタンで今すぐ変身',
-          transformSkip: '⚡ 今すぐ変身',
+          transformSkip: '今すぐ変身',
           punchTitle: '左右連撃コンボ！',
           punchCam: '左右の拳を素早く振って5連スラッシュ！',
           punchKey: 'J / K を交互に押して5連コンボ！',
@@ -1075,7 +1196,16 @@ const messages = {
           beamFireKey: 'Spaceを押して究极光線を発射！',
           kickBreakTitle: 'キックでガード破壊！',
           kickBreakCam: 'キックまたは光輪で防御を打ち破れ',
-          kickBreakKey: 'Iキック / U光輪でガードを破壊'
+          kickBreakKey: 'Iキック / U光輪でガードを破壊',
+          crouchDodgeTitle: '上段薙ぎ払い・しゃがみ回避！',
+          crouchDodgeCam: '素早くしゃがんで回避しスロー反撃を狙え！',
+          crouchDodgeKey: 'Cキーでしゃがみ回避＆スロー反撃！',
+          jumpDodgeTitle: '下段薙ぎ払い・ジャンプ回避！',
+          jumpDodgeCam: 'ジャンプか飛び蹴りで飛び越えて回避せよ！',
+          jumpDodgeKey: 'Wキーでジャンプ回避＆スロー反撃！',
+          discIllusionTitle: '分身撃破・八つ裂き光輪！',
+          discIllusionCam: '片手を掲げて振り下ろし光輪で分身を断て！',
+          discIllusionKey: 'Uキーの光輪で分身を一掃せよ！'
         },
         photo: {
           title: '勝利の記念撮影',
@@ -1164,12 +1294,18 @@ const messages = {
         warnings: {
           warningFireball: '危険！火球接近 — 回避 / Xガード / パンチで撃ち砕け！',
           warningMelee: '危険！怪獣突進 — タイミングよく両腕交差で弾き返せ！',
-          warningDarkBeam: '警告！闇の光線 — Xガードか必殺光線で正面激突せよ！'
+          warningDarkBeam: '警告！闇の光線 — Xガードか必殺光線で正面激突せよ！',
+          warningMeleeHigh: '上段攻撃！しゃがみ回避かクロス防御で弾き返せ！',
+          warningMeleeLow: '下段攻撃！ジャンプ回避かクロス防御で弾き返せ！',
+          warningCharge: '猛突進！正面から防御して力比べへ持ち込め！'
         },
         warningsKey: {
           warningFireball: '危険！火球接近 — A/D回避 · S防御 · J/Kパンチで撃砕！',
           warningMelee: '危険！怪獣突進 — Sキーでウルトラバリア展開！',
-          warningDarkBeam: '警告！闇の光線 — S防御かSpaceキーで光線激突せよ！'
+          warningDarkBeam: '警告！闇の光線 — S防御かSpaceキーで光線激突せよ！',
+          warningMeleeHigh: '上段攻撃！Cキーでしゃがみ回避またはSキーでパリィ！',
+          warningMeleeLow: '下段攻撃！Wキーでジャンプ回避またはSキーでパリィ！',
+          warningCharge: '猛突進！Sキーで受け止めて力比べへ！'
         },
         banners: {
           bannerBeamDyna: 'ソルジェント光線！',
@@ -1214,7 +1350,13 @@ const messages = {
           bannerInterrupt: 'チャージ阻止成功！',
           bannerWaveClear: '怪獣撃破！エネルギー回復！',
           bannerVictory: '地球の平和を守り抜いた！',
-          bannerDefeat: 'カラータイマーが消えた…'
+          bannerDefeat: 'カラータイマーが消えた…',
+          bannerPracticeStart: '練習道場・コンボ試技開始！',
+          bannerPerfectDodge: 'ジャスト回避・スロー発動！',
+          bannerGuardBreak: 'ガードブレイク！',
+          bannerIllusionBreak: '分身撃破！本体露出！',
+          bannerBaltanIllusion: 'バルタン分身術！光輪で破れ！',
+          bannerGanqAbsorb: 'ガンQ吸収中！光線注意！'
         },
         controls: {
           left: '左回避',
@@ -1226,7 +1368,9 @@ const messages = {
           disc: '光輪',
           beam: '必殺光線',
           form: 'タイプ',
-          keyboardHint: 'A/D 回避 · S バリア · J/K パンチ(火球撃砕) · I 蹴り · U 光輪 · T タイプ · Space 光線'
+          keyboardHint: 'A/D 回避 · S バリア · J/K パンチ(火球撃砕) · I 蹴り · U 光輪 · T タイプ · Space 光線',
+          crouch: 'しゃがみ',
+          jump: 'ジャンプ'
         },
         result: {
           victoryTitle: '光の巨人・全戦線制覇！',
@@ -1237,7 +1381,16 @@ const messages = {
           perfectGuards: '完全防御',
           playAgain: '再出撃',
           backMenu: '格納庫へ',
-          backHome: 'ロビーへ'
+          backHome: 'ロビーへ',
+          perfectDodges: 'ジャスト回避',
+          rankLabel: '防衛隊評価',
+          badges: {
+            badgeNoDamage: 'ノーダメージ守護神',
+            badgeParryMaster: 'パリィの達人',
+            badgePhantomDodge: '疾風回避',
+            badgeComboKing: '連撃の覇者',
+            badgeLightFinisher: '光のフィニッシャー'
+          }
         }
       },
       ultramanDuelView: {
@@ -1431,16 +1584,35 @@ const messages = {
         instructionsHand: '왼손/오른손을 들어 차선 변경, 양손을 들어 점프'
       },
       ultramanView: {
+        practiceButton: '자유 연습 도장',
+        practiceBadge: '연습 도장',
+        guardStamina: '실드 내구',
+        finisherReadyBtn: '피니시 광선 발동!',
+        calibrateTitle: '자세 및 거리 보정',
+        calibrateDesc: '카메라 중앙에 서서 양팔이 화면 안에 들어오도록 맞춰주세요',
+        calibrateSkip: '바로 시작',
+        distanceHints: {
+          ok: '거리 완벽',
+          'too-close': '뒤로 한 걸음',
+          'too-far': '앞으로 한 걸음',
+          'off-center': '중앙으로 이동'
+        },
+        specialHints: {
+          breakIllusion: '발탄 분신술! 팔분광륜이나 킥으로 격파하세요!',
+          ganqAbsorb: '간큐 에너지 흡수 중! 근접 강타로 저지하세요!',
+          zettonShield: '젯톤 파동 실드! 킥이나 어퍼컷으로 파괴하세요!',
+          breakGuard: '중장갑 방어 중! 킥이나 강펀치로 브레이크!'
+        },
         split: '2인 분할 대전',
         splitHelp: '3D 분할 화면 정면 대결! P1 vs P2 3판 2선승제 울트라맨 배틀(모션 카메라 / 2인 키보드 지원)!',
         pvpTargetEnemy: '상대 타깃',
         pvpStartMatch: '더블 변신 · 대결 시작!',
         pvpRematch: '재대결',
         pvpRoundLabel: 'ROUND {round}',
-        pvpIncomingBeamCam: '⚠ 상대 필살 광선! X방어 또는 L/+ 광선으로 맞대결!',
-        pvpIncomingBeamKey: '⚠ 상대 필살 광선! 방어 키 또는 광선 키로 맞대결!',
-        pvpClashCam: '⚡ P1 VS P2 광선 격돌! 펀치 연타로 제압하라!',
-        pvpClashKey: '⚡ P1 [F/G/V] VS P2 [J/K/L] 광선 격돌! 연타로 승리하라!',
+        pvpIncomingBeamCam: '상대 필살 광선! X방어 또는 L/+ 광선으로 맞대결!',
+        pvpIncomingBeamKey: '상대 필살 광선! 방어 키 또는 광선 키로 맞대결!',
+        pvpClashCam: 'P1 VS P2 광선 격돌! 펀치 연타로 제압하라!',
+        pvpClashKey: 'P1 [F/G/V] VS P2 [J/K/L] 광선 격돌! 연타로 승리하라!',
         waitingPair: '두 전사의 입장을 기다리는 중',
         forceStartSingle: '바로 출격',
         splitKeyboard: '2인 키보드',
@@ -1455,10 +1627,10 @@ const messages = {
           dyna: '3폼 중타 · 솔젠트 광선',
           zeta: '초속 충전 · 제스티움 광선'
         },
-        reactions: { guarding: '장갑 방어 · 킥/광륜으로 파괴!', staggered: '무방비 · 지금 추격!', roaring: '격노 각성 · 공격 가속', recovering: '빈틈 포착 · 반격!' },
+        reactions: { guarding: '장갑 방어 · 킥/광륜으로 파괴!', staggered: '무방비 · 지금 추격!', roaring: '격노 각성 · 공격 가속', recovering: '빈틈 포착 · 반격!' , illusion: '분신 전개 · 광륜 격파!', absorbing: '에너지 흡수 · 근접 강타!', stunned: '기절 상태 · 피니시 기회!' },
         chainCue: '연속 펀치',
-        clashPromptCam: '⚡ 광선 격돌! 포즈 유지 또는 펀치로 밀어붙여라!',
-        clashPromptKey: '⚡ 광선 격돌! [Space / J / K] 연타로 제압하라!',
+        clashPromptCam: '광선 격돌! 포즈 유지 또는 펀치로 밀어붙여라!',
+        clashPromptKey: '광선 격돌! [Space / J / K] 연타로 제압하라!',
         title: '빛의 전사 · 체감 배틀',
         subtitle: '3D 전신 모션 특촬 액션 · 5대 우주 괴수를 격퇴하라!',
         cameraMode: '모션 카메라',
@@ -1498,7 +1670,7 @@ const messages = {
           transformTitle: '포즈로 빛의 변신!',
           transformCam: '한 손을 높이 들어 빛의 거인을 소환하세요',
           transformKey: 'Space 키나 버튼으로 즉시 변신',
-          transformSkip: '⚡ 즉시 변신',
+          transformSkip: '즉시 변신',
           punchTitle: '좌우 연타 콤보!',
           punchCam: '양팔을 빠르게 휘둘러 5연타 검기 콤보!',
           punchKey: 'J / K 번갈아 눌러 5연타 콤보!',
@@ -1519,7 +1691,16 @@ const messages = {
           beamFireKey: '지금 Space를 눌러 궁극 광선 발사!',
           kickBreakTitle: '가드 브레이크!',
           kickBreakCam: '발차기나 광륜으로 방어를 깨뜨리세요',
-          kickBreakKey: 'I 킥 / U 광륜으로 방어 파괴'
+          kickBreakKey: 'I 킥 / U 광륜으로 방어 파괴',
+          crouchDodgeTitle: '상단 휩쓸기 · 즉시 숙여 회피!',
+          crouchDodgeCam: '빠르게 쪼그려 피해 슬로우 반격을 노리세요!',
+          crouchDodgeKey: 'C 키로 숙여 피해 슬로우 반격 발동!',
+          jumpDodgeTitle: '하단 휩쓸기 · 즉시 점프 회피!',
+          jumpDodgeCam: '점프하거나 플라잉 킥으로 하단 공격을 피하세요!',
+          jumpDodgeKey: 'W 키로 점프 회피 및 슬로우 반격!',
+          discIllusionTitle: '분신 격파 · 팔분광륜 발사!',
+          discIllusionCam: '한 손을 높이 들었다 내려쳐 분신을 일소하세요!',
+          discIllusionKey: 'U 키로 광륜을 날려 분신을 격파하세요!'
         },
         photo: {
           title: '승리 기념 촬영',
@@ -1608,12 +1789,18 @@ const messages = {
         warnings: {
           warningFireball: '위험! 화염구 접근 — 회피 / X방어 / 펀치로 격파!',
           warningMelee: '위험! 괴수 돌진 — 타이밍 맞춰 양팔 교차 퍼펙트 가드!',
-          warningDarkBeam: '경고! 암흑 광선 — X방어 또는 필살 광선으로 맞대결!'
+          warningDarkBeam: '경고! 암흑 광선 — X방어 또는 필살 광선으로 맞대결!',
+          warningMeleeHigh: '상단 휩쓸기! 숙여서 회피하거나 양팔 교차 패리!',
+          warningMeleeLow: '하단 휩쓸기! 점프 회피하거나 양팔 교차 패리!',
+          warningCharge: '괴수 돌진! 정면 방어로 힘겨루기에 돌입하세요!'
         },
         warningsKey: {
           warningFireball: '위험! 화염구 — A/D 회피 · S 방어 · J/K 펀치 격파!',
           warningMelee: '위험! 괴수 돌진 — S 키로 퍼펙트 가드!',
-          warningDarkBeam: '경고! 암흑 광선 — S 방어 또는 Space 광선 맞대결!'
+          warningDarkBeam: '경고! 암흑 광선 — S 방어 또는 Space 광선 맞대결!',
+          warningMeleeHigh: '상단 휩쓸기! C 키로 숙여 회피 또는 S 키 패리!',
+          warningMeleeLow: '하단 휩쓸기! W 키로 점프 회피 또는 S 키 패리!',
+          warningCharge: '괴수 돌진! S 키로 정면 방어하여 힘겨루기 진입!'
         },
         banners: {
           bannerBeamDyna: '솔젠트 광선!',
@@ -1658,7 +1845,13 @@ const messages = {
           bannerInterrupt: '괴수 충전 차단!',
           bannerWaveClear: '괴수 격파! 에너지 회복!',
           bannerVictory: '지구의 평화를 지켜냈습니다!',
-          bannerDefeat: '컬러 타이머가 꺼졌습니다…'
+          bannerDefeat: '컬러 타이머가 꺼졌습니다…',
+          bannerPracticeStart: '연습 도장 · 자유 콤보 테스트!',
+          bannerPerfectDodge: '퍼펙트 회피 · 불릿 타임!',
+          bannerGuardBreak: '가드 브레이크!',
+          bannerIllusionBreak: '분신 파괴! 본체 노출!',
+          bannerBaltanIllusion: '발탄 삼체 분신! 광륜 발사!',
+          bannerGanqAbsorb: '간큐 에너지 흡수 중!'
         },
         controls: {
           left: '좌회피',
@@ -1670,7 +1863,9 @@ const messages = {
           disc: '광륜',
           beam: '필살 광선',
           form: '폼',
-          keyboardHint: 'A/D 회피 · S 배리어 · J/K 펀치(화염구 격파) · I 킥 · U 광륜 · T 폼 · Space 광선'
+          keyboardHint: 'A/D 회피 · S 배리어 · J/K 펀치(화염구 격파) · I 킥 · U 광륜 · T 폼 · Space 광선',
+          crouch: '숙이기',
+          jump: '점프'
         },
         result: {
           victoryTitle: '빛의 거인 · 올 클리어!',
@@ -1681,7 +1876,16 @@ const messages = {
           perfectGuards: '퍼펙트 가드',
           playAgain: '재출격',
           backMenu: '격납고',
-          backHome: '로비로'
+          backHome: '로비로',
+          perfectDodges: '퍼펙트 회피',
+          rankLabel: '방위대 평가',
+          badges: {
+            badgeNoDamage: '무피해 수호자',
+            badgeParryMaster: '패리 마스터',
+            badgePhantomDodge: '질풍 회피',
+            badgeComboKing: '연격의 빛',
+            badgeLightFinisher: '빛의 피니셔'
+          }
         }
       },
       ultramanDuelView: {
@@ -1875,16 +2079,35 @@ const messages = {
         instructionsHand: 'Levez la main gauche/droite pour changer de voie, les deux pour sauter'
       },
       ultramanView: {
+        practiceButton: 'Dojo Entraînement',
+        practiceBadge: 'ENTRAÎNEMENT',
+        guardStamina: 'Bouclier',
+        finisherReadyBtn: 'COUP FINAL PRÊT !',
+        calibrateTitle: 'Calibration Position',
+        calibrateDesc: 'Placez-vous au centre, bras visibles pour un suivi précis',
+        calibrateSkip: 'Commencer',
+        distanceHints: {
+          ok: 'Distance OK',
+          'too-close': 'Reculez',
+          'too-far': 'Approchez',
+          'off-center': 'Centrez-vous'
+        },
+        specialHints: {
+          breakIllusion: 'Clones Baltan ! Lancez le Disque Ultra pour briser !',
+          ganqAbsorb: 'Gan-Q absorbe les rayons ! Frappez au corps à corps !',
+          zettonShield: 'Bouclier Zetton ! Brisez-le avec un Coup de Pied !',
+          breakGuard: 'Garde blindée ! Brisez-la avec un coup lourd !'
+        },
         split: "Duel Écran 2J",
         splitHelp: "Duel 3D en écran partagé ! J1 vs J2 face à face (2 manches gagnantes) par caméra ou clavier !",
         pvpTargetEnemy: "ADVERSAIRE",
         pvpStartMatch: "DOUBLE TRANSFORMATION · DUEL !",
         pvpRematch: "REVANCHE",
         pvpRoundLabel: "ROUND {round}",
-        pvpIncomingBeamCam: "⚠ RAYON ADVERSE ! Bras en X ou lancez votre Rayon !",
-        pvpIncomingBeamKey: "⚠ RAYON ADVERSE ! Garde ou touche Rayon pour le Duel !",
-        pvpClashCam: "⚡ DUEL DE RAYONS J1 VS J2 ! Frappez pour gagner !",
-        pvpClashKey: "⚡ DUEL DE RAYONS J1 [F/G/V] VS J2 [J/K/L] ! Martelez !",
+        pvpIncomingBeamCam: "RAYON ADVERSE ! Bras en X ou lancez votre Rayon !",
+        pvpIncomingBeamKey: "RAYON ADVERSE ! Garde ou touche Rayon pour le Duel !",
+        pvpClashCam: "DUEL DE RAYONS J1 VS J2 ! Frappez pour gagner !",
+        pvpClashKey: "DUEL DE RAYONS J1 [F/G/V] VS J2 [J/K/L] ! Martelez !",
         waitingPair: "En attente des deux guerriers",
         forceStartSingle: "Lancer",
         splitKeyboard: "Clavier 2J",
@@ -1899,10 +2122,10 @@ const messages = {
           dyna: "3 Formes Puissant · Rayon Solgent",
           zeta: "Hyper Charge · Rayon Zestium"
         },
-        reactions: { guarding: "Armure · Brisez du pied/disque !", staggered: "Déséquilibré · Frappez !", roaring: "Furie · Attaques rapides", recovering: "Ouverture !" },
+        reactions: { guarding: "Armure · Brisez du pied/disque !", staggered: "Déséquilibré · Frappez !", roaring: "Furie · Attaques rapides", recovering: "Ouverture !" , illusion: 'CLONES · DISQUE ULTRA !', absorbing: 'ABSORPTION · FRAPPEZ !', stunned: 'ÉTOURDI · COUP FINAL !' },
         chainCue: "Enchaînement",
-        clashPromptCam: "⚡ DUEL DE RAYONS ! Maintenez la pose ou frappez !",
-        clashPromptKey: "⚡ DUEL DE RAYONS ! Martelez [ESPACE / J / K] !",
+        clashPromptCam: "DUEL DE RAYONS ! Maintenez la pose ou frappez !",
+        clashPromptKey: "DUEL DE RAYONS ! Martelez [ESPACE / J / K] !",
         title: "GUERRIER DE LUMIÈRE · COMBAT MOTION",
         subtitle: "Action Tokusatsu 3D Motion · Défendez la Terre contre 5 Kaiju !",
         cameraMode: "Caméra Motion",
@@ -1942,7 +2165,7 @@ const messages = {
           transformTitle: "TRANSFORMATION !",
           transformCam: "Levez une main bien haut pour invoquer le Géant",
           transformKey: "Appuyez sur Espace pour vous transformer",
-          transformSkip: "⚡ TRANSFORMER",
+          transformSkip: "TRANSFORMER",
           punchTitle: "ENCHAÎNEZ LES COUPS !",
           punchCam: "Frappez gauche/droite pour un combo 5 coups",
           punchKey: "Alternez J / K pour un combo tranchant",
@@ -1963,7 +2186,16 @@ const messages = {
           beamFireKey: "Appuyez sur ESPACE pour le Rayon Ultime !",
           kickBreakTitle: "BRISEZ SA GARDE !",
           kickBreakCam: "Coup de pied ou disque pour briser l'armure",
-          kickBreakKey: "I Coup de pied / U Disque pour briser"
+          kickBreakKey: "I Coup de pied / U Disque pour briser",
+          crouchDodgeTitle: 'BALAYAGE HAUT · BAISSEZ-VOUS !',
+          crouchDodgeCam: 'Accroupissez-vous pour esquiver et activer le ralenti !',
+          crouchDodgeKey: 'Appuyez sur C pour vous baisser et activer le ralenti !',
+          jumpDodgeTitle: 'BALAYAGE BAS · SAUTEZ !',
+          jumpDodgeCam: 'Sautez ou coup de pied sauté pour esquiver !',
+          jumpDodgeKey: 'Appuyez sur W pour sauter au-dessus du balayage !',
+          discIllusionTitle: 'BRISEZ LES CLONES · DISQUE !',
+          discIllusionCam: 'Levez la main et tranchez pour détruire les clones !',
+          discIllusionKey: 'Appuyez sur U pour détruire les clones !'
         },
         photo: {
           title: "PHOTO DE VICTOIRE",
@@ -2052,12 +2284,18 @@ const messages = {
         warnings: {
           warningFireball: "DANGER ! Boule de feu — Esquivez, Parez X ou Frappez !",
           warningMelee: "DANGER ! Assaut — Croisez les bras pour Parade Parfaite !",
-          warningDarkBeam: "ALERTE ! Rayon noir — Parez X ou lancez votre Rayon !"
+          warningDarkBeam: "ALERTE ! Rayon noir — Parez X ou lancez votre Rayon !",
+          warningMeleeHigh: 'BALAYAGE HAUT ! Baissez-vous ou croisez les bras !',
+          warningMeleeLow: 'BALAYAGE BAS ! Sautez ou croisez les bras !',
+          warningCharge: 'CHARGE LOURDE ! Parez de face pour engager la lutte !'
         },
         warningsKey: {
           warningFireball: "DANGER ! Boule de feu — A/D Esquive · S Garde · J/K Frappe !",
           warningMelee: "DANGER ! Assaut — Maintenez S pour Parade Parfaite !",
-          warningDarkBeam: "ALERTE ! Rayon noir — S Garde ou Espace Duel de Rayons !"
+          warningDarkBeam: "ALERTE ! Rayon noir — S Garde ou Espace Duel de Rayons !",
+          warningMeleeHigh: 'BALAYAGE HAUT ! C pour baisser ou S pour parer !',
+          warningMeleeLow: 'BALAYAGE BAS ! W pour sauter ou S pour parer !',
+          warningCharge: 'CHARGE LOURDE ! Maintenez S pour engager la lutte !'
         },
         banners: {
           bannerBeamDyna: "RAYON SOLGENT !",
@@ -2102,7 +2340,13 @@ const messages = {
           bannerInterrupt: "CHARGE INTERROMPUE !",
           bannerWaveClear: "KAIJU VAINCU !",
           bannerVictory: "PAIX RESTAURÉE ! VICTOIRE !",
-          bannerDefeat: "CHRONO ÉTEINT…"
+          bannerDefeat: "CHRONO ÉTEINT…",
+          bannerPracticeStart: 'DOJO · ENTRAÎNEMENT LIBRE !',
+          bannerPerfectDodge: 'ESQUIVE PARFAITE · RALENTI !',
+          bannerGuardBreak: 'GARDE BRISÉE !',
+          bannerIllusionBreak: 'CLONES DÉTRUITS !',
+          bannerBaltanIllusion: 'CLONES BALTAN · DISQUE !',
+          bannerGanqAbsorb: 'GAN-Q ABSORBE !'
         },
         controls: {
           left: "GAUCHE",
@@ -2114,7 +2358,9 @@ const messages = {
           disc: "DISQUE",
           beam: "RAYON",
           form: "FORME",
-          keyboardHint: "A/D Esquive · S Bouclier · J/K Poing(Brise-feu) · I Pied · U Disque · T Forme · Espace Rayon"
+          keyboardHint: "A/D Esquive · S Bouclier · J/K Poing(Brise-feu) · I Pied · U Disque · T Forme · Espace Rayon",
+          crouch: 'Baisser',
+          jump: 'Sauter'
         },
         result: {
           victoryTitle: "GÉANT DE LUMIÈRE · VICTOIRE !",
@@ -2125,7 +2371,16 @@ const messages = {
           perfectGuards: "PARADES",
           playAgain: "REJOUER",
           backMenu: "HANGAR",
-          backHome: "HALL"
+          backHome: "HALL",
+          perfectDodges: 'Esquives Parfaites',
+          rankLabel: 'RANG GUTS',
+          badges: {
+            badgeNoDamage: 'Gardien Intact',
+            badgeParryMaster: 'Maître Parade',
+            badgePhantomDodge: 'Esquive Fantôme',
+            badgeComboKing: 'Roi du Combo',
+            badgeLightFinisher: 'Finisseur de Lumière'
+          }
         }
       },
       ultramanDuelView: {

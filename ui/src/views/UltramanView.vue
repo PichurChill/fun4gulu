@@ -12,6 +12,7 @@ import type {
   ConcreteSceneTheme,
   ControlMode,
   FloatingDamageEvent,
+  GameMode,
   HeroId,
   SceneTheme,
 } from '@/games/ultraman/types'
@@ -50,9 +51,13 @@ let photoCountdownTimer: number | null = null
 
 const hud = reactive<BattleHudState>({
   phase: 'menu',
+  gameMode: 'story',
   battleStage: 'melee',
   controlMode: 'camera',
   loadingProgress: 0,
+  calibrationProgress: 0,
+  distanceHint: 'ok',
+  activeGestureCue: 'none',
   heroId: 'tiga',
   heroForm: 'multi',
   hasForms: true,
@@ -63,14 +68,17 @@ const hud = reactive<BattleHudState>({
   monsterId: MONSTER_WAVES[0]!.id,
   monsterHp: MONSTER_WAVES[0]!.maxHp,
   monsterMaxHp: MONSTER_WAVES[0]!.maxHp,
+  monsterSpecialHintKey: null,
   heroHp: 100,
   heroMaxHp: 100,
+  guardStamina: 100,
   energy: 50,
   score: 0,
   punchChain: 0,
   combo: 0,
   maxCombo: 0,
   perfectGuards: 0,
+  perfectDodges: 0,
   defeatedCount: 0,
   warningTextKey: null,
   warningUrgency: 0,
@@ -83,16 +91,50 @@ const hud = reactive<BattleHudState>({
   grappleActive: false,
   grappleProgress: 0.48,
   transformProgress: 0,
+  finisherReady: false,
   finisherPhase: 'none',
   finisherProgress: 0,
   actionGuide: null,
   activeSkillBannerKey: null,
+  impactFlashKind: 'none',
+  impactFlashSeq: 0,
   tracking: false,
   bodyCoverage: 'none',
   mirroredCenterX: 0.5,
   poseHintKey: 'hintStandCenter',
   timerDanger: false,
+  battleRank: 'A',
+  badges: [],
 })
+
+const HERO_STATS: Record<HeroId, { atk: number; spd: number; eng: number }> = {
+  tiga: { atk: 84, spd: 86, eng: 88 },
+  zero: { atk: 95, spd: 92, eng: 80 },
+  dyna: { atk: 90, spd: 82, eng: 84 },
+  zeta: { atk: 86, spd: 90, eng: 96 },
+}
+
+const impactFlashActive = ref<BattleHudState['impactFlashKind']>('none')
+let impactFlashTimer: number | null = null
+watch(
+  () => hud.impactFlashSeq,
+  () => {
+    if (hud.impactFlashKind === 'none') return
+    impactFlashActive.value = hud.impactFlashKind
+    if (impactFlashTimer !== null) window.clearTimeout(impactFlashTimer)
+    impactFlashTimer = window.setTimeout(() => {
+      impactFlashActive.value = 'none'
+      impactFlashTimer = null
+    }, 220)
+  },
+)
+
+watch(
+  () => hud.phase,
+  (p) => {
+    poseTracker.setHighIntensityCombat(p === 'fighting')
+  },
+)
 
 const monsterHpPercent = computed(() =>
   hud.monsterMaxHp > 0 ? Math.max(0, Math.min(100, (hud.monsterHp / hud.monsterMaxHp) * 100)) : 0,
@@ -111,7 +153,7 @@ const activeHeroHex = computed(() => HERO_PROFILES[hud.heroId]?.uiHex ?? '#38e8f
 
 const camFrameMode = computed(() => {
   if (selectedMode.value !== 'camera') return 'hidden'
-  if (hud.phase === 'transform') return 'transform-stage'
+  if (hud.phase === 'calibrating' || hud.phase === 'transform') return 'transform-stage'
   if (hud.phase === 'victory' && !photoDataUrl.value) return 'victory-photo'
   if (isPlaying.value) {
     if (radarMinimized.value) return 'battle-minimized'
@@ -125,6 +167,9 @@ const hasCenterActionHud = computed(
 )
 
 const stageChipText = computed(() => {
+  if (hud.gameMode === 'practice') {
+    return t('message.ultramanView.practiceBadge')
+  }
   if (hud.battleStage === 'ranged' || hud.battleStage === 'transition-ranged') {
     return t('message.ultramanView.stages.ranged')
   }
@@ -146,10 +191,13 @@ const actionCoachMeta = computed(() => {
     punch: ['punchTitle', isKey ? 'punchKey' : 'punchCam', 'gold'],
     guard: ['guardTitle', isKey ? 'guardKey' : 'guardCam', 'alert'],
     'dodge-shoot': ['dodgeShootTitle', isKey ? 'dodgeShootKey' : 'dodgeShootCam', 'cyan'],
+    'crouch-dodge': ['crouchDodgeTitle', isKey ? 'crouchDodgeKey' : 'crouchDodgeCam', 'alert'],
+    'jump-dodge': ['jumpDodgeTitle', isKey ? 'jumpDodgeKey' : 'jumpDodgeCam', 'cyan'],
     grapple: ['grappleTitle', isKey ? 'grappleKey' : 'grappleCam', 'fire'],
     'beam-spread': ['beamSpreadTitle', isKey ? 'beamSpreadKey' : 'beamSpreadCam', 'rainbow'],
     'beam-fire': ['beamFireTitle', isKey ? 'beamFireKey' : 'beamFireCam', 'rainbow'],
     'kick-break': ['kickBreakTitle', isKey ? 'kickBreakKey' : 'kickBreakCam', 'fire'],
+    'disc-illusion': ['discIllusionTitle', isKey ? 'discIllusionKey' : 'discIllusionCam', 'cyan'],
   } as const
   const [titleK, descK, tone] = keyMap[g]
   return {
@@ -220,6 +268,11 @@ poseTracker.onPoses = (poses, now, width, height) => {
         showSkeleton.value && hud.phase !== 'victory',
         false,
         [primary?.leftHandLandmarks, primary?.rightHandLandmarks],
+        {
+          distanceHint: hud.distanceHint,
+          activeCue: hud.activeGestureCue,
+          chargeProgress: hud.chargeProgress,
+        },
       )
     }
   }
@@ -272,7 +325,11 @@ watch(
     if (next === 'victory' && selectedMode.value === 'camera') {
       startPhotoCountdown()
     } else if (next === 'defeat') {
-      stopCameraTracking()
+      if (impactFlashTimer !== null) {
+    window.clearTimeout(impactFlashTimer)
+    impactFlashTimer = null
+  }
+  stopCameraTracking()
     }
   },
 )
@@ -365,12 +422,12 @@ function captureVictoryPhoto() {
   ctx.lineWidth = 5
   ctx.strokeRect(18, 18, out.width - 36, out.height - 36)
 
-  ctx.fillStyle = 'rgba(5, 13, 28, 0.72)'
-  ctx.fillRect(36, out.height - 86, 460, 52)
+  ctx.fillStyle = 'rgba(5, 13, 28, 0.78)'
+  ctx.fillRect(36, out.height - 86, 560, 52)
   ctx.fillStyle = '#fef08a'
-  ctx.font = 'italic 900 26px sans-serif'
+  ctx.font = 'italic 900 24px sans-serif'
   ctx.fillText(
-    `${t(`message.ultramanView.heroNames.${hud.heroId}`)} · SCORE ${hud.score} · MAX ${hud.maxCombo} COMBO`,
+    `${t(`message.ultramanView.heroNames.${hud.heroId}`)} · RANK ${hud.battleRank} · SCORE ${hud.score} · MAX ${hud.maxCombo} COMBO`,
     52,
     out.height - 52,
   )
@@ -427,7 +484,7 @@ function handlePreviewForm() {
 }
 
 // ---- 游戏流程控制 ----
-async function handleStartBattle(overrideMode?: ControlMode) {
+async function handleStartBattle(overrideMode?: ControlMode, gameMode: GameMode = 'story') {
   if (!engine || startingCamera.value) return
   if (overrideMode) {
     selectedMode.value = overrideMode
@@ -438,6 +495,10 @@ async function handleStartBattle(overrideMode?: ControlMode) {
   photoDataUrl.value = null
   engine.audio.unlock()
 
+  if (impactFlashTimer !== null) {
+    window.clearTimeout(impactFlashTimer)
+    impactFlashTimer = null
+  }
   stopCameraTracking()
 
   if (selectedMode.value === 'camera') {
@@ -445,7 +506,11 @@ async function handleStartBattle(overrideMode?: ControlMode) {
     try {
       await poseTracker.start(videoRef.value!, 1)
     } catch (err: unknown) {
-      stopCameraTracking()
+      if (impactFlashTimer !== null) {
+    window.clearTimeout(impactFlashTimer)
+    impactFlashTimer = null
+  }
+  stopCameraTracking()
       startingCamera.value = false
       cameraError.value = err instanceof Error ? err.message : String(err)
       return
@@ -453,11 +518,23 @@ async function handleStartBattle(overrideMode?: ControlMode) {
     startingCamera.value = false
   }
 
-  await engine.startGame(selectedMode.value, selectedWave.value, selectedTheme.value)
+  await engine.startGame(selectedMode.value, selectedWave.value, selectedTheme.value, gameMode)
+}
+
+function handleSkipCalibration() {
+  engine?.skipCalibration()
+}
+
+function handleTriggerFinisher() {
+  engine?.triggerManualFinisher()
 }
 
 function handleExitToMenu() {
   showBattleMenu.value = false
+  if (impactFlashTimer !== null) {
+    window.clearTimeout(impactFlashTimer)
+    impactFlashTimer = null
+  }
   stopCameraTracking()
   pressedKeys.clear()
   engine?.setManualLean(0)
@@ -467,6 +544,10 @@ function handleExitToMenu() {
 }
 
 function handleGoHome() {
+  if (impactFlashTimer !== null) {
+    window.clearTimeout(impactFlashTimer)
+    impactFlashTimer = null
+  }
   stopCameraTracking()
   engine?.stopToMenu()
   void router.push('/')
@@ -495,6 +576,13 @@ function updateManualLeanFromKeys() {
 
 function onKeyDown(e: KeyboardEvent) {
   if (!engine) return
+  if (hud.phase === 'calibrating') {
+    if (['Space', 'Enter'].includes(e.code)) {
+      e.preventDefault()
+      engine.skipCalibration()
+    }
+    return
+  }
   if (hud.phase === 'transform') {
     if (['Space', 'Enter', 'KeyJ', 'KeyK'].includes(e.code)) {
       e.preventDefault()
@@ -523,15 +611,21 @@ function onKeyDown(e: KeyboardEvent) {
     engine.setManualGuard(true)
     return
   }
+  if (e.code === 'KeyC') {
+    engine.setManualCrouch(true)
+    return
+  }
   if (e.repeat) return
 
-  if (e.code === 'KeyJ' || e.code === 'KeyZ') {
+  if (e.code === 'KeyW' || e.code === 'ArrowUp') {
+    engine.triggerManualJump()
+  } else if (e.code === 'KeyJ' || e.code === 'KeyZ') {
     engine.triggerManualPunch('left')
   } else if (e.code === 'KeyK' || e.code === 'KeyX') {
     engine.triggerManualPunch('right')
   } else if (e.code === 'KeyI') {
     engine.triggerManualKick('right')
-  } else if (e.code === 'KeyU' || e.code === 'KeyC') {
+  } else if (e.code === 'KeyU') {
     engine.triggerManualDisc('right')
   } else if (e.code === 'Space' || e.code === 'KeyL') {
     engine.triggerManualBeam()
@@ -545,6 +639,9 @@ function onKeyUp(e: KeyboardEvent) {
   updateManualLeanFromKeys()
   if (e.code === 'Space' || e.code === 'KeyL') {
     engine?.setManualSpread(false)
+  }
+  if (e.code === 'KeyC') {
+    engine?.setManualCrouch(false)
   }
   if (
     !pressedKeys.has('KeyS') &&
@@ -560,6 +657,7 @@ function onWindowBlur() {
   pressedKeys.clear()
   engine?.setManualLean(0)
   engine?.setManualGuard(false)
+  engine?.setManualCrouch(false)
   engine?.setManualSpread(false)
 }
 
@@ -575,6 +673,12 @@ function onTouchLean(dir: -1 | 0 | 1) {
 }
 function onTouchGuard(active: boolean) {
   engine?.setManualGuard(active)
+}
+function onTouchCrouch(active: boolean) {
+  engine?.setManualCrouch(active)
+}
+function onTouchJump() {
+  engine?.triggerManualJump()
 }
 function onTouchPunch(side: 'left' | 'right') {
   engine?.triggerManualPunch(side)
@@ -645,6 +749,10 @@ onUnmounted(() => {
     window.clearTimeout(timer)
   }
   floatTimers.clear()
+  if (impactFlashTimer !== null) {
+    window.clearTimeout(impactFlashTimer)
+    impactFlashTimer = null
+  }
   stopCameraTracking()
   engine?.dispose()
   engine = null
@@ -658,6 +766,15 @@ onUnmounted(() => {
 
     <!-- 拍照闪光幕 -->
     <div v-if="photoFlash" class="shutter-flash" />
+
+    <!-- 全屏战斗视觉冲击帧层（重击/弹反/子弹时间闪避/受击边缘光晕） -->
+    <div
+      v-if="impactFlashActive !== 'none'"
+      :key="hud.impactFlashSeq"
+      class="impact-screen-fx"
+      :class="impactFlashActive"
+      aria-hidden="true"
+    />
 
     <!-- 伤害与特技飘字层 -->
     <div class="floating-layer" aria-hidden="true">
@@ -732,7 +849,27 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- ================= 幕 0：宇宙星海体感变身仪式（复刻视频 1 00:01-00:02） ================= -->
+    <!-- ================= 开场站位校准浮层（可随时跳过） ================= -->
+    <div v-if="hud.phase === 'calibrating'" class="transform-overlay">
+      <div class="transform-guide-card calibrate-card">
+        <div class="distance-pill" :class="hud.distanceHint">
+          {{ t(`message.ultramanView.distanceHints.${hud.distanceHint}`) }}
+        </div>
+        <div class="transform-guide-title">{{ t('message.ultramanView.calibrateTitle') }}</div>
+        <div class="transform-guide-desc">{{ t('message.ultramanView.calibrateDesc') }}</div>
+        <div class="transform-bar-bg">
+          <div
+            class="transform-bar-fg"
+            :style="{ width: Math.round(hud.calibrationProgress * 100) + '%' }"
+          />
+        </div>
+        <button type="button" class="sortie-cta compact" @click="handleSkipCalibration">
+          <span class="sortie-cta-label">{{ t('message.ultramanView.calibrateSkip') }}</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ================= 幕 0：宇宙星海体感变身仪式 ================= -->
     <div v-if="hud.phase === 'transform'" class="transform-overlay">
       <div class="transform-guide-card">
         <svg class="silhouette-svg transform-pose" viewBox="0 0 120 170" aria-hidden="true">
@@ -779,8 +916,11 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="topbar-right">
-          <button type="button" class="tac-btn accent" @click="router.push('/ultraman/split')">
-            ⚔ {{ t('message.ultramanView.split') }}
+          <button type="button" class="tac-btn accent icon-btn" @click="router.push('/ultraman/split')">
+            <svg class="ui-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14.5 17.5L3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M19 21l2-2M9.5 17.5L21 6V3h-3L6.5 14.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>{{ t('message.ultramanView.split') }}</span>
           </button>
           <UltraSoundtrack inline :playing="false" :muted="muted" />
           <button type="button" class="tac-btn" @click="toggleMute">
@@ -811,6 +951,11 @@ onUnmounted(() => {
                   <span class="hero-code">{{ id.toUpperCase() }}</span>
                 </div>
                 <div class="hero-role">{{ t(`message.ultramanView.heroRoles.${id}`) }}</div>
+                <div class="hero-stat-bars">
+                  <span class="stat-seg"><i :style="{ width: HERO_STATS[id].atk + '%' }" /></span>
+                  <span class="stat-seg spd"><i :style="{ width: HERO_STATS[id].spd + '%' }" /></span>
+                  <span class="stat-seg eng"><i :style="{ width: HERO_STATS[id].eng + '%' }" /></span>
+                </div>
               </div>
             </button>
           </div>
@@ -922,21 +1067,36 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <button
-            type="button"
-            class="sortie-cta"
-            :disabled="startingCamera"
-            @click="handleStartBattle()"
-          >
-            <span class="sortie-cta-glow" />
-            <span class="sortie-cta-label">
-              {{
-                startingCamera
-                  ? t('message.ultramanView.loadingModel')
-                  : t('message.ultramanView.startButton')
-              }}
-            </span>
-          </button>
+          <div class="cta-stack">
+            <button
+              type="button"
+              class="sortie-cta"
+              :disabled="startingCamera"
+              @click="handleStartBattle(undefined, 'story')"
+            >
+              <span class="sortie-cta-glow" />
+              <span class="sortie-cta-label">
+                {{
+                  startingCamera
+                    ? t('message.ultramanView.loadingModel')
+                    : t('message.ultramanView.startButton')
+                }}
+              </span>
+            </button>
+            <button
+              type="button"
+              class="practice-cta"
+              :disabled="startingCamera"
+              @click="handleStartBattle(undefined, 'practice')"
+            >
+              <svg class="ui-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="9" />
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke-linecap="round" />
+              </svg>
+              <span>{{ t('message.ultramanView.practiceButton') }}</span>
+            </button>
+          </div>
         </aside>
       </div>
 
@@ -978,7 +1138,7 @@ onUnmounted(() => {
           <span class="stage-pill">{{ stageChipText }}</span>
         </div>
 
-        <!-- 复刻视频 2 电视顶部细长发光红血条 + 怪兽名（彻底通透不挡高楼天际线） -->
+        <!-- 顶部防卫队分段 Boss 血条 + 机制破局实时提示 -->
         <div class="boss-slim-hud">
           <div class="boss-slim-meta">
             <span class="boss-wave-tag">
@@ -987,7 +1147,7 @@ onUnmounted(() => {
             <span
               v-if="
                 hud.phase === 'fighting' &&
-                ['guarding', 'staggered', 'roaring', 'recovering'].includes(hud.monsterState)
+                ['guarding', 'staggered', 'roaring', 'recovering', 'illusion', 'absorbing', 'stunned'].includes(hud.monsterState)
               "
               class="boss-state-chip"
               :class="hud.monsterState"
@@ -996,9 +1156,15 @@ onUnmounted(() => {
             </span>
             <strong class="boss-title">{{ currentMonsterName }}</strong>
           </div>
-          <div class="slim-bar-track">
+          <div class="slim-bar-track segmented">
             <div class="slim-bar-trail" :style="{ width: monsterHpPercent + '%' }" />
             <div class="slim-bar-fill" :style="{ width: monsterHpPercent + '%' }" />
+            <div class="hp-seg-ticks" aria-hidden="true">
+              <span /><span /><span />
+            </div>
+          </div>
+          <div v-if="hud.monsterSpecialHintKey" class="special-tactic-banner">
+            {{ t(`message.ultramanView.specialHints.${hud.monsterSpecialHintKey}`) }}
           </div>
         </div>
 
@@ -1006,15 +1172,24 @@ onUnmounted(() => {
           <div class="battle-menu-wrap">
             <button
               type="button"
-              class="tac-btn"
+              class="tac-btn icon-btn"
               :class="{ active: showBattleMenu }"
               @click="showBattleMenu = !showBattleMenu"
             >
-              ⚙ {{ t('message.ultramanView.settings') }}
+              <svg class="ui-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1z" />
+              </svg>
+              <span>{{ t('message.ultramanView.settings') }}</span>
             </button>
             <div v-show="showBattleMenu" class="battle-menu-popover">
               <button type="button" class="menu-item-btn" @click="cycleActiveArena">
-                <span>🗺 {{ t('message.ultramanView.selectArena') }}</span>
+                <span class="inline-svg-label">
+                  <svg class="ui-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+                  </svg>
+                  {{ t('message.ultramanView.selectArena') }}
+                </span>
                 <strong>{{ t(`message.ultramanView.arenas.${hud.activeTheme}`) }}</strong>
               </button>
               <div class="menu-item-row">
@@ -1029,7 +1204,13 @@ onUnmounted(() => {
                 class="menu-item-btn"
                 @click="handleRecenter"
               >
-                <span>◎ {{ t('message.ultramanView.recenter') }}</span>
+                <span class="inline-svg-label">
+                  <svg class="ui-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="8" />
+                    <circle cx="12" cy="12" r="2" />
+                  </svg>
+                  {{ t('message.ultramanView.recenter') }}
+                </span>
               </button>
               <button
                 v-if="selectedMode === 'camera'"
@@ -1038,13 +1219,18 @@ onUnmounted(() => {
                 :class="{ active: showSkeleton }"
                 @click="showSkeleton = !showSkeleton"
               >
-                <span>◈ {{ t('message.ultramanView.skeleton') }}</span>
+                <span class="inline-svg-label">
+                  <svg class="ui-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                  </svg>
+                  {{ t('message.ultramanView.skeleton') }}
+                </span>
                 <strong>{{ showSkeleton ? 'ON' : 'OFF' }}</strong>
               </button>
             </div>
           </div>
           <button type="button" class="tac-btn danger" @click="handleExitToMenu">
-            ✕ {{ t('message.ultramanView.stop') }}
+            {{ t('message.ultramanView.stop') }}
           </button>
         </div>
       </div>
@@ -1098,7 +1284,7 @@ onUnmounted(() => {
           </svg>
           <div class="center-hud-body">
             <div class="grapple-title">
-              🔥 {{ t('message.ultramanView.coach.grappleTitle') }}
+              {{ t('message.ultramanView.coach.grappleTitle') }}
             </div>
             <div class="grapple-track">
               <div
@@ -1144,7 +1330,6 @@ onUnmounted(() => {
           </svg>
           <div class="center-hud-body">
             <div class="finisher-headline">
-              ⚡
               {{
                 hud.finisherPhase === 'spread'
                   ? t('message.ultramanView.coach.beamSpreadTitle')
@@ -1170,9 +1355,19 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+        <!-- 主动终结光线就绪光带（怪兽残血或眩晕时浮现，展臂或一键释放终结绝杀） -->
+        <button
+          v-else-if="hud.finisherReady"
+          type="button"
+          class="finisher-ready-cta"
+          @pointerdown.prevent="handleTriggerFinisher"
+        >
+          <svg class="ui-svg bolt-svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M13 2L4 14h7l-1 8 10-12h-7l0-8z" />
+          </svg>
+          <span>{{ t('message.ultramanView.finisherReadyBtn') }}</span>
+        </button>
       </div>
-
-      <!-- 模式感知危机预警横幅 -->
       <div v-if="!hasCenterActionHud && hud.warningTextKey" class="hazard-banner">
         <div class="hazard-text">{{ warningMessage }}</div>
         <div class="hazard-progress-bg">
@@ -1242,41 +1437,65 @@ onUnmounted(() => {
                 :style="{ width: hud.energy + '%' }"
               />
             </div>
+
+            <div class="shield-stamina-row">
+              <span class="shield-stamina-label">{{ t('message.ultramanView.guardStamina') }}</span>
+              <div class="shield-stamina-track">
+                <div
+                  class="shield-stamina-fill"
+                  :class="{ low: hud.guardStamina < 28 }"
+                  :style="{ width: hud.guardStamina + '%' }"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
         <div class="bottom-right-cluster">
-          <!-- 右下角悦动元气机同款动态「动作教学指令卡」（幕 3/4 居中专属互动条启用时自动隐藏，杜绝重复文案） -->
+          <!-- 右下角防卫队动态关节示范指令卡 -->
           <div v-if="actionCoachMeta && !hasCenterActionHud" class="action-coach-card" :class="actionCoachMeta.tone">
-            <svg class="coach-icon" viewBox="0 0 80 80" aria-hidden="true">
-              <circle cx="40" cy="18" r="7" />
-              <line x1="40" y1="26" x2="40" y2="50" stroke-width="6" stroke-linecap="round" />
-              <line x1="40" y1="50" x2="29" y2="72" stroke-width="6" stroke-linecap="round" />
-              <line x1="40" y1="50" x2="51" y2="72" stroke-width="6" stroke-linecap="round" />
-              <!-- 根据动作动态渲染手臂示范姿态 -->
-              <template v-if="actionCoachMeta.kind === 'guard'">
-                <line class="accent-limb" x1="25" y1="30" x2="54" y2="48" stroke-width="6" stroke-linecap="round" />
-                <line class="accent-limb" x1="55" y1="30" x2="26" y2="48" stroke-width="6" stroke-linecap="round" />
-              </template>
-              <template v-else-if="actionCoachMeta.kind === 'beam-spread'">
-                <line class="accent-limb" x1="8" y1="34" x2="72" y2="34" stroke-width="6" stroke-linecap="round" />
-              </template>
-              <template v-else-if="actionCoachMeta.kind === 'beam-fire'">
-                <line class="accent-limb" x1="20" y1="38" x2="52" y2="38" stroke-width="6" stroke-linecap="round" />
-                <line class="accent-limb" x1="48" y1="16" x2="48" y2="46" stroke-width="6" stroke-linecap="round" />
-              </template>
-              <template v-else-if="actionCoachMeta.kind === 'dodge-shoot'">
-                <line class="accent-limb" x1="16" y1="36" x2="64" y2="28" stroke-width="6" stroke-linecap="round" />
-                <path class="arrow-hint" d="M8 62 L20 56 L20 68 Z M72 62 L60 56 L60 68 Z" />
-              </template>
-              <template v-else-if="actionCoachMeta.kind === 'grapple'">
-                <line class="accent-limb" x1="40" y1="33" x2="68" y2="28" stroke-width="6" stroke-linecap="round" />
-                <line class="accent-limb" x1="40" y1="39" x2="68" y2="42" stroke-width="6" stroke-linecap="round" />
-              </template>
-              <template v-else>
-                <line class="accent-limb" x1="40" y1="34" x2="66" y2="24" stroke-width="6" stroke-linecap="round" />
-                <line x1="40" y1="34" x2="20" y2="42" stroke-width="6" stroke-linecap="round" />
-              </template>
+            <svg class="coach-icon" :class="'anim-' + actionCoachMeta.kind" viewBox="0 0 80 80" aria-hidden="true">
+              <g class="coach-body-rig">
+                <circle cx="40" cy="18" r="7" />
+                <line x1="40" y1="26" x2="40" y2="50" stroke-width="6" stroke-linecap="round" />
+                <line x1="40" y1="50" x2="29" y2="72" stroke-width="6" stroke-linecap="round" />
+                <line x1="40" y1="50" x2="51" y2="72" stroke-width="6" stroke-linecap="round" />
+                <template v-if="actionCoachMeta.kind === 'guard'">
+                  <line class="accent-limb" x1="25" y1="30" x2="54" y2="48" stroke-width="6" stroke-linecap="round" />
+                  <line class="accent-limb" x1="55" y1="30" x2="26" y2="48" stroke-width="6" stroke-linecap="round" />
+                </template>
+                <template v-else-if="actionCoachMeta.kind === 'crouch-dodge'">
+                  <line class="accent-limb" x1="24" y1="36" x2="56" y2="36" stroke-width="6" stroke-linecap="round" />
+                  <path class="arrow-hint" d="M40 6 L34 15 L46 15 Z" transform="rotate(180 40 10)" />
+                </template>
+                <template v-else-if="actionCoachMeta.kind === 'jump-dodge'">
+                  <line class="accent-limb" x1="22" y1="26" x2="58" y2="26" stroke-width="6" stroke-linecap="round" />
+                  <path class="arrow-hint" d="M40 2 L33 12 L47 12 Z" />
+                </template>
+                <template v-else-if="actionCoachMeta.kind === 'disc-illusion'">
+                  <line class="accent-limb" x1="40" y1="32" x2="62" y2="12" stroke-width="6" stroke-linecap="round" />
+                  <circle class="accent-limb" cx="62" cy="12" r="6" fill="none" stroke-width="3" />
+                </template>
+                <template v-else-if="actionCoachMeta.kind === 'beam-spread'">
+                  <line class="accent-limb" x1="8" y1="34" x2="72" y2="34" stroke-width="6" stroke-linecap="round" />
+                </template>
+                <template v-else-if="actionCoachMeta.kind === 'beam-fire'">
+                  <line class="accent-limb" x1="20" y1="38" x2="52" y2="38" stroke-width="6" stroke-linecap="round" />
+                  <line class="accent-limb" x1="48" y1="16" x2="48" y2="46" stroke-width="6" stroke-linecap="round" />
+                </template>
+                <template v-else-if="actionCoachMeta.kind === 'dodge-shoot'">
+                  <line class="accent-limb" x1="16" y1="36" x2="64" y2="28" stroke-width="6" stroke-linecap="round" />
+                  <path class="arrow-hint" d="M8 62 L20 56 L20 68 Z M72 62 L60 56 L60 68 Z" />
+                </template>
+                <template v-else-if="actionCoachMeta.kind === 'grapple'">
+                  <line class="accent-limb" x1="40" y1="33" x2="68" y2="28" stroke-width="6" stroke-linecap="round" />
+                  <line class="accent-limb" x1="40" y1="39" x2="68" y2="42" stroke-width="6" stroke-linecap="round" />
+                </template>
+                <template v-else>
+                  <line class="accent-limb" x1="40" y1="34" x2="66" y2="24" stroke-width="6" stroke-linecap="round" />
+                  <line x1="40" y1="34" x2="20" y2="42" stroke-width="6" stroke-linecap="round" />
+                </template>
+              </g>
             </svg>
             <div class="coach-copy">
               <div class="coach-title">{{ actionCoachMeta.title }}</div>
@@ -1284,42 +1503,65 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- 键盘 / 触屏双组人体工学街机按键甲板 -->
+          <!-- 键盘 / 触屏双组人体工学街机按键甲板（含深蹲闪/起跳闪） -->
           <div v-if="selectedMode === 'keyboard'" class="arcade-deck">
             <div class="deck-group movement-pad">
-              <button
-                type="button"
-                class="deck-btn"
-                @pointerdown.prevent="onTouchLean(-1)"
-                @pointerup="onTouchLean(0)"
-                @pointerleave="onTouchLean(0)"
-                @pointercancel="onTouchLean(0)"
-              >
-                <kbd>A</kbd>
-                <span>◀ {{ t('message.ultramanView.controls.left') }}</span>
-              </button>
-              <button
-                type="button"
-                class="deck-btn guard"
-                @pointerdown.prevent="onTouchGuard(true)"
-                @pointerup="onTouchGuard(false)"
-                @pointerleave="onTouchGuard(false)"
-                @pointercancel="onTouchGuard(false)"
-              >
-                <kbd>S</kbd>
-                <span>⛨ {{ t('message.ultramanView.controls.guard') }}</span>
-              </button>
-              <button
-                type="button"
-                class="deck-btn"
-                @pointerdown.prevent="onTouchLean(1)"
-                @pointerup="onTouchLean(0)"
-                @pointerleave="onTouchLean(0)"
-                @pointercancel="onTouchLean(0)"
-              >
-                <kbd>D</kbd>
-                <span>{{ t('message.ultramanView.controls.right') }} ▶</span>
-              </button>
+              <div class="move-row">
+                <button
+                  type="button"
+                  class="deck-btn"
+                  @pointerdown.prevent="onTouchJump"
+                >
+                  <kbd>W</kbd>
+                  <span>{{ t('message.ultramanView.controls.jump') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="deck-btn"
+                  @pointerdown.prevent="onTouchCrouch(true)"
+                  @pointerup="onTouchCrouch(false)"
+                  @pointerleave="onTouchCrouch(false)"
+                  @pointercancel="onTouchCrouch(false)"
+                >
+                  <kbd>C</kbd>
+                  <span>{{ t('message.ultramanView.controls.crouch') }}</span>
+                </button>
+              </div>
+              <div class="move-row">
+                <button
+                  type="button"
+                  class="deck-btn"
+                  @pointerdown.prevent="onTouchLean(-1)"
+                  @pointerup="onTouchLean(0)"
+                  @pointerleave="onTouchLean(0)"
+                  @pointercancel="onTouchLean(0)"
+                >
+                  <kbd>A</kbd>
+                  <span>{{ t('message.ultramanView.controls.left') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="deck-btn guard"
+                  @pointerdown.prevent="onTouchGuard(true)"
+                  @pointerup="onTouchGuard(false)"
+                  @pointerleave="onTouchGuard(false)"
+                  @pointercancel="onTouchGuard(false)"
+                >
+                  <kbd>S</kbd>
+                  <span>{{ t('message.ultramanView.controls.guard') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="deck-btn"
+                  @pointerdown.prevent="onTouchLean(1)"
+                  @pointerup="onTouchLean(0)"
+                  @pointerleave="onTouchLean(0)"
+                  @pointercancel="onTouchLean(0)"
+                >
+                  <kbd>D</kbd>
+                  <span>{{ t('message.ultramanView.controls.right') }}</span>
+                </button>
+              </div>
             </div>
 
             <div class="deck-group strike-pad">
@@ -1373,7 +1615,7 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="deck-btn beam"
-                  :class="{ ready: hud.energy >= 35 || hud.finisherPhase !== 'none', full: hud.energy >= 100 || hud.finisherPhase !== 'none' }"
+                  :class="{ ready: hud.energy >= 35 || hud.finisherReady || hud.finisherPhase !== 'none', full: hud.energy >= 100 || hud.finisherReady || hud.finisherPhase !== 'none' }"
                   @pointerdown.prevent="onTouchBeamDown"
                   @pointerup="onTouchBeamUp"
                   @pointerleave="onTouchBeamUp"
@@ -1385,7 +1627,7 @@ onUnmounted(() => {
                     :style="{ height: Math.round(hud.beamCooldownRatio * 100) + '%' }"
                   />
                   <kbd>SPACE</kbd>
-                  <span>⚡ {{ t('message.ultramanView.controls.beam') }}</span>
+                  <span>{{ t('message.ultramanView.controls.beam') }}</span>
                 </button>
               </div>
             </div>
@@ -1394,18 +1636,26 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- ================= 幕 5：胜利星海合影 & 战果结算（复刻视频 1 00:00 & 00:10） ================= -->
+    <!-- ================= 幕 5：胜利星海合影 & S/A/B/C 战评勋章 ================= -->
     <div v-if="hud.phase === 'victory'" class="victory-photo-shell">
       <div class="victory-top-bar">
-        <div class="victory-badge">✨ {{ t('message.ultramanView.photo.title') }}</div>
+        <div class="victory-rank-cluster">
+          <span class="rank-stamp" :class="'rank-' + hud.battleRank">{{ hud.battleRank }}</span>
+          <div class="victory-badge">{{ t('message.ultramanView.photo.title') }}</div>
+        </div>
         <div class="victory-stats-strip">
           <span>{{ t('message.ultramanView.result.totalScore') }} <strong>{{ hud.score }}</strong></span>
           <span>{{ t('message.ultramanView.result.maxCombo') }} <strong>{{ hud.maxCombo }}</strong></span>
           <span>{{ t('message.ultramanView.result.perfectGuards') }} <strong>{{ hud.perfectGuards }}</strong></span>
+          <span>{{ t('message.ultramanView.result.perfectDodges') }} <strong>{{ hud.perfectDodges }}</strong></span>
+        </div>
+        <div v-if="hud.badges.length > 0" class="victory-badge-strip">
+          <span v-for="b in hud.badges" :key="b" class="honor-chip">
+            {{ t(`message.ultramanView.result.badges.${b}`) }}
+          </span>
         </div>
       </div>
 
-      <!-- 已抓拍的合成纪念照预览（复刻视频 1 00:00 带“重拍 / 保存”） -->
       <div v-if="photoDataUrl" class="photo-preview-card">
         <img :src="photoDataUrl" alt="Victory Photo" class="photo-preview-img" />
       </div>
@@ -1417,7 +1667,7 @@ onUnmounted(() => {
           class="sortie-cta compact"
           @click="captureVictoryPhoto"
         >
-          <span class="sortie-cta-label">📸 {{ t('message.ultramanView.photo.snapNow') }}</span>
+          <span class="sortie-cta-label">{{ t('message.ultramanView.photo.snapNow') }}</span>
         </button>
         <template v-else>
           <button
@@ -1425,10 +1675,10 @@ onUnmounted(() => {
             class="tac-btn large"
             @click="selectedMode === 'camera' ? startPhotoCountdown() : (photoDataUrl = null)"
           >
-            ↺ {{ t('message.ultramanView.photo.retake') }}
+            {{ t('message.ultramanView.photo.retake') }}
           </button>
           <button type="button" class="sortie-cta compact" @click="downloadVictoryPhoto">
-            <span class="sortie-cta-label">💾 {{ t('message.ultramanView.photo.save') }}</span>
+            <span class="sortie-cta-label">{{ t('message.ultramanView.photo.save') }}</span>
           </button>
         </template>
         <button type="button" class="tac-btn large accent" @click="handleStartBattle()">
@@ -3483,5 +3733,291 @@ onUnmounted(() => {
     top: 56px;
     font-size: 16px;
   }
+}
+.ui-svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.icon-btn,
+.inline-svg-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 全屏战斗视觉冲击帧层（重击/弹反/子弹时间闪避/受击边缘光脉冲） */
+.impact-screen-fx {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 38;
+  animation: impactEdgeFlash 0.22s ease-out forwards;
+}
+.impact-screen-fx.heavy {
+  box-shadow: inset 0 0 85px rgba(250, 204, 21, 0.55), inset 0 0 22px rgba(255, 255, 255, 0.45);
+}
+.impact-screen-fx.parry {
+  box-shadow: inset 0 0 95px rgba(56, 232, 255, 0.68), inset 0 0 26px rgba(254, 240, 138, 0.45);
+}
+.impact-screen-fx.dodge {
+  box-shadow: inset 0 0 110px rgba(74, 222, 128, 0.58), inset 0 0 28px rgba(56, 232, 255, 0.35);
+}
+.impact-screen-fx.hurt {
+  box-shadow: inset 0 0 115px rgba(239, 68, 68, 0.72), inset 0 0 28px rgba(248, 113, 113, 0.45);
+}
+@keyframes impactEdgeFlash {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* 机库三维能力条与体感试招靶场入口 */
+.hero-stat-bars {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-top: 6px;
+}
+.stat-seg {
+  height: 3px;
+  background: rgba(148, 163, 184, 0.22);
+  overflow: hidden;
+}
+.stat-seg i {
+  display: block;
+  height: 100%;
+  background: #f97316;
+}
+.stat-seg.spd i { background: #38e8ff; }
+.stat-seg.eng i { background: #facc15; }
+
+.cta-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.practice-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: rgba(12, 28, 48, 0.88);
+  border: 1px solid rgba(56, 232, 255, 0.52);
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  color: #7dd3fc;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.practice-cta:hover {
+  background: rgba(18, 52, 82, 0.96);
+  border-color: #7dd3fc;
+  color: #ffffff;
+}
+
+/* 开场站位校准站距徽章 */
+.distance-pill {
+  display: inline-block;
+  padding: 4px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  border: 1px solid rgba(56, 232, 255, 0.6);
+  background: rgba(14, 116, 144, 0.35);
+  color: #67e8f9;
+}
+.distance-pill.ok {
+  border-color: rgba(74, 222, 128, 0.78);
+  background: rgba(21, 128, 61, 0.38);
+  color: #86efac;
+}
+.distance-pill.too-close,
+.distance-pill.too-far,
+.distance-pill.off-center {
+  border-color: rgba(250, 204, 21, 0.78);
+  background: rgba(161, 98, 7, 0.38);
+  color: #fde047;
+}
+
+/* Boss 分段刻度血条与机制提示条 */
+.slim-bar-track.segmented {
+  position: relative;
+}
+.hp-seg-ticks {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  pointer-events: none;
+}
+.hp-seg-ticks span {
+  border-right: 1px solid rgba(2, 6, 23, 0.65);
+}
+.special-tactic-banner {
+  margin-top: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  text-align: center;
+  color: #fef08a;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.2), rgba(234, 88, 12, 0.72), rgba(15, 23, 42, 0.2));
+  border-top: 1px solid rgba(250, 204, 21, 0.55);
+  border-bottom: 1px solid rgba(250, 204, 21, 0.55);
+}
+
+/* 主动终结光线就绪光带 */
+.finisher-ready-cta {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px;
+  background: linear-gradient(90deg, rgba(14, 116, 144, 0.92), rgba(234, 179, 8, 0.92));
+  border: 2px solid #fef08a;
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  color: #020617;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  cursor: pointer;
+  box-shadow: 0 0 28px rgba(250, 204, 21, 0.62);
+  animation: finisherPulse 1.1s ease-in-out infinite;
+}
+@keyframes finisherPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+/* 护盾耐力细条 */
+.shield-stamina-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+.shield-stamina-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+.shield-stamina-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  overflow: hidden;
+}
+.shield-stamina-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #a5f3fc);
+  transition: width 0.08s linear;
+}
+.shield-stamina-fill.low {
+  background: linear-gradient(90deg, #ef4444, #fb923c);
+}
+
+/* 动作教学卡关节关键帧动画 */
+.coach-icon.anim-punch .coach-body-rig {
+  animation: coachPunch 0.7s ease-in-out infinite;
+}
+.coach-icon.anim-crouch-dodge .coach-body-rig {
+  animation: coachCrouch 0.85s ease-in-out infinite;
+}
+.coach-icon.anim-jump-dodge .coach-body-rig {
+  animation: coachJump 0.85s ease-in-out infinite;
+}
+.coach-icon.anim-guard .coach-body-rig {
+  animation: coachGuard 0.9s ease-in-out infinite;
+}
+.coach-icon.anim-beam-spread .coach-body-rig,
+.coach-icon.anim-disc-illusion .coach-body-rig {
+  animation: coachPulse 0.95s ease-in-out infinite;
+}
+@keyframes coachPunch {
+  0%, 100% { transform: translateX(0); }
+  45% { transform: translateX(5px); }
+}
+@keyframes coachCrouch {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(10px) scaleY(0.84); }
+}
+@keyframes coachJump {
+  0%, 100% { transform: translateY(0); }
+  45% { transform: translateY(-9px); }
+}
+@keyframes coachGuard {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+@keyframes coachPulse {
+  0%, 100% { opacity: 0.85; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+.movement-pad {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.move-row {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+}
+
+/* S/A/B/C 防卫队战评大印章与荣誉勋章 */
+.victory-rank-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.rank-stamp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  font-size: 28px;
+  font-weight: 900;
+  font-style: italic;
+  border: 2px solid #facc15;
+  background: rgba(15, 23, 42, 0.88);
+  color: #fef08a;
+  box-shadow: 0 0 20px rgba(250, 204, 21, 0.5);
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+}
+.rank-stamp.rank-S {
+  color: #fef08a;
+  border-color: #facc15;
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.35), rgba(15, 23, 42, 0.92));
+}
+.rank-stamp.rank-A {
+  color: #67e8f9;
+  border-color: #38e8ff;
+}
+.victory-badge-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.honor-chip {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: #fef08a;
+  background: rgba(234, 179, 8, 0.16);
+  border: 1px solid rgba(250, 204, 21, 0.55);
+  clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
 }
 </style>
