@@ -2,8 +2,7 @@
 
 本目录内所有 3D 模型仅用于个人非商业学习与家庭娱乐体验。
 
-- **迪迦奥特曼 (`tiga.glb`)**：基于 MMD 创作者 鏑木リンドウ 公开分享的非商用模型 *リンドウ式ウルトラマンティガ Ver3.1*（`マルチタイプ.pmx`），经 Blender 标准化骨骼映射至 `ultraBones`（含 51 根骨骼与 30 根 3 节指骨）、保留原模锐边法线并校色重制全通道 PBR 材质后导出为网页 GLB 资源。
-- **戴拿、泽塔、赛罗奥特曼（`dyna.glb`、`zeta.glb`、`zero.glb`）**：源自 DeviantArt 社区创作者 PrasBlacker 公开分享的非商用官方游戏移植模型（*Ultraman Dyna Flash Type*、*Ultraman Z* 与 *Ultraman Zero*），经 Blender 标准化完整 `Bip001` 骨骼（含双锁骨与 20 根独立指骨）并重制 2K 全通道 PBR 漫反射/金属粗糙度/法线与 1K 高锐度自发光贴图导出为网页 GLB 资源。
+- **迪迦、赛罗、戴拿、泽塔奥特曼（`tiga.glb`、`zero.glb`、`dyna.glb`、`zeta.glb`）**：均基于 MMD 创作者 鏑木リンドウ 公开分享的非商用模型系列（*リンドウ式ウルトラマンティガ Ver3.1*、*リンドウ式ゼロ 2.0*、*リンドウ式ダイナ Ver2.1*、*リンドウ式ゼットオリジナル*），经 Blender 统一标准化骨骼映射至 `ultraBones`（51 根骨骼含双锁骨、双脚尖与 30 根 3 节指骨）、保留原模锐边法线并校色重制全通道 PBR 材质及独立发光复眼/彩色计时器后导出为网页 GLB 资源。
 - **经典怪兽 (`baltan.glb`, `ganq.glb`, `zetton.glb`, `gomora-mecha.glb`, `gatanothor.glb`)**：源自公开社区非商用粉丝 MMD / Sketchfab 模型转换产物（源自 `adoin/IAmUltraman` 开源仓库）。
 - **城市建筑 (`city/*.glb`, `city/Textures/colormap.png`)**：Kenney City Kit Commercial（CC0 公共领域许可，见 `city/License.txt`）。
 
