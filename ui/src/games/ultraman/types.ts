@@ -109,6 +109,21 @@ export interface Vec3Like {
   z: number
 }
 
+/** 单手 21 点追踪解算出的五指独立弯曲度、张开度与真实 3D 掌心朝向 */
+export interface LiveHandFingers {
+  thumb: number
+  index: number
+  mid: number
+  ring: number
+  pinky: number
+  /** 五指整体外展张开度 [0=并拢手刀, 1=自然张开] */
+  splay: number
+  /** 真实 3D 掌心朝向法线（奥特曼世界坐标） */
+  palmNormal: Vec3Like | null
+  /** 手掌朝向向量（手腕 -> 中指根，奥特曼世界坐标） */
+  handDir: Vec3Like | null
+}
+
 /**
  * 实时全身动捕姿态包（已转换至奥特曼背影面朝 -Z 的 3D 世界方向）
  */
@@ -140,6 +155,9 @@ export interface LiveBodyPose {
   shinL: Vec3Like | null
   thighR: Vec3Like | null
   shinR: Vec3Like | null
+  /** 双手 21 点精细手指实时屈伸与真实掌心朝向（未检测到手部时为 null） */
+  fingersL?: LiveHandFingers | null
+  fingersR?: LiveHandFingers | null
   /** 摆出光线手势时竖直朝上的那一侧前臂 */
   beamArmSide: 'left' | 'right'
 }

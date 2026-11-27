@@ -218,6 +218,8 @@ poseTracker.onPoses = (poses, now, width, height) => {
         canvas.height,
         [primary?.landmarks],
         showSkeleton.value && hud.phase !== 'victory',
+        false,
+        [primary?.leftHandLandmarks, primary?.rightHandLandmarks],
       )
     }
   }
@@ -227,6 +229,15 @@ poseTracker.onPoses = (poses, now, width, height) => {
     now,
     width,
     height,
+    undefined,
+    primary
+      ? {
+          left: primary.leftHandLandmarks,
+          leftWorld: primary.leftHandWorldLandmarks,
+          right: primary.rightHandLandmarks,
+          rightWorld: primary.rightHandWorldLandmarks,
+        }
+      : null,
   )
 }
 

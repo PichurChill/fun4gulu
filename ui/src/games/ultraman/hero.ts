@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { releaseModel } from './releaseModel'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { FingerChain, HeroFormSpec, HeroProfile, SuitRemapMode } from './heroes'
-import type { HeroAction, LiveBodyPose, Vec3Like } from './types'
+import type { HeroAction, LiveBodyPose, LiveHandFingers, Vec3Like } from './types'
 
 const tmpV1 = new THREE.Vector3()
 const tmpV2 = new THREE.Vector3()
@@ -98,184 +98,6 @@ function buildRemappedSuitTexture(baseTex: THREE.Texture, mode: SuitRemapMode): 
   return tex
 }
 
-/**
- * 提取 tiga.glb 原装 TigaEyes 多面体钻石菱形大复眼：
- * 1. 先精确测出原双目簇中心与导出残留的 yaw(+2.73°)/roll(-0.97°) 偏斜并做刚体去偏斜；
- * 2. 结合银色头雕真实三角面 Raycaster 采样，将前表面稳贴于面罩外 [+0.0055, +0.022]（100% 不被眉弓啃边、不浮出鼻尖），
- *    背面与外缘裙边严密扎入面罩内 <= -0.004（全视角零悬空缝隙）；
- * 3. 严格沿 x = 0 镜面镜像重建 100% 对称的原版迪迦霸气菱形大复眼。
- */
-function buildSymmetricTigaEyesGeometry(
-  rawEyesGeo: THREE.BufferGeometry | null,
-  silverMaskGeo: THREE.BufferGeometry | null,
-): THREE.BufferGeometry | null {
-  if (!rawEyesGeo) return null
-  const posAttr = rawEyesGeo.getAttribute('position')
-  if (!posAttr || posAttr.count < 12) return null
-
-  const indexAttr = rawEyesGeo.getIndex()
-  const triIndices: number[] = []
-  if (indexAttr) {
-    for (let i = 0; i < indexAttr.count; i++) triIndices.push(indexAttr.getX(i))
-  } else {
-    for (let i = 0; i < posAttr.count; i++) triIndices.push(i)
-  }
-
-  // 1. 计算原装左右双目簇质心及导出偏斜角（yaw / roll）
-  const rc = new THREE.Vector3()
-  const lc = new THREE.Vector3()
-  let rCnt = 0
-  let lCnt = 0
-  for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i)
-    const y = posAttr.getY(i)
-    const z = posAttr.getZ(i)
-    if (x >= 0.065) {
-      rc.x += x
-      rc.y += y
-      rc.z += z
-      rCnt++
-    } else {
-      lc.x += x
-      lc.y += y
-      lc.z += z
-      lCnt++
-    }
-  }
-  if (rCnt === 0 || lCnt === 0) return null
-  rc.divideScalar(rCnt)
-  lc.divideScalar(lCnt)
-
-  const mid = rc.clone().add(lc).multiplyScalar(0.5)
-  const yaw = Math.atan2(rc.z - lc.z, rc.x - lc.x)
-  const roll = Math.atan2(rc.y - lc.y, rc.x - lc.x)
-  const cy = Math.cos(yaw)
-  const sy = Math.sin(yaw)
-  const cr = Math.cos(-roll)
-  const sr = Math.sin(-roll)
-
-  // 2. 先做刚体去偏斜，并计算去偏斜后的法线以精确区分前表面顶点与背面嵌边顶点
-  const unskewedPos = new Float32Array(posAttr.count * 3)
-  for (let i = 0; i < posAttr.count; i++) {
-    const dx = posAttr.getX(i) - mid.x
-    const dy = posAttr.getY(i) - mid.y
-    const dz = posAttr.getZ(i) - mid.z
-    const x1 = dx * cy + dz * sy
-    const z1 = -dx * sy + dz * cy
-    const x2 = x1 * cr - dy * sr
-    const y2 = x1 * sr + dy * cr + mid.y
-    unskewedPos[i * 3] = x2
-    unskewedPos[i * 3 + 1] = y2
-    unskewedPos[i * 3 + 2] = z1 + mid.z
-  }
-
-  const tmpEyeGeo = new THREE.BufferGeometry()
-  tmpEyeGeo.setAttribute('position', new THREE.BufferAttribute(unskewedPos, 3))
-  tmpEyeGeo.setIndex(triIndices)
-  tmpEyeGeo.computeVertexNormals()
-  const normAttr = tmpEyeGeo.getAttribute('normal')
-
-  // 3. 准备银色头雕真实三角面 Raycaster 贴面参考
-  let maskMesh: THREE.Mesh | null = null
-  let tempMat: THREE.MeshBasicMaterial | null = null
-  const raycaster = new THREE.Raycaster()
-  const rayOrigin = new THREE.Vector3()
-  const rayDir = new THREE.Vector3(0, 0, -1)
-
-  if (silverMaskGeo) {
-    tempMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-    maskMesh = new THREE.Mesh(silverMaskGeo, tempMat)
-    maskMesh.updateMatrixWorld(true)
-  }
-
-  const sampleMaskZ = (x: number, y: number): number | null => {
-    if (!maskMesh) return null
-    rayOrigin.set(x, y, 0.5)
-    raycaster.set(rayOrigin, rayDir)
-    const hits = raycaster.intersectObject(maskMesh, false)
-    return hits.length > 0 ? hits[0]!.point.z : null
-  }
-
-  // 4. 逐顶点按真实银色头雕曲面精确嵌合，对照官方迪迦三庭五眼黄金比例（下缘齐平双耳上尖、-6° 温润英武角），
-  // 再沿 x = 0 严格镜像生成绝对对称双复眼
-  const eyePivotX = 0.072
-  const eyePivotY = 2.848
-  const relaxAngle = -0.105
-  const cra = Math.cos(relaxAngle)
-  const sra = Math.sin(relaxAngle)
-
-  const projectRightVert = (oldIdx: number): [number, number, number] => {
-    const ux = unskewedPos[oldIdx * 3]!
-    const uy = unskewedPos[oldIdx * 3 + 1]!
-    const uz = unskewedPos[oldIdx * 3 + 2]!
-    const nz = normAttr.getZ(oldIdx)
-
-    const lx = (ux - eyePivotX) * 0.96
-    const ly = (uy - eyePivotY) * 1.04
-    const x = lx * cra - ly * sra + eyePivotX * 0.94
-    const y = lx * sra + ly * cra + eyePivotY + 0.168
-    const rawZ = uz - 0.026 - 0.16 * Math.max(0, x - 0.02)
-    const mz = sampleMaskZ(x, y)
-    let z = rawZ
-    if (mz !== null) {
-      if (nz > 0.05) {
-        // 前表面饱满立体外凸 [mz + 0.0055, mz + 0.021]，确保原版菱形轮廓 100% 完整且绝不浮出鼻尖
-        z = Math.max(mz + 0.0055, Math.min(mz + 0.021, rawZ))
-      } else {
-        // 背面与外缘裙边严密嵌进面罩内部，消除任何侧视悬空缝隙
-        z = Math.min(mz - 0.004, rawZ)
-      }
-    }
-    return [x, y, z]
-  }
-
-  const outPositions: number[] = []
-  const outIndices: number[] = []
-  const rightMap = new Map<number, number>()
-  const leftMap = new Map<number, number>()
-
-  const getRightVert = (oldIdx: number): number => {
-    const hit = rightMap.get(oldIdx)
-    if (hit !== undefined) return hit
-    const nextIdx = outPositions.length / 3
-    const [nx, ny, nz] = projectRightVert(oldIdx)
-    outPositions.push(nx, ny, nz)
-    rightMap.set(oldIdx, nextIdx)
-    return nextIdx
-  }
-
-  const getLeftVert = (oldIdx: number): number => {
-    const hit = leftMap.get(oldIdx)
-    if (hit !== undefined) return hit
-    const nextIdx = outPositions.length / 3
-    const [nx, ny, nz] = projectRightVert(oldIdx)
-    outPositions.push(-nx, ny, nz)
-    leftMap.set(oldIdx, nextIdx)
-    return nextIdx
-  }
-
-  for (let t = 0; t + 2 < triIndices.length; t += 3) {
-    const ia = triIndices[t]!
-    const ib = triIndices[t + 1]!
-    const ic = triIndices[t + 2]!
-    if (posAttr.getX(ia) >= 0.065 && posAttr.getX(ib) >= 0.065 && posAttr.getX(ic) >= 0.065) {
-      outIndices.push(getRightVert(ia), getRightVert(ib), getRightVert(ic))
-      // 镜像侧翻转绕序保证法线朝外
-      outIndices.push(getLeftVert(ia), getLeftVert(ic), getLeftVert(ib))
-    }
-  }
-
-  tmpEyeGeo.dispose()
-  tempMat?.dispose()
-  if (outIndices.length === 0) return null
-
-  const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(outPositions, 3))
-  geo.setIndex(outIndices)
-  geo.computeVertexNormals()
-  return geo
-}
-
 export interface HeroControllerOptions {
   /** 阵营朝向：1 = 南端驻守 +baseZ 面朝 -Z；-1 = 北端驻守 -baseZ 面朝 +Z（双人对战 P2） */
   sideSign?: 1 | -1
@@ -317,10 +139,6 @@ export class HeroController {
 
   private timerMaterials: THREE.MeshStandardMaterial[] = []
   private eyeMaterials: THREE.MeshStandardMaterial[] = []
-  private customChestDomeMat: THREE.MeshStandardMaterial | null = null
-  private customAttachments: THREE.Object3D[] = []
-  private customGeometries: THREE.BufferGeometry[] = []
-  private customMaterials: THREE.Material[] = []
 
   private formSilverEntries: { mat: THREE.MeshStandardMaterial; baseColor: THREE.Color }[] = []
   private formSuitEntries: {
@@ -370,6 +188,13 @@ export class HeroController {
   private smShinL = new THREE.Vector3()
   private smThighR = new THREE.Vector3()
   private smShinR = new THREE.Vector3()
+  private smPalmL = new THREE.Vector3()
+  private smPalmR = new THREE.Vector3()
+  private smFingersL = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
+  private smFingersR = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
+  /** 上一帧是否处于武术招式接管态（用于收招切回实时动捕时提供柔和过渡缓冲） */
+  private wasMartial = false
+  private postMartialBlend = 0
 
   constructor(scene: THREE.Scene, opts?: HeroControllerOptions) {
     this.sideSign = opts?.sideSign ?? 1
@@ -396,6 +221,12 @@ export class HeroController {
     this.smShinL.set(-0.1 * s, -0.98, 0.14 * s).normalize()
     this.smThighR.set(0.14 * s, -0.97, -0.05 * s).normalize()
     this.smShinR.set(0.12 * s, -0.98, 0.18 * s).normalize()
+    this.smPalmL.set(0.65 * s, -0.65, 0.35 * s).normalize()
+    this.smPalmR.set(-0.65 * s, -0.65, 0.35 * s).normalize()
+    this.smFingersL = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
+    this.smFingersR = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
+    this.wasMartial = false
+    this.postMartialBlend = 0
   }
 
   /** 当前英雄世界 Z 坐标 */
@@ -446,15 +277,12 @@ export class HeroController {
 
     this.timerMaterials = []
     this.eyeMaterials = []
-    this.customChestDomeMat = null
     this.formSilverEntries = []
     this.formSuitEntries = []
     this.derivedTextures = []
     this.currentForm = null
 
     const staticAttachments: THREE.Mesh[] = []
-    let rawTigaEyesGeo: THREE.BufferGeometry | null = null
-    let rawTigaSilverGeo: THREE.BufferGeometry | null = null
 
     const neededRemaps = new Set<SuitRemapMode>()
     if (profile.forms) {
@@ -473,25 +301,6 @@ export class HeroController {
       }
       if ((node as THREE.Mesh).isMesh) {
         const mesh = node as THREE.Mesh
-        // 迪迦原装 TigaEyes / TigaEnergy / TigaEnergyContainer 在导出时自带偏移，提取原装复眼网格后隐藏原件
-        if (
-          profile.id === 'tiga' &&
-          (mesh.name.includes('TigaEyes') ||
-            mesh.name.includes('TigaEnergy') ||
-            mesh.name.includes('TigaEnergyContainer'))
-        ) {
-          if (mesh.name.includes('TigaEyes') && !rawTigaEyesGeo) {
-            rawTigaEyesGeo = mesh.geometry
-          }
-          mesh.visible = false
-          return
-        }
-        if (profile.id === 'tiga' && !rawTigaSilverGeo) {
-          const matsArr = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-          if (matsArr.some((m) => m instanceof THREE.Material && /silver/i.test(m.name))) {
-            rawTigaSilverGeo = mesh.geometry
-          }
-        }
         if (!(mesh as THREE.SkinnedMesh).isSkinnedMesh) {
           staticAttachments.push(mesh)
         }
@@ -501,19 +310,26 @@ export class HeroController {
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
         for (const m of mats) {
           if (m instanceof THREE.MeshStandardMaterial) {
+            const hasOrmMaps = !!(m.metalnessMap || m.roughnessMap)
+            m.envMapIntensity = 1.32
             if (m.emissiveMap) {
               m.emissive.setHex(0xffffff)
-              m.emissiveIntensity = 1.12
+              m.emissiveIntensity = 1.05
             }
             const matches = (names: string[]) =>
               names.some((n) => m.name.includes(n) || mesh.name.includes(n))
             if (profile.formBodyMaterials && matches(profile.formBodyMaterials.silver)) {
-              m.roughness = 0.36
-              m.metalness = 0.56
+              if (!hasOrmMaps) {
+                m.roughness = Math.min(m.roughness, 0.25)
+                m.metalness = Math.max(m.metalness, 0.72)
+              }
+              m.envMapIntensity = 1.48
               this.formSilverEntries.push({ mat: m, baseColor: m.color.clone() })
             } else if (profile.formBodyMaterials && matches(profile.formBodyMaterials.suit)) {
-              m.roughness = 0.54
-              m.metalness = 0.14
+              if (!hasOrmMaps) {
+                m.roughness = 0.44
+                m.metalness = 0.14
+              }
               const remappedMaps = new Map<SuitRemapMode, THREE.Texture>()
               if (m.map) {
                 remappedMaps.set('original', m.map)
@@ -530,21 +346,34 @@ export class HeroController {
                 remappedMaps,
               })
             } else if (profile.timerMaterialNames.length > 0 && matches(profile.timerMaterialNames)) {
-              if (!mesh.name.includes('Container') && !mesh.name.includes('rim')) {
+              if (!mesh.name.includes('Shield') && !mesh.name.includes('Ring') && !mesh.name.includes('rim')) {
                 this.timerMaterials.push(m)
                 m.emissive = new THREE.Color(profile.accentColor)
-                m.emissiveIntensity = Math.min(1.25, profile.timerIdleIntensity)
-                m.roughness = 0.2
+                m.emissiveIntensity = Math.min(1.45, profile.timerIdleIntensity)
+                m.roughness = 0.12
               }
             } else if (profile.eyeMaterialNames.length > 0 && matches(profile.eyeMaterialNames)) {
               this.eyeMaterials.push(m)
-              m.emissive = new THREE.Color(0xffe699)
-              m.emissiveIntensity = 1.08
-              m.roughness = 0.18
-            } else {
-              const isGold = /gold|amber/i.test(m.name)
-              m.roughness = isGold ? 0.32 : 0.52
-              m.metalness = isGold ? 0.68 : 0.18
+              // 保留 Blender 烘焙的 1K 六角光学钻石蜂窝自发光贴图（若无贴图则用暖金）
+              if (m.emissiveMap) {
+                m.emissive.setHex(0xffffff)
+              } else {
+                m.emissive = new THREE.Color(0xffe699)
+              }
+              m.emissiveIntensity = 0.92
+              m.roughness = 0.14
+            } else if (/gold|amber/i.test(m.name)) {
+              if (!hasOrmMaps) {
+                m.roughness = Math.min(m.roughness, 0.22)
+                m.metalness = Math.max(m.metalness, 0.84)
+              }
+              m.envMapIntensity = 1.52
+            } else if (/crystal/i.test(m.name)) {
+              m.envMapIntensity = 1.6
+              m.roughness = Math.min(m.roughness, 0.1)
+            } else if (!hasOrmMaps && !/rim/i.test(m.name)) {
+              m.roughness = 0.44
+              m.metalness = 0.18
             }
           }
         }
@@ -633,11 +462,6 @@ export class HeroController {
       )
     }
 
-    // 为迪迦重建去偏斜贴面原版大复眼、斜面贴合眉心迪迦水晶与带银环的立体彩色计时器
-    if (profile.id === 'tiga') {
-      this.mountTigaFeatures(model, profile, rawTigaEyesGeo, rawTigaSilverGeo)
-    }
-
     // 计算骨骼轴向尾端：主干四肢优先指向解剖学下一级关节，彻底排除 *Twist1 等偏侧辅助骨干扰
     this.calibrateBoneTips(model, profile)
 
@@ -657,116 +481,17 @@ export class HeroController {
     this.setForm(profile.forms?.[0] ?? null)
   }
 
-  private mountTigaFeatures(
-    model: THREE.Object3D,
-    profile: HeroProfile,
-    rawEyesGeo: THREE.BufferGeometry | null,
-    rawSilverMaskGeo: THREE.BufferGeometry | null,
-  ) {
-    const headBone = this.logical.get('head')
-    const chestBone = this.bones.get('chestUpper') ?? this.logical.get('spineChest')
-
-    if (headBone) {
-      // 1. 重建原装正宗迪迦多面体斜挑菱形大复眼（刚体去偏斜 + 真实头雕 Raycaster 贴面嵌合 + 绝对镜面对称）
-      const eyesGeo = buildSymmetricTigaEyesGeometry(rawEyesGeo, rawSilverMaskGeo)
-      if (eyesGeo) {
-        const eyesMat = new THREE.MeshStandardMaterial({
-          color: 0xfff6dc,
-          emissive: new THREE.Color(0xffe494),
-          emissiveIntensity: 1.06,
-          roughness: 0.22,
-          metalness: 0.05,
-        })
-        const eyesMesh = new THREE.Mesh(eyesGeo, eyesMat)
-        eyesMesh.name = 'TigaRebuiltEyes'
-        eyesMesh.castShadow = false
-
-        model.add(eyesMesh)
-        this.root.updateMatrixWorld(true)
-        headBone.updateWorldMatrix(true, false)
-        headBone.attach(eyesMesh)
-
-        this.customAttachments.push(eyesMesh)
-        this.customGeometries.push(eyesGeo)
-        this.customMaterials.push(eyesMat)
-        this.eyeMaterials.push(eyesMat)
-      }
-
-      // 2. 镶嵌迪迦额头菱形发光水晶（严格按官图位置坐落于眉心正中，沿实测额头斜面贴合，上下两尖完整无吞没）
-      const crystalGeo = new THREE.OctahedronGeometry(0.019, 0)
-      const crystalMat = new THREE.MeshStandardMaterial({
-        color: 0xe0f2fe,
-        emissive: new THREE.Color(0x93c5fd),
-        emissiveIntensity: 0.96,
-        roughness: 0.16,
-        metalness: 0.14,
-      })
-      const crystalMesh = new THREE.Mesh(crystalGeo, crystalMat)
-      crystalMesh.name = 'TigaForeheadCrystal'
-      crystalMesh.position.set(0, 3.106, 0.2275)
-      crystalMesh.rotation.x = -0.44
-      crystalMesh.scale.set(0.68, 1.78, 0.44)
-      model.add(crystalMesh)
-      this.root.updateMatrixWorld(true)
-      headBone.updateWorldMatrix(true, false)
-      headBone.attach(crystalMesh)
-
-      this.customAttachments.push(crystalMesh)
-      this.customGeometries.push(crystalGeo)
-      this.customMaterials.push(crystalMat)
-    }
-
-    if (chestBone) {
-      // 3. 镶嵌胸甲正中银环底座 + 冰蓝水晶彩色计时器（位于胸甲开孔中心 (0, 2.416, 0.218)）
-      const timerGroup = new THREE.Group()
-      timerGroup.name = 'TigaRebuiltColorTimer'
-      timerGroup.position.set(0, 2.416, 0.218)
-
-      const rimGeo = new THREE.TorusGeometry(0.05, 0.011, 12, 28)
-      const rimMat = new THREE.MeshStandardMaterial({
-        color: 0xcbd5e1,
-        roughness: 0.28,
-        metalness: 0.72,
-      })
-      const rimMesh = new THREE.Mesh(rimGeo, rimMat)
-      rimMesh.scale.set(0.94, 1.12, 0.65)
-      timerGroup.add(rimMesh)
-
-      const domeGeo = new THREE.SphereGeometry(0.046, 20, 14)
-      const domeMat = new THREE.MeshStandardMaterial({
-        color: 0x38bdf8,
-        emissive: new THREE.Color(profile.accentColor),
-        emissiveIntensity: 1.12,
-        roughness: 0.16,
-        metalness: 0.08,
-      })
-      const domeMesh = new THREE.Mesh(domeGeo, domeMat)
-      domeMesh.position.set(0, 0, 0.004)
-      domeMesh.scale.set(0.92, 1.1, 0.52)
-      timerGroup.add(domeMesh)
-
-      model.add(timerGroup)
-      this.root.updateMatrixWorld(true)
-      chestBone.updateWorldMatrix(true, false)
-      chestBone.attach(timerGroup)
-
-      this.customChestDomeMat = domeMat
-      this.customAttachments.push(timerGroup)
-      this.customGeometries.push(rimGeo, domeGeo)
-      this.customMaterials.push(rimMat, domeMat)
-      this.timerMaterials.push(domeMat)
-    }
-  }
-
   private calibrateBoneTips(model: THREE.Object3D, profile: HeroProfile) {
     this.root.updateMatrixWorld(true)
     const b = profile.bones
 
-    // 显式解剖关节链：确保上臂->前臂->手腕->中指根、大腿->小腿->脚踝轴向 100% 精准无偏斜
+    // 显式解剖关节链：确保锁骨->上臂->前臂->手腕->中指根、大腿->小腿->脚踝、多节脊柱与脖颈轴向 100% 精准无偏斜
     const directPairs: [string | undefined, string | undefined][] = [
+      [b.collarL, b.upperArmL],
       [b.upperArmL, b.lowerArmL],
       [b.lowerArmL, b.handL],
       [b.handL, b.fingersL.mid[0] ?? b.fingersL.index[0]],
+      [b.collarR, b.upperArmR],
       [b.upperArmR, b.lowerArmR],
       [b.lowerArmR, b.handR],
       [b.handR, b.fingersR.mid[0] ?? b.fingersR.index[0]],
@@ -776,7 +501,8 @@ export class HeroController {
       [b.shinR, b.footR],
       [b.spineLower, b.spineUpper],
       [b.spineUpper, b.spineChest],
-      [b.spineChest, b.neckUpper ?? b.head],
+      [b.spineChest, b.neckLower ?? b.neckUpper ?? b.head],
+      [b.neckLower, b.neckUpper ?? b.head],
       [b.neckUpper, b.head],
     ]
 
@@ -830,6 +556,7 @@ export class HeroController {
 
     const b = profile.bones
     const worldFront = new THREE.Vector3(0, 0, -this.sideSign)
+    const worldBack = new THREE.Vector3(0, 0, this.sideSign)
 
     // 1. 标定大腿与小腿在静息直立态下的正前方局部法线（驱动双腿时锁定膝盖朝向正前方）
     for (const legName of [b.thighL, b.shinL, b.thighR, b.shinR]) {
@@ -838,6 +565,15 @@ export class HeroController {
       const wq = legBone.getWorldQuaternion(new THREE.Quaternion())
       const localFront = worldFront.clone().applyQuaternion(wq.invert()).normalize()
       this.boneRefNormals.set(legBone, localFront)
+    }
+
+    // 1b. 标定左右大臂在静息态下的正后方（肘背）局部法线，用于动捕时按肘屈平面防大臂绕轴拧麻花
+    for (const armName of [b.upperArmL, b.upperArmR]) {
+      const armBone = this.bones.get(armName)
+      if (!armBone) continue
+      const wq = armBone.getWorldQuaternion(new THREE.Quaternion())
+      const localBack = worldBack.clone().applyQuaternion(wq.invert()).normalize()
+      this.boneRefNormals.set(armBone, localBack)
     }
 
     // 2. 记录静息站姿下双脚相对于 root 的朝向四元数（保持双脚底面水平贴地）
@@ -888,6 +624,11 @@ export class HeroController {
         const foreWq = forearmBone.getWorldQuaternion(new THREE.Quaternion())
         const localPalm = palmInWorld.clone().applyQuaternion(foreWq.invert()).normalize()
         this.boneRefNormals.set(forearmBone, localPalm)
+      }
+      {
+        const handWq = handBone.getWorldQuaternion(new THREE.Quaternion())
+        const localHandPalm = palmInWorld.clone().applyQuaternion(handWq.invert()).normalize()
+        this.boneRefNormals.set(handBone, localHandPalm)
       }
 
       // 测量中指方向与原厂静息预弯角，将扇形分叉指根向中指并拢标定为特摄标准手刀基准态
@@ -986,20 +727,6 @@ export class HeroController {
 
   private unloadModel() {
     if (!this.model) return
-    for (const obj of this.customAttachments) {
-      obj.parent?.remove(obj)
-    }
-    for (const geo of this.customGeometries) {
-      geo.dispose()
-    }
-    for (const mat of this.customMaterials) {
-      mat.dispose()
-    }
-    this.customAttachments = []
-    this.customGeometries = []
-    this.customMaterials = []
-    this.customChestDomeMat = null
-
     for (const entry of this.formSuitEntries) {
       entry.mat.map = entry.originalMap
     }
@@ -1225,6 +952,44 @@ export class HeroController {
     this.aimBoneWorld(boneName, worldDir, weight, worldNormal)
   }
 
+  /**
+   * 在角色阵营世界空间内对指定骨骼叠加真实三轴旋转增量：
+   * - yaw > 0：向左转（绕 +Y）
+   * - pitch > 0：向前俯身 / 低头（绕角色右侧轴 (s, 0, 0) 负转）
+   * - roll > 0：向左侧倾 / 左歪头（绕角色后向轴 (0, 0, s) 正转）
+   */
+  private applyArenaEulerDelta(boneName: string | undefined, yaw: number, pitch: number, roll: number) {
+    if (!boneName) return
+    if (Math.abs(yaw) < 1e-4 && Math.abs(pitch) < 1e-4 && Math.abs(roll) < 1e-4) return
+    const bone = this.bones.get(boneName)
+    if (!bone || !bone.parent) return
+    bone.updateWorldMatrix(true, false)
+
+    const s = this.sideSign
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(tmpV1.set(0, 1, 0), yaw)
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(tmpV2.set(s, 0, 0), -pitch)
+    const qRoll = new THREE.Quaternion().setFromAxisAngle(tmpV3.set(0, 0, s), roll)
+    const deltaWorldQ = qYaw.multiply(qPitch).multiply(qRoll)
+
+    const curWorldQ = bone.getWorldQuaternion(tmpQ1)
+    const targetWorldQ = deltaWorldQ.multiply(curWorldQ)
+    const parentInv = bone.parent.getWorldQuaternion(tmpQ2).invert()
+    bone.quaternion.copy(parentInv.multiply(targetWorldQ))
+    bone.updateWorldMatrix(false, true)
+  }
+
+  /** 根据单侧大臂的世界朝向自然联动同侧锁骨（抬臂提肩、前挥探肩，杜绝木偶塌肩） */
+  private driveCollarForArm(collarName: string | undefined, side: 'L' | 'R', armDirWorld: THREE.Vector3) {
+    if (!collarName) return
+    const s = this.sideSign
+    const lift = THREE.MathUtils.clamp((armDirWorld.y + 0.35) / 1.15, -0.18, 1)
+    const reach = THREE.MathUtils.clamp((-armDirWorld.z * s - 0.15) / 0.85, -0.2, 1)
+    const sideDir = side === 'R' ? 1 : -1
+    const collarRoll = sideDir * lift * 0.22
+    const collarYaw = sideDir * reach * 0.16
+    this.applyArenaEulerDelta(collarName, collarYaw, 0, collarRoll)
+  }
+
   /** 保持双脚底面水平贴合并实时补偿马步屈膝下沉高度，杜绝脚踝侧崴、悬空或陷地 */
   private alignStandingFeetAndGround(extraJumpY = 0) {
     if (!this.profile || !this.model) return
@@ -1264,39 +1029,71 @@ export class HeroController {
     }
   }
 
-  /** 先将五指收拢为紧密奥特手刀基准，再按预标定局部铰链轴向掌心自然弯曲成饱满铁拳 */
-  private curlHand(side: 'L' | 'R', amount: number) {
+  /** 按每根手指独立的弯曲度与五指张合度（splay）驱动全手 10~19 根指骨 */
+  private curlHandFingers(
+    side: 'L' | 'R',
+    fingers: {
+      thumb: number
+      index: number
+      mid: number
+      ring: number
+      pinky: number
+      splay: number
+    },
+  ) {
     if (!this.profile) return
-    const t = THREE.MathUtils.clamp(amount, 0, 1)
     const scale = this.fingerCurlScales[side]
     const map = side === 'L' ? this.profile.bones.fingersL : this.profile.bones.fingersR
+    const splay = THREE.MathUtils.clamp(fingers.splay, 0, 1)
 
-    const chains: [FingerChain, readonly number[]][] = [
-      [map.index, [0.88, 1.04, 0.72]],
-      [map.mid, [0.92, 1.06, 0.75]],
-      [map.ring, [0.94, 1.04, 0.75]],
-      [map.pinky, [0.96, 1.02, 0.75]],
-      [map.thumb, [0.38, 0.56, 0.46]],
+    const chains: [FingerChain, number, readonly number[]][] = [
+      [map.index, THREE.MathUtils.clamp(fingers.index, 0, 1), [0.88, 1.04, 0.72]],
+      [map.mid, THREE.MathUtils.clamp(fingers.mid, 0, 1), [0.92, 1.06, 0.75]],
+      [map.ring, THREE.MathUtils.clamp(fingers.ring, 0, 1), [0.94, 1.04, 0.75]],
+      [map.pinky, THREE.MathUtils.clamp(fingers.pinky, 0, 1), [0.96, 1.02, 0.75]],
+      [map.thumb, THREE.MathUtils.clamp(fingers.thumb, 0, 1), [0.38, 0.56, 0.46]],
     ]
 
-    for (const [chain, jointAngles] of chains) {
+    for (const [chain, curl, jointAngles] of chains) {
       const twoSegBoost = chain.length === 2 ? 1.18 : 1.0
+      // 手指越伸直越呈现五指张开（splay）；握拳时自动收紧并拢
+      const fingerSplay = splay * (1 - curl * 0.85)
       for (let j = 0; j < chain.length; j++) {
         const bone = this.bones.get(chain[j]!)
         if (!bone) continue
-        const baseQ = this.fingerBladeQuats.get(bone) ?? this.restQuats.get(bone)
-        if (!baseQ) continue
-        bone.quaternion.copy(baseQ)
-        if (t > 0.01) {
+        const bladeQ = this.fingerBladeQuats.get(bone)
+        const restQ = this.restQuats.get(bone)
+        if (!bladeQ && !restQ) continue
+
+        if (bladeQ && restQ && fingerSplay > 0.01) {
+          bone.quaternion.copy(bladeQ).slerp(restQ, fingerSplay)
+        } else {
+          bone.quaternion.copy(bladeQ ?? restQ!)
+        }
+
+        if (curl > 0.01) {
           const axisLocal = this.fingerCurlAxes.get(bone)
           if (axisLocal) {
-            const angle = Math.min(1.64, t * scale * twoSegBoost * (jointAngles[j] ?? 0.6))
+            const angle = Math.min(1.64, curl * scale * twoSegBoost * (jointAngles[j] ?? 0.6))
             tmpQ1.setFromAxisAngle(axisLocal, angle)
             bone.quaternion.multiply(tmpQ1)
           }
         }
       }
     }
+  }
+
+  /** 先将五指收拢为紧密奥特手刀基准，再按预标定局部铰链轴向掌心自然弯曲成饱满铁拳 */
+  private curlHand(side: 'L' | 'R', amount: number) {
+    const t = THREE.MathUtils.clamp(amount, 0, 1)
+    this.curlHandFingers(side, {
+      thumb: t,
+      index: t,
+      mid: t,
+      ring: t,
+      pinky: t,
+      splay: 0,
+    })
   }
 
   public getBoneWorldPosition(
@@ -1387,8 +1184,8 @@ export class HeroController {
   }
 
   /** 对全部骨骼施加帧间指数四元数阻尼插值，彻底根除动作切换瞬间的骨骼硬跳与机械僵硬感 */
-  private applyBoneSmoothing(dt: number, fastAction: boolean) {
-    const rate = fastAction ? 30 : 18
+  private applyBoneSmoothing(dt: number, fastAction: boolean, gentleReturn = 0) {
+    const rate = fastAction ? 30 : THREE.MathUtils.lerp(22, 12, THREE.MathUtils.clamp(gentleReturn, 0, 1))
     const alpha = 1 - Math.exp(-Math.max(0.001, dt) * rate)
     for (const [bone, prevQ] of this.smoothBoneQuats) {
       prevQ.slerp(bone.quaternion, alpha)
@@ -1512,16 +1309,12 @@ export class HeroController {
     for (const m of this.timerMaterials) {
       if (dangerTimer || this.action === 'defeat') {
         const blink = this.action === 'defeat' ? false : Math.sin(elapsedTime * 11.5) > 0
-        if (this.customChestDomeMat === m) {
-          m.color.setHex(blink ? 0xff4d6d : 0x551122)
-        }
+        m.color.setHex(blink ? 0xff6b84 : 0x551122)
         m.emissive.setHex(blink ? 0xff1f3d : 0x550011)
         m.emissiveIntensity = this.action === 'defeat' ? 0.15 : blink ? 3.2 : 0.35
       } else if (idleIntensity > 0) {
-        const hex = this.profile?.accentColor ?? 0x38e8ff
-        if (this.customChestDomeMat === m) {
-          m.color.setHex(0x7dd3fc)
-        }
+        const hex = this.currentForm?.accentColor ?? this.profile?.accentColor ?? 0x38e8ff
+        m.color.setHex(0xb8ecff)
         m.emissive.setHex(hex)
         m.emissiveIntensity = idleIntensity + Math.sin(elapsedTime * 3.5) * 0.28
       } else {
@@ -1529,9 +1322,9 @@ export class HeroController {
       }
     }
     for (const m of this.eyeMaterials) {
-      // 温和奶黄暖白光晕（稳居锐利高光区间，绝不炸爆 Bloom 糊掉眼眶轮廓）
+      // 精准紧贴 Bloom 阈值（0.96）下沿，清晰展现 1K 六角光学复眼晶格且绝不白雾糊脸
       m.emissiveIntensity =
-        this.action === 'defeat' ? 0.22 : 1.06 + Math.sin(elapsedTime * 2.5) * 0.06
+        this.action === 'defeat' ? 0.22 : 0.92 + Math.sin(elapsedTime * 2.5) * 0.03
     }
 
     if (this.action === 'victory') {
@@ -1547,9 +1340,17 @@ export class HeroController {
 
     // 核心混合驱动架构：爆发武术招式/演出由特摄动作层主导（彻底摆脱摄像头木偶僵硬感），待机/走位/防御平滑交由实时动捕跟随
     const useMartial = this.isMartialOverrideAction()
+    if (this.wasMartial && !useMartial) {
+      this.postMartialBlend = 0.24
+    }
+    this.wasMartial = useMartial
+    if (!useMartial && this.postMartialBlend > 0) {
+      this.postMartialBlend = Math.max(0, this.postMartialBlend - inputDt)
+    }
+
     if (!useMartial && this.isLiveTracking(nowMs) && this.livePose) {
       this.applyLiveBodyPose(this.livePose, inputDt, elapsedTime)
-      this.applyBoneSmoothing(inputDt, false)
+      this.applyBoneSmoothing(inputDt, false, this.postMartialBlend / 0.24)
       return
     }
 
@@ -1756,27 +1557,46 @@ export class HeroController {
     if (this.sideSign === 1 && Number.isFinite(this.minSafeWorldZ)) {
       liveWorldZ = Math.max(liveWorldZ, this.minSafeWorldZ)
     }
+    // 根节点只承担 48% 水平转腰，保持双脚稳健踩地；其余 52% 转腰与全部俯仰/侧倾由多节脊柱柔韧分担
     this.root.position.set(this.currentX, totalJumpY, liveWorldZ)
-    this.root.rotation.set(
-      0,
-      this.baseYaw + this.profile.facingYaw + this.smTorsoYaw * 0.55,
-      -this.smTorsoRoll * 0.25 * this.sideSign,
-    )
+    this.root.rotation.set(0, this.baseYaw + this.profile.facingYaw + this.smTorsoYaw * 0.48, 0)
     this.root.updateMatrixWorld(true)
 
-    const totalPitch = this.smTorsoPitch + hitPitch + Math.sin(elapsedTime * 2.4) * 0.012
-    if (b.spineChest) {
-      this.aimBoneArena(
-        b.spineChest,
-        new THREE.Vector3(this.smTorsoRoll * 0.35, 1, -totalPitch * 0.65),
-        0.65,
-      )
+    // 1. 多节脊柱分级联动 + 柔和呼吸微动（自适应 1~3 节脊柱骨骼，消除木板躯干感）
+    const totalPitch = this.smTorsoPitch + hitPitch + Math.sin(elapsedTime * 2.4) * 0.014
+    const spineYaw = this.smTorsoYaw * 0.52
+    const spineRoll = this.smTorsoRoll * 0.85
+    const spineChain = [b.spineLower, b.spineUpper, b.spineChest].filter(
+      (n): n is string => !!n && this.bones.has(n),
+    )
+    const spineWeights =
+      spineChain.length === 3
+        ? [0.26, 0.32, 0.42]
+        : spineChain.length === 2
+          ? [0.42, 0.58]
+          : [1.0]
+    for (let i = 0; i < spineChain.length; i++) {
+      const w = spineWeights[i]!
+      this.applyArenaEulerDelta(spineChain[i], spineYaw * w, totalPitch * w, spineRoll * w)
     }
-    if (b.head) {
-      this.aimBoneArena(
-        b.head,
-        new THREE.Vector3(-this.smHeadYaw * 0.55, 1, -this.smHeadPitch * 0.55 - 0.15),
-        0.5,
+
+    // 2. 真实三轴颈头多节联动（转头 Yaw / 点头 Pitch / 歪头 Roll 严格分离）
+    const neckHeadChain = [b.neckLower, b.neckUpper, b.head].filter(
+      (n): n is string => !!n && this.bones.has(n),
+    )
+    const neckHeadWeights =
+      neckHeadChain.length === 3
+        ? [0.2, 0.32, 0.48]
+        : neckHeadChain.length === 2
+          ? [0.38, 0.62]
+          : [1.0]
+    for (let i = 0; i < neckHeadChain.length; i++) {
+      const w = neckHeadWeights[i]!
+      this.applyArenaEulerDelta(
+        neckHeadChain[i],
+        this.smHeadYaw * 0.88 * w,
+        this.smHeadPitch * 0.82 * w,
+        this.smHeadRoll * 0.78 * w,
       )
     }
     this.root.updateMatrixWorld(true)
@@ -1821,30 +1641,71 @@ export class HeroController {
       this.action === 'disc' ||
       this.discChargeVisual > 0.12
 
-    // 为动捕前臂提供符合解剖规律的默认内向掌心朝向，发射光线时竖手掌心朝内呈现标准十字手刀
-    const palmNormL = isBladeHand
-      ? new THREE.Vector3(0.85 * s, 0, 0.5 * s)
-      : new THREE.Vector3(0.65 * s, -0.65, 0.35 * s)
-    const palmNormR = isBladeHand
-      ? new THREE.Vector3(-0.85 * s, 0, 0.5 * s)
-      : new THREE.Vector3(-0.65 * s, -0.65, 0.35 * s)
+    // 3. 根据肘屈平面构造大臂参考法线（鹰嘴突朝向弯折外侧），杜绝大臂绕轴拧麻花
+    const computeElbowBackNormal = (
+      upper: THREE.Vector3,
+      lower: THREE.Vector3,
+      hasLower: boolean,
+      side: 'L' | 'R',
+    ): THREE.Vector3 => {
+      const sideOut = side === 'L' ? -0.26 * s : 0.26 * s
+      const fallback = new THREE.Vector3(sideOut, -0.45, 0.85 * s).normalize()
+      if (!hasLower) return fallback
+      const bendBack = lower.clone().negate()
+      bendBack.addScaledVector(upper, -bendBack.dot(upper))
+      const sinLen = bendBack.length()
+      if (sinLen < 0.18) return fallback
+      bendBack.divideScalar(sinLen)
+      // 肘部微弯（10°~32°）时平滑过渡至肘屈平面极向量，避免伸直附近奇点抖动
+      const blend = THREE.MathUtils.clamp((sinLen - 0.18) / 0.35, 0, 1)
+      return fallback.lerp(bendBack, blend).normalize()
+    }
 
+    // 4. 掌心法线：优先使用 HandLandmarker 真实 3D 掌心朝向，实现翻腕/推掌/手刀实时跟随
+    const defaultPalmL = isBladeHand
+      ? new THREE.Vector3(0.85 * s, 0, 0.5 * s).normalize()
+      : new THREE.Vector3(0.65 * s, -0.65, 0.35 * s).normalize()
+    const defaultPalmR = isBladeHand
+      ? new THREE.Vector3(-0.85 * s, 0, 0.5 * s).normalize()
+      : new THREE.Vector3(-0.65 * s, -0.65, 0.35 * s).normalize()
+
+    const palmAlpha = 1 - Math.exp(-dt * 26)
+    const handTrackL = !isBladeHand && pose.fingersL?.palmNormal ? pose.fingersL : null
+    const handTrackR = !isBladeHand && pose.fingersR?.palmNormal ? pose.fingersR : null
+
+    if (handTrackL?.palmNormal) {
+      lerpArenaVec(this.smPalmL, handTrackL.palmNormal, palmAlpha, s)
+    } else {
+      this.smPalmL.lerp(defaultPalmL, palmAlpha).normalize()
+    }
+    if (handTrackR?.palmNormal) {
+      lerpArenaVec(this.smPalmR, handTrackR.palmNormal, palmAlpha, s)
+    } else {
+      this.smPalmR.lerp(defaultPalmR, palmAlpha).normalize()
+    }
+
+    // 5. 锁骨 -> 上臂（含肘平面约束） -> 前臂 & 手腕（协同掌心翻转）全链条驱动
     if (pose.upperArmL) {
-      this.aimBoneWorld(b.upperArmL, this.smUpperL)
+      this.driveCollarForArm(b.collarL, 'L', this.smUpperL)
+      const elbowBackL = computeElbowBackNormal(this.smUpperL, this.smLowerL, !!pose.lowerArmL, 'L')
+      this.aimBoneWorld(b.upperArmL, this.smUpperL, 1, elbowBackL)
       if (pose.lowerArmL) {
-        this.aimBoneWorld(b.lowerArmL, this.smLowerL, 1, palmNormL)
-        this.aimBoneWorld(b.handL, this.smHandL, 0.45)
+        this.aimBoneWorld(b.lowerArmL, this.smLowerL, 1, this.smPalmL)
+        this.aimBoneWorld(b.handL, this.smHandL, handTrackL ? 0.78 : 0.48, this.smPalmL)
       }
     }
     if (pose.upperArmR) {
-      this.aimBoneWorld(b.upperArmR, this.smUpperR)
+      this.driveCollarForArm(b.collarR, 'R', this.smUpperR)
+      const elbowBackR = computeElbowBackNormal(this.smUpperR, this.smLowerR, !!pose.lowerArmR, 'R')
+      this.aimBoneWorld(b.upperArmR, this.smUpperR, 1, elbowBackR)
       if (pose.lowerArmR) {
-        this.aimBoneWorld(b.lowerArmR, this.smLowerR, 1, palmNormR)
-        this.aimBoneWorld(b.handR, this.smHandR, 0.45)
+        this.aimBoneWorld(b.lowerArmR, this.smLowerR, 1, this.smPalmR)
+        this.aimBoneWorld(b.handR, this.smHandR, handTrackR ? 0.78 : 0.48, this.smPalmR)
       }
     }
 
-    const curlAmt = isBladeHand
+    // 6. 十指独立驱动：有 21 点手部追踪时 1:1 映射五指弯曲与张合，否则按格斗语境平滑握拳/手刀
+    const fallbackCurl = isBladeHand
       ? 0.0
       : this.isGuarding
         ? 0.25
@@ -1853,8 +1714,23 @@ export class HeroController {
             this.action === 'punch-heavy'
           ? 1.0
           : 0.78
-    this.curlHand('L', curlAmt)
-    this.curlHand('R', curlAmt)
+    const fingerAlpha = 1 - Math.exp(-dt * 28)
+    const smoothFingerSide = (
+      dst: { thumb: number; index: number; mid: number; ring: number; pinky: number; splay: number },
+      src: LiveHandFingers | null | undefined,
+    ) => {
+      const useSrc = !isBladeHand && src
+      dst.thumb = THREE.MathUtils.lerp(dst.thumb, useSrc ? src.thumb : fallbackCurl, fingerAlpha)
+      dst.index = THREE.MathUtils.lerp(dst.index, useSrc ? src.index : fallbackCurl, fingerAlpha)
+      dst.mid = THREE.MathUtils.lerp(dst.mid, useSrc ? src.mid : fallbackCurl, fingerAlpha)
+      dst.ring = THREE.MathUtils.lerp(dst.ring, useSrc ? src.ring : fallbackCurl, fingerAlpha)
+      dst.pinky = THREE.MathUtils.lerp(dst.pinky, useSrc ? src.pinky : fallbackCurl, fingerAlpha)
+      dst.splay = THREE.MathUtils.lerp(dst.splay, useSrc ? src.splay : 0, fingerAlpha)
+    }
+    smoothFingerSide(this.smFingersL, pose.fingersL)
+    smoothFingerSide(this.smFingersR, pose.fingersR)
+    this.curlHandFingers('L', this.smFingersL)
+    this.curlHandFingers('R', this.smFingersR)
 
     this.root.updateMatrixWorld(true)
   }
@@ -1933,8 +1809,9 @@ export class HeroController {
     } else if (this.action === 'beam-spread') {
       bodyPitch = -0.14
     } else if (this.action === 'transform') {
-      bodyPitch = -0.08
-      bodyYaw = 0.22
+      // 宇宙星海变身仪式正面向镜头转身，威风凛凛高举右手直视玩家
+      bodyPitch = -0.06
+      bodyYaw = Math.PI - 0.16
     } else if (this.action === 'beam') {
       const p = Math.min(1, this.actionTime / 0.16)
       bodyPitch = -0.05 * p
@@ -2027,6 +1904,15 @@ export class HeroController {
       const kneeDepth = (1 - (progress - 0.62) / 0.38) * 0.65
       this.applyAthleticStanceLegs(kneeDepth, 0)
       this.alignStandingFeetAndGround(0)
+    } else if (this.action === 'transform') {
+      // 宇宙变身正面向 +Z 镜头威风站立（膝盖朝向 +Z 镜头，脚底水平贴地）
+      const frontNormL = new THREE.Vector3(0.12, 0, 1)
+      const frontNormR = new THREE.Vector3(-0.14, 0, 1)
+      this.aimBoneArena(b.thighL, new THREE.Vector3(0.12, -0.97, 0.14), 1, frontNormL)
+      this.aimBoneArena(b.shinL, new THREE.Vector3(0.1, -0.98, -0.1), 1, frontNormL)
+      this.aimBoneArena(b.thighR, new THREE.Vector3(-0.14, -0.97, 0.08), 1, frontNormR)
+      this.aimBoneArena(b.shinR, new THREE.Vector3(-0.12, -0.98, -0.12), 1, frontNormR)
+      this.alignStandingFeetAndGround(0)
     } else if (this.action === 'dodge-left' || this.action === 'dodge-right') {
       this.applyAthleticStanceLegs(0.32 * snapArc, 0.25 * snapArc)
       this.alignStandingFeetAndGround(this.combatVaultY)
@@ -2040,9 +1926,10 @@ export class HeroController {
     }
 
     if (b.spineChest) {
+      const pitchSign = this.action === 'transform' ? 1 : -1
       this.aimBoneArena(
         b.spineChest,
-        new THREE.Vector3(bodyRoll * 0.35, 1, -(bodyPitch + breath * 0.016) * 0.72),
+        new THREE.Vector3(bodyRoll * 0.35, 1, pitchSign * (bodyPitch + breath * 0.016) * 0.72),
         0.65,
       )
     }
@@ -2053,16 +1940,16 @@ export class HeroController {
     const punchPalmDown = new THREE.Vector3(0, -1, 0.15)
 
     if (this.action === 'transform') {
-      // 视频 1 00:01-00:02 经典右手高举火花棱镜变身
-      this.aimBoneArena(b.upperArmR, new THREE.Vector3(0.12, 0.96, -0.22))
+      // 正面向 +Z 镜头变身仪式：右手（此时在世界 -X 侧）高举火花棱镜直指苍穹，左手（世界 +X 侧）收腰蓄势
+      this.aimBoneArena(b.upperArmR, new THREE.Vector3(-0.16, 0.96, 0.22))
       this.aimBoneArena(
         b.lowerArmR,
-        new THREE.Vector3(0.04, 0.99, -0.1),
+        new THREE.Vector3(-0.06, 0.99, 0.12),
         1,
-        new THREE.Vector3(-0.9, 0, 0.35),
+        new THREE.Vector3(0.9, 0, -0.35),
       )
-      this.aimBoneArena(b.upperArmL, new THREE.Vector3(-0.48, -0.68, -0.52))
-      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(0.12, -0.42, -0.88), 1, guardPalmL)
+      this.aimBoneArena(b.upperArmL, new THREE.Vector3(0.46, -0.62, 0.56))
+      this.aimBoneArena(b.lowerArmL, new THREE.Vector3(-0.18, 0.18, 0.94), 1, new THREE.Vector3(-0.7, -0.55, -0.45))
       this.curlHand('R', 0.95)
       this.curlHand('L', 0.9)
     } else if (this.action === 'beam-spread') {

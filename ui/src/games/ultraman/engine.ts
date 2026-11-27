@@ -10,6 +10,7 @@ import { WINDUP_TIME } from './encounter'
 import type { EncounterEvent, Impact } from './encounter'
 import { ArenaManager } from './environment'
 import { UltraGestureRecognizer } from './gesture'
+import type { HandLandmarksInput } from './gesture'
 import { canTrackFeet, JumpKickRecognizer } from './jump'
 import { HERO_PROFILES } from './heroes'
 import { HeroController } from './hero'
@@ -634,6 +635,7 @@ export class UltramanGameEngine {
     width: number,
     height: number,
     laneCenter?: number,
+    hands?: HandLandmarksInput | null,
   ) {
     if (this.controlMode !== 'camera') return
     const snap = this.gesture.update(
@@ -644,6 +646,7 @@ export class UltramanGameEngine {
       worldLandmarks,
       !!this.heroProfile.forms,
       laneCenter,
+      hands,
     )
     this.gestureTracking = snap.tracking
     const fullBody = snap.coverage === 'full' && canTrackFeet(landmarks)

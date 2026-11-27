@@ -5,6 +5,12 @@ export interface TrackedPose {
   worldLandmarks: PoseLandmark[]
   /** 镜像画面下的水平中心 [0, 1]，0.5 为正中央，越小越靠左 */
   mirroredCenterX: number
+  /** 单人精细左手 21 关节（屏幕归一化坐标 & 3D 米制世界坐标） */
+  leftHandLandmarks?: PoseLandmark[] | null
+  leftHandWorldLandmarks?: PoseLandmark[] | null
+  /** 单人精细右手 21 关节（屏幕归一化坐标 & 3D 米制世界坐标） */
+  rightHandLandmarks?: PoseLandmark[] | null
+  rightHandWorldLandmarks?: PoseLandmark[] | null
 }
 
 const TASKS_VISION_URL =
@@ -12,11 +18,16 @@ const TASKS_VISION_URL =
 const TASKS_WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.3/wasm'
 const POSE_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
+const HAND_MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 
 interface TasksVisionModule {
   FilesetResolver: { forVisionTasks(path: string): Promise<unknown> }
   PoseLandmarker: {
     createFromOptions(fileset: unknown, opts: Record<string, unknown>): Promise<PoseLandmarkerLike>
+  }
+  HandLandmarker?: {
+    createFromOptions(fileset: unknown, opts: Record<string, unknown>): Promise<HandLandmarkerLike>
   }
 }
 
@@ -27,6 +38,18 @@ interface PoseLandmarkerLike {
   ): {
     landmarks?: { x: number; y: number; z?: number; visibility?: number }[][]
     worldLandmarks?: { x: number; y: number; z?: number; visibility?: number }[][]
+  }
+  close(): void
+}
+
+interface HandLandmarkerLike {
+  detectForVideo(
+    video: HTMLVideoElement,
+    timestamp: number,
+  ): {
+    landmarks?: { x: number; y: number; z?: number }[][]
+    worldLandmarks?: { x: number; y: number; z?: number }[][]
+    handednesses?: { categoryName?: string; score?: number }[][]
   }
   close(): void
 }
@@ -181,11 +204,89 @@ class PoseLandmarkFilterBank {
   }
 }
 
+/** 单手 21 点 2D+3D 关节一欧元滤波组（静手极稳、甩指零拖影） */
+class HandLandmarkFilterBank {
+  private filters2D: [OneEuroScalar, OneEuroScalar, OneEuroScalar][] = []
+  private filters3D: [OneEuroScalar, OneEuroScalar, OneEuroScalar][] = []
+  private lastT = -Infinity
+
+  constructor() {
+    for (let i = 0; i < 21; i++) {
+      const isTip = i === 4 || i === 8 || i === 12 || i === 16 || i === 20
+      const minCut = isTip ? 2.8 : 2.2
+      const beta = isTip ? 26.0 : 18.0
+      this.filters2D.push([
+        new OneEuroScalar(minCut, beta),
+        new OneEuroScalar(minCut, beta),
+        new OneEuroScalar(minCut * 0.8, beta * 0.7),
+      ])
+      this.filters3D.push([
+        new OneEuroScalar(minCut, beta * 0.85),
+        new OneEuroScalar(minCut, beta * 0.85),
+        new OneEuroScalar(minCut * 0.8, beta * 0.65),
+      ])
+    }
+  }
+
+  public apply(
+    raw2D: PoseLandmark[],
+    raw3D: PoseLandmark[],
+    nowMs: number,
+  ): { landmarks: PoseLandmark[]; worldLandmarks: PoseLandmark[] } {
+    const tSec = nowMs * 0.001
+    if (nowMs - this.lastT > 420 || nowMs < this.lastT) {
+      this.reset()
+    }
+    this.lastT = nowMs
+
+    const landmarks: PoseLandmark[] = raw2D.map((p, idx) => {
+      const f = this.filters2D[idx]
+      if (!f) return { x: p.x, y: p.y, z: p.z ?? 0, visibility: 1 }
+      return {
+        x: f[0].filter(p.x, tSec),
+        y: f[1].filter(p.y, tSec),
+        z: f[2].filter(p.z ?? 0, tSec),
+        visibility: 1,
+      }
+    })
+    const worldLandmarks: PoseLandmark[] =
+      raw3D.length >= 21
+        ? raw3D.map((p, idx) => {
+            const f = this.filters3D[idx]
+            if (!f) return { x: p.x, y: p.y, z: p.z ?? 0, visibility: 1 }
+            return {
+              x: f[0].filter(p.x, tSec),
+              y: f[1].filter(p.y, tSec),
+              z: f[2].filter(p.z ?? 0, tSec),
+              visibility: 1,
+            }
+          })
+        : []
+    return { landmarks, worldLandmarks }
+  }
+
+  public reset() {
+    for (const tri of this.filters2D) {
+      tri[0].reset()
+      tri[1].reset()
+      tri[2].reset()
+    }
+    for (const tri of this.filters3D) {
+      tri[0].reset()
+      tri[1].reset()
+      tri[2].reset()
+    }
+  }
+}
+
 /**
- * 统一现代姿态追踪器（MediaPipe Tasks Vision PoseLandmarker + One-Euro 自适应去抖 + 短暂丢帧平滑保持）
+ * 统一现代全身+精细双手姿态追踪器：
+ * - MediaPipe PoseLandmarker (33 点全身 3D) + HandLandmarker (双手 42 点精细手指 3D) 协同运行
+ * - One-Euro 自适应去抖 + 按推理耗时动态自适应帧率预算，兼顾丝滑 60fps 与独立十指实时捕捉
  */
 export class UltraPoseTracker {
   private landmarker: PoseLandmarkerLike | null = null
+  private handLandmarker: HandLandmarkerLike | null = null
   private stream: MediaStream | null = null
   private session = 0
   private rafId = 0
@@ -195,8 +296,14 @@ export class UltraPoseTracker {
     new PoseLandmarkFilterBank(),
     new PoseLandmarkFilterBank(),
   ]
+  private handFilterL = new HandLandmarkFilterBank()
+  private handFilterR = new HandLandmarkFilterBank()
   private lastValidPoses: TrackedPose[] = []
   private lastValidTime = -Infinity
+  private lastLeftHand: { lm: PoseLandmark[]; world: PoseLandmark[]; time: number } | null = null
+  private lastRightHand: { lm: PoseLandmark[]; world: PoseLandmark[]; time: number } | null = null
+  private lastHandInferAt = -Infinity
+  private handMinIntervalMs = 0
 
   public onPoses: ((poses: TrackedPose[], now: number, width: number, height: number) => void) | null =
     null
@@ -207,8 +314,14 @@ export class UltraPoseTracker {
     const session = ++this.session
     this.filterBanks[0].reset()
     this.filterBanks[1].reset()
+    this.handFilterL.reset()
+    this.handFilterR.reset()
     this.lastValidPoses = []
     this.lastValidTime = -Infinity
+    this.lastLeftHand = null
+    this.lastRightHand = null
+    this.lastHandInferAt = -Infinity
+    this.handMinIntervalMs = 0
 
     const isPortraitViewport =
       typeof window !== 'undefined' && window.innerHeight > window.innerWidth
@@ -254,25 +367,61 @@ export class UltraPoseTracker {
     }
 
     let landmarker: PoseLandmarkerLike
-    try {
-      landmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
-        ...baseOpts,
-        baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate: 'GPU' },
-      })
-    } catch {
-      landmarker = await vision.PoseLandmarker.createFromOptions(fileset, {
-        ...baseOpts,
-        baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate: 'CPU' },
-      })
+    let handLandmarker: HandLandmarkerLike | null = null
+
+    const createPose = async () => {
+      try {
+        return await vision.PoseLandmarker.createFromOptions(fileset, {
+          ...baseOpts,
+          baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate: 'GPU' },
+        })
+      } catch {
+        return await vision.PoseLandmarker.createFromOptions(fileset, {
+          ...baseOpts,
+          baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate: 'CPU' },
+        })
+      }
     }
+
+    const createHand = async (): Promise<HandLandmarkerLike | null> => {
+      // 单人模式并行开启双手 21 点精细手指追踪；双人同屏关闭以保持满帧率
+      if (maxPoses !== 1 || !vision.HandLandmarker) return null
+      const handOpts = {
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.42,
+        minHandPresenceConfidence: 0.42,
+        minTrackingConfidence: 0.42,
+      }
+      try {
+        return await vision.HandLandmarker.createFromOptions(fileset, {
+          ...handOpts,
+          baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'GPU' },
+        })
+      } catch {
+        try {
+          return await vision.HandLandmarker.createFromOptions(fileset, {
+            ...handOpts,
+            baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'CPU' },
+          })
+        } catch (err) {
+          console.warn('[UltraPoseTracker] HandLandmarker 初始化失败，退回纯全身追踪:', err)
+          return null
+        }
+      }
+    }
+
+    ;[landmarker, handLandmarker] = await Promise.all([createPose(), createHand()])
 
     if (session !== this.session) {
       landmarker.close()
+      handLandmarker?.close()
       stream.getTracks().forEach((t) => t.stop())
       return
     }
 
     this.landmarker = landmarker
+    this.handLandmarker = handLandmarker
     this.stream = stream
     video.srcObject = stream
     await video.play()
@@ -359,6 +508,88 @@ export class UltraPoseTracker {
       }
     })
 
+    // 单人模式下协同追踪双手 21 点精细手指，并通过手腕 2D 最近邻精准绑定至左/右手（绝不串手）
+    if (this.handLandmarker && filteredPoses.length === 1) {
+      const primary = filteredPoses[0]!
+      if (now - this.lastHandInferAt >= this.handMinIntervalMs) {
+        this.lastHandInferAt = now
+        const t0 = performance.now()
+        try {
+          const handRes = this.handLandmarker.detectForVideo(video, ts)
+          const inferMs = performance.now() - t0
+          // 按实测耗时自适应推理周期：GPU 高速（<= 10ms）全帧率 60Hz，较慢设备自动退至 ~28Hz 绝不卡顿
+          this.handMinIntervalMs = inferMs > 11 ? 34 : 0
+
+          const hLmSets = handRes.landmarks ?? []
+          const hWorldSets = handRes.worldLandmarks ?? []
+          const poseLW = primary.landmarks[15]
+          const poseRW = primary.landmarks[16]
+
+          let matchedL: { lm: PoseLandmark[]; world: PoseLandmark[]; dist: number } | null = null
+          let matchedR: { lm: PoseLandmark[]; world: PoseLandmark[]; dist: number } | null = null
+
+          for (let h = 0; h < hLmSets.length; h++) {
+            const rawH = hLmSets[h]
+            if (!rawH || rawH.length < 21) continue
+            const wrist = rawH[0]!
+            const distL =
+              poseLW && (poseLW.visibility ?? 1) > 0.15
+                ? Math.hypot(wrist.x - poseLW.x, wrist.y - poseLW.y)
+                : Infinity
+            const distR =
+              poseRW && (poseRW.visibility ?? 1) > 0.15
+                ? Math.hypot(wrist.x - poseRW.x, wrist.y - poseRW.y)
+                : Infinity
+
+            const h2d: PoseLandmark[] = rawH.map((p) => ({
+              x: p.x,
+              y: p.y,
+              z: p.z ?? 0,
+              visibility: 1,
+            }))
+            const wRaw = hWorldSets[h] ?? []
+            const h3d: PoseLandmark[] =
+              wRaw.length >= 21
+                ? wRaw.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0, visibility: 1 }))
+                : []
+
+            const assignLeft = distL <= distR
+            const bestDist = assignLeft ? distL : distR
+            if (bestDist > 0.28) continue
+            if (assignLeft) {
+              if (!matchedL || bestDist < matchedL.dist) {
+                matchedL = { lm: h2d, world: h3d, dist: bestDist }
+              }
+            } else {
+              if (!matchedR || bestDist < matchedR.dist) {
+                matchedR = { lm: h2d, world: h3d, dist: bestDist }
+              }
+            }
+          }
+
+          if (matchedL) {
+            const fl = this.handFilterL.apply(matchedL.lm, matchedL.world, now)
+            this.lastLeftHand = { lm: fl.landmarks, world: fl.worldLandmarks, time: now }
+          }
+          if (matchedR) {
+            const fr = this.handFilterR.apply(matchedR.lm, matchedR.world, now)
+            this.lastRightHand = { lm: fr.landmarks, world: fr.worldLandmarks, time: now }
+          }
+        } catch {
+          this.handMinIntervalMs = 50
+        }
+      }
+
+      if (this.lastLeftHand && now - this.lastLeftHand.time <= 220) {
+        primary.leftHandLandmarks = this.lastLeftHand.lm
+        primary.leftHandWorldLandmarks = this.lastLeftHand.world
+      }
+      if (this.lastRightHand && now - this.lastRightHand.time <= 220) {
+        primary.rightHandLandmarks = this.lastRightHand.lm
+        primary.rightHandWorldLandmarks = this.lastRightHand.world
+      }
+    }
+
     this.lastValidPoses = filteredPoses
     this.lastValidTime = now
     this.onPoses?.(filteredPoses, now, video.videoWidth, video.videoHeight)
@@ -372,8 +603,12 @@ export class UltraPoseTracker {
     }
     this.lastVideoTime = -1
     this.lastValidPoses = []
+    this.lastLeftHand = null
+    this.lastRightHand = null
     this.filterBanks[0].reset()
     this.filterBanks[1].reset()
+    this.handFilterL.reset()
+    this.handFilterR.reset()
     if (this.landmarker) {
       try {
         this.landmarker.close()
@@ -381,6 +616,14 @@ export class UltraPoseTracker {
         // 忽略释放阶段的内部上下文异常
       }
       this.landmarker = null
+    }
+    if (this.handLandmarker) {
+      try {
+        this.handLandmarker.close()
+      } catch {
+        // 忽略释放阶段的内部上下文异常
+      }
+      this.handLandmarker = null
     }
     if (this.stream) {
       this.stream.getTracks().forEach((tr) => tr.stop())
@@ -407,8 +650,16 @@ const TACTICAL_LINKS: readonly [number, number][] = [
   [26, 28],
 ]
 
+const HAND_TACTICAL_LINKS: readonly [number, number][] = [
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
+]
+
 /**
- * 在镜像摄像头画布上绘制特摄防卫队战术骨骼雷达与拳脚能量锚点
+ * 在镜像摄像头画布上绘制特摄防卫队战术骨骼雷达、拳脚能量锚点与双手 21 点精细指骨
  */
 export function drawTacticalSkeleton(
   ctx: CanvasRenderingContext2D,
@@ -417,6 +668,7 @@ export function drawTacticalSkeleton(
   poses: readonly (PoseLandmark[] | null | undefined)[],
   showSkeleton = true,
   splitDivider = false,
+  hands?: readonly (PoseLandmark[] | null | undefined)[],
 ) {
   ctx.clearRect(0, 0, width, height)
 
@@ -490,6 +742,36 @@ export function drawTacticalSkeleton(
       ctx.fill()
     }
   })
+
+  // 绘制 21 点精细双手骨架与五指指尖荧光点，让玩家实时直观看到十指捕捉反馈
+  if (hands && hands.length > 0) {
+    for (const hand of hands) {
+      if (!hand || hand.length < 21) continue
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)'
+      ctx.lineWidth = 1.5
+      ctx.shadowColor = '#facc15'
+      ctx.shadowBlur = 4
+      ctx.beginPath()
+      for (const [aIdx, bIdx] of HAND_TACTICAL_LINKS) {
+        const a = hand[aIdx]
+        const b = hand[bIdx]
+        if (!a || !b) continue
+        ctx.moveTo(a.x * width, a.y * height)
+        ctx.lineTo(b.x * width, b.y * height)
+      }
+      ctx.stroke()
+
+      ctx.shadowBlur = 0
+      ctx.fillStyle = '#fef08a'
+      for (const tipIdx of [4, 8, 12, 16, 20]) {
+        const p = hand[tipIdx]
+        if (!p) continue
+        ctx.beginPath()
+        ctx.arc(p.x * width, p.y * height, 2.2, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  }
 
   ctx.restore()
 }

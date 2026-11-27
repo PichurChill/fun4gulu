@@ -1,4 +1,11 @@
-import type { GestureSnapshot, LiveBodyPose, PoseLandmark, Vec3Like } from './types'
+import type { GestureSnapshot, LiveBodyPose, LiveHandFingers, PoseLandmark, Vec3Like } from './types'
+
+export interface HandLandmarksInput {
+  left?: PoseLandmark[] | null
+  leftWorld?: PoseLandmark[] | null
+  right?: PoseLandmark[] | null
+  rightWorld?: PoseLandmark[] | null
+}
 
 interface Vec3 {
   x: number
@@ -152,6 +159,113 @@ function mpDirToWorld(from: Vec3, to: Vec3, zScale = 0.92): Vec3Like | null {
   return { x: x / len, y: y / len, z: z / len }
 }
 
+function vecAngleDeg(ax: number, ay: number, az: number, bx: number, by: number, bz: number): number {
+  const denom = Math.hypot(ax, ay, az) * Math.hypot(bx, by, bz)
+  if (denom < 1e-6) return 0
+  const cos = clamp((ax * bx + ay * by + az * bz) / denom, -1, 1)
+  return (Math.acos(cos) * 180) / Math.PI
+}
+
+function cross3(a: Vec3Like, b: Vec3Like): Vec3Like | null {
+  const x = a.y * b.z - a.z * b.y
+  const y = a.z * b.x - a.x * b.z
+  const z = a.x * b.y - a.y * b.x
+  const len = Math.hypot(x, y, z)
+  if (len < 1e-5) return null
+  return { x: x / len, y: y / len, z: z / len }
+}
+
+/**
+ * 从 MediaPipe HandLandmarker 的 21 关节 3D 坐标精确解算五指独立弯曲度、五指张开度与真实 3D 掌心朝向：
+ * - 基于相邻指骨段 3D 折角，完全无视手部距离摄像头远近或视角旋转；
+ * - 通过手性叉积严格计算真实掌心法线，支持翻腕、推掌、手刀、比耶、点赞与握拳 1:1 实时驱动。
+ */
+export function extractHandFingers(
+  handWorld: PoseLandmark[] | null | undefined,
+  hand2D: PoseLandmark[] | null | undefined,
+  isLeft: boolean,
+): LiveHandFingers | null {
+  const src = handWorld && handWorld.length >= 21 ? handWorld : hand2D && hand2D.length >= 21 ? hand2D : null
+  if (!src) return null
+
+  const p = (idx: number): Vec3 => {
+    const lm = src[idx]!
+    return { x: lm.x, y: lm.y, z: lm.z ?? 0, v: 1 }
+  }
+  const wrist = p(0)
+  const idxMcp = p(5)
+  const midMcp = p(9)
+  const ringMcp = p(13)
+  const pnkMcp = p(17)
+
+  const fingerCurl = (mcpIdx: number, pipIdx: number, dipIdx: number, tipIdx: number): number => {
+    const m = p(mcpIdx)
+    const pi = p(pipIdx)
+    const d = p(dipIdx)
+    const ti = p(tipIdx)
+    // 三节指关节相对上一节的折弯角（伸直 ≈ 0°，满握 ≈ 80°~95°）
+    const bendMcp = vecAngleDeg(m.x - wrist.x, m.y - wrist.y, m.z - wrist.z, pi.x - m.x, pi.y - m.y, pi.z - m.z)
+    const bendPip = vecAngleDeg(pi.x - m.x, pi.y - m.y, pi.z - m.z, d.x - pi.x, d.y - pi.y, d.z - pi.z)
+    const bendDip = vecAngleDeg(d.x - pi.x, d.y - pi.y, d.z - pi.z, ti.x - d.x, ti.y - d.y, ti.z - d.z)
+    const weightedBend = bendMcp * 0.42 + bendPip * 0.4 + bendDip * 0.18
+    return clamp((weightedBend - 14) / 70, 0, 1)
+  }
+
+  // 大拇指：融合关节折角 + 拇指尖向小指根的收拢距离（精准区分竖大拇指与握紧拳头）
+  const tCmc = p(1)
+  const tMcp = p(2)
+  const tIp = p(3)
+  const tTip = p(4)
+  const tBend1 = vecAngleDeg(tMcp.x - tCmc.x, tMcp.y - tCmc.y, tMcp.z - tCmc.z, tIp.x - tMcp.x, tIp.y - tMcp.y, tIp.z - tMcp.z)
+  const tBend2 = vecAngleDeg(tIp.x - tMcp.x, tIp.y - tMcp.y, tIp.z - tMcp.z, tTip.x - tIp.x, tTip.y - tIp.y, tTip.z - tIp.z)
+  const palmWidth = Math.max(1e-4, Math.hypot(idxMcp.x - pnkMcp.x, idxMcp.y - pnkMcp.y, idxMcp.z - pnkMcp.z))
+  const tipToPinky = Math.hypot(tTip.x - pnkMcp.x, tTip.y - pnkMcp.y, tTip.z - pnkMcp.z) / palmWidth
+  const thumbAngleCurl = clamp((tBend1 * 0.55 + tBend2 * 0.45 - 12) / 52, 0, 1)
+  const thumbTuckCurl = clamp((1.52 - tipToPinky) / 0.82, 0, 1)
+  const thumb = clamp(Math.max(thumbAngleCurl, thumbTuckCurl * 0.85), 0, 1)
+
+  const index = fingerCurl(5, 6, 7, 8)
+  const mid = fingerCurl(9, 10, 11, 12)
+  const ring = fingerCurl(13, 14, 15, 16)
+  const pinky = fingerCurl(17, 18, 19, 20)
+
+  // 五指外展张开度（仅在手指较直时有效，握拳时自动收归 0）
+  const fDir = (a: number, b: number) => {
+    const pa = p(a)
+    const pb = p(b)
+    return { x: pb.x - pa.x, y: pb.y - pa.y, z: pb.z - pa.z }
+  }
+  const dIdx = fDir(5, 6)
+  const dMid = fDir(9, 10)
+  const dRing = fDir(13, 14)
+  const dPnk = fDir(17, 18)
+  const avgSpreadDeg =
+    (vecAngleDeg(dIdx.x, dIdx.y, dIdx.z, dMid.x, dMid.y, dMid.z) +
+      vecAngleDeg(dMid.x, dMid.y, dMid.z, dRing.x, dRing.y, dRing.z) +
+      vecAngleDeg(dRing.x, dRing.y, dRing.z, dPnk.x, dPnk.y, dPnk.z)) /
+    3
+  const openFactor = clamp(1 - (index + mid + ring + pinky) * 0.3, 0, 1)
+  const splay = clamp((avgSpreadDeg - 7.5) / 13.5, 0, 1) * openFactor
+
+  // 将掌面两基底向量转至奥特曼世界空间，按严格解剖手性求真实掌心法线
+  const vIndex = mpDirToWorld(wrist, idxMcp, 1.0)
+  const vPinky = mpDirToWorld(wrist, pnkMcp, 1.0)
+  const handDir = mpDirToWorld(wrist, midMcp, 1.0)
+  const palmNormal =
+    vIndex && vPinky ? (isLeft ? cross3(vPinky, vIndex) : cross3(vIndex, vPinky)) : null
+
+  return {
+    thumb,
+    index,
+    mid,
+    ring,
+    pinky,
+    splay,
+    palmNormal,
+    handDir,
+  }
+}
+
 function avgVec(a: Vec3, b: Vec3): Vec3 {
   return {
     x: (a.x + b.x) * 0.5,
@@ -280,6 +394,7 @@ export class UltraGestureRecognizer {
     worldLandmarks?: PoseLandmark[] | null,
     canChangeForm = true,
     laneCenter?: number,
+    hands?: HandLandmarksInput | null,
   ): GestureSnapshot {
     const out: GestureSnapshot = {
       tracking: false,
@@ -405,8 +520,8 @@ export class UltraGestureRecognizer {
     const jumpHeight = deltaY > 0.17 ? clamp((deltaY - 0.17) * 5.2, 0, 5.2) : 0
     const crouchDepth = deltaY < -0.12 ? clamp((-deltaY - 0.12) * 3.4, 0, 2.8) : 0
 
-    // 2. 构建实时全身 3D 骨骼映射包
-    const livePose = this.extractLiveBodyPose(worldPts, jumpHeight, crouchDepth)
+    // 2. 构建实时全身 3D 骨骼映射包（融合双手 21 点独立十指弯曲度与真实 3D 掌心朝向）
+    const livePose = this.extractLiveBodyPose(worldPts, jumpHeight, crouchDepth, hands)
     out.livePose = livePose
     out.tracking = true
     out.coverage = livePose.coverage
@@ -738,6 +853,7 @@ export class UltraGestureRecognizer {
     w: Vec3[],
     jumpHeight: number,
     crouchDepth: number,
+    hands?: HandLandmarksInput | null,
   ): LiveBodyPose {
     const ls = w[11]!
     const rs = w[12]!
@@ -800,12 +916,15 @@ export class UltraGestureRecognizer {
       return mpDirToWorld(a, b, 0.92)
     }
 
+    const fingersL = extractHandFingers(hands?.leftWorld, hands?.left, true)
+    const fingersR = extractHandFingers(hands?.rightWorld, hands?.right, false)
+
     const upperArmL = dirIfVisible(11, 13, 0.34, 0.28)
     const lowerArmL = dirIfVisible(13, 15, 0.28, 0.22)
-    const handL = dirIfVisible(15, 19, 0.24, 0.18)
+    const handL = fingersL?.handDir ?? dirIfVisible(15, 19, 0.24, 0.18)
     const upperArmR = dirIfVisible(12, 14, 0.34, 0.28)
     const lowerArmR = dirIfVisible(14, 16, 0.28, 0.22)
-    const handR = dirIfVisible(16, 20, 0.24, 0.18)
+    const handR = fingersR?.handDir ?? dirIfVisible(16, 20, 0.24, 0.18)
 
     const thighL = hasHips ? dirIfVisible(23, 25, 0.42, 0.42) : null
     const shinL = thighL ? dirIfVisible(25, 27, 0.42, 0.38) : null
@@ -834,6 +953,8 @@ export class UltraGestureRecognizer {
       shinL,
       thighR,
       shinR,
+      fingersL,
+      fingersR,
       beamArmSide: 'right',
     }
   }
