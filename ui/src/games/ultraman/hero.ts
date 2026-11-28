@@ -9,9 +9,17 @@ const tmpV2 = new THREE.Vector3()
 const tmpV3 = new THREE.Vector3()
 const tmpV4 = new THREE.Vector3()
 const tmpV5 = new THREE.Vector3()
+const tmpV6 = new THREE.Vector3()
+const tmpV7 = new THREE.Vector3()
+const tmpV8 = new THREE.Vector3()
+const tmpV9 = new THREE.Vector3()
+const tmpV10 = new THREE.Vector3()
 const tmpQ1 = new THREE.Quaternion()
 const tmpQ2 = new THREE.Quaternion()
 const tmpQ3 = new THREE.Quaternion()
+const tmpQ4 = new THREE.Quaternion()
+const tmpQ5 = new THREE.Quaternion()
+const tmpQ6 = new THREE.Quaternion()
 
 function lerpArenaVec(
   target: THREE.Vector3,
@@ -28,11 +36,27 @@ function lerpArenaVec(
 
 /**
  * 四阶段武术发力曲线（Anticipation 蓄势反拉 → Snap 爆发突刺 → Hit-Hold 极点滞留 → Follow-through 惯性收招）
- * - phase: [0, 1] 动作进度
- * - 返回 extend ∈ [-0.28, 1.0]（负值为反拉蓄力段，正值最高 1.0 为击打极点）
+ * - skipAnticipation: 摄像头体感出拳时玩家本人已完成蓄力，直接零反拉爆发突刺，消除“拳打出去了角色先缩手”的别扭感
  */
-function evalStrikeCurve(progress: number): { extend: number; anticipation: number; snap: number } {
+function evalStrikeCurve(
+  progress: number,
+  skipAnticipation = false,
+): { extend: number; anticipation: number; snap: number } {
   const p = THREE.MathUtils.clamp(progress, 0, 1)
+  if (skipAnticipation) {
+    if (p < 0.16) {
+      const t = p / 0.16
+      const ease = 1 - Math.pow(1 - t, 3)
+      return { extend: ease, anticipation: 0, snap: ease }
+    }
+    if (p < 0.34) {
+      const t = (p - 0.16) / 0.18
+      return { extend: 1 - t * 0.04, anticipation: 0, snap: 1 }
+    }
+    const t = (p - 0.34) / 0.66
+    const rec = Math.cos(t * Math.PI * 0.5)
+    return { extend: rec * 0.96, anticipation: 0, snap: rec }
+  }
   if (p < 0.14) {
     const t = p / 0.14
     const pull = Math.sin(t * Math.PI)
@@ -193,6 +217,7 @@ export class HeroController {
   private action: HeroAction = 'idle'
   private actionTime = 0
   private actionDuration = 0.35
+  private actionInstant = false
   private beamChargeVisual = 0
   private discChargeVisual = 0
   private discChargeSide: 'left' | 'right' = 'right'
@@ -302,7 +327,7 @@ export class HeroController {
   public getStrikeContactInfo(): StrikeContactInfo {
     if (this.actionDuration <= 0) return { active: false, limb: null, progress: 0 }
     const p = THREE.MathUtils.clamp(this.actionTime / this.actionDuration, 0, 1)
-    const active = p >= 0.22 && p <= 0.42
+    const active = this.actionInstant ? p >= 0.08 && p <= 0.34 : p >= 0.22 && p <= 0.42
     switch (this.action) {
       case 'punch-left':
       case 'hook-left':
@@ -938,10 +963,11 @@ export class HeroController {
     return !!(this.livePose?.active && now - this.lastLivePoseTime < 650)
   }
 
-  public triggerAction(action: HeroAction, duration: number) {
+  public triggerAction(action: HeroAction, duration: number, instant = false) {
     this.action = action
     this.actionTime = 0
     this.actionDuration = duration
+    this.actionInstant = instant
     if (action === 'victory') {
       this.victoryAscent = 0
     }
@@ -953,6 +979,7 @@ export class HeroController {
   public resetPose() {
     this.action = 'idle'
     this.actionTime = 0
+    this.actionInstant = false
     this.currentX = 0
     this.targetX = 0
     this.lateralSpeed = 0
@@ -1052,30 +1079,33 @@ export class HeroController {
     arenaNormal?: THREE.Vector3,
   ) {
     const s = this.sideSign
-    const worldDir = new THREE.Vector3(arenaDir.x * s, arenaDir.y, arenaDir.z * s)
-    const worldNormal = arenaNormal
-      ? new THREE.Vector3(arenaNormal.x * s, arenaNormal.y, arenaNormal.z * s)
-      : undefined
-    this.aimBoneWorld(boneName, worldDir, weight, worldNormal)
+    tmpV6.set(arenaDir.x * s, arenaDir.y, arenaDir.z * s)
+    if (arenaNormal) {
+      tmpV7.set(arenaNormal.x * s, arenaNormal.y, arenaNormal.z * s)
+      this.aimBoneWorld(boneName, tmpV6, weight, tmpV7)
+    } else {
+      this.aimBoneWorld(boneName, tmpV6, weight)
+    }
   }
 
-  /** 根据肘弯平面构造大臂肘背法线（同时用于动捕与武术程序动画，杜绝肩膀三角肌拧扯） */
+  /** 根据肘弯平面构造大臂肘背法线（零 GC 复用临时向量，杜绝肩膀三角肌拧扯） */
   private computeElbowBackNormalArena(
     upperArena: THREE.Vector3,
     lowerArena: THREE.Vector3,
     side: 'L' | 'R',
+    out: THREE.Vector3,
   ): THREE.Vector3 {
-    const u = upperArena.clone().normalize()
-    const l = lowerArena.clone().normalize()
+    tmpV8.copy(upperArena).normalize()
+    tmpV9.copy(lowerArena).normalize()
     const sideOut = side === 'L' ? -0.32 : 0.32
-    const fallback = new THREE.Vector3(sideOut, -0.45, 0.82).normalize()
-    const bendBack = l.clone().negate()
-    bendBack.addScaledVector(u, -bendBack.dot(u))
-    const sinLen = bendBack.length()
-    if (sinLen < 0.16) return fallback
-    bendBack.divideScalar(sinLen)
+    out.set(sideOut, -0.45, 0.82).normalize()
+    tmpV10.copy(tmpV9).negate()
+    tmpV10.addScaledVector(tmpV8, -tmpV10.dot(tmpV8))
+    const sinLen = tmpV10.length()
+    if (sinLen < 0.16) return out
+    tmpV10.divideScalar(sinLen)
     const blend = THREE.MathUtils.clamp((sinLen - 0.16) / 0.34, 0, 1)
-    return fallback.lerp(bendBack, blend).normalize()
+    return out.lerp(tmpV10, blend).normalize()
   }
 
   /** 统一驱动完整单侧臂链（锁骨联动 → 大臂含肘背法线防拧 → 前臂含掌心旋正 → 顺手腕） */
@@ -1090,15 +1120,14 @@ export class HeroController {
     if (!this.profile) return
     const b = this.profile.bones
     const s = this.sideSign
-    const uNorm = upperArena.clone().normalize()
-    const lNorm = lowerArena.clone().normalize()
-    const upperWorld = new THREE.Vector3(uNorm.x * s, uNorm.y, uNorm.z * s)
-    this.driveCollarForArm(side === 'L' ? b.collarL : b.collarR, side, upperWorld)
+    const uNorm = tmpV8.copy(upperArena).normalize()
+    tmpV6.set(uNorm.x * s, uNorm.y, uNorm.z * s)
+    this.driveCollarForArm(side === 'L' ? b.collarL : b.collarR, side, tmpV6)
 
-    const elbowBack = this.computeElbowBackNormalArena(uNorm, lNorm, side)
-    this.aimBoneArena(side === 'L' ? b.upperArmL : b.upperArmR, uNorm, 1, elbowBack)
-    this.aimBoneArena(side === 'L' ? b.lowerArmL : b.lowerArmR, lNorm, 1, palmArena)
-    this.aimBoneArena(side === 'L' ? b.handL : b.handR, lNorm, 0.55, palmArena)
+    const elbowBack = this.computeElbowBackNormalArena(upperArena, lowerArena, side, tmpV9)
+    this.aimBoneArena(side === 'L' ? b.upperArmL : b.upperArmR, upperArena, 1, elbowBack)
+    this.aimBoneArena(side === 'L' ? b.lowerArmL : b.lowerArmR, lowerArena, 1, palmArena)
+    this.aimBoneArena(side === 'L' ? b.handL : b.handR, lowerArena, 0.55, palmArena)
     this.curlHandFingers(side, {
       thumb: curlAmount,
       index: curlAmount,
@@ -1117,13 +1146,13 @@ export class HeroController {
     bone.updateWorldMatrix(true, false)
 
     const s = this.sideSign
-    const qYaw = new THREE.Quaternion().setFromAxisAngle(tmpV1.set(0, 1, 0), yaw)
-    const qPitch = new THREE.Quaternion().setFromAxisAngle(tmpV2.set(s, 0, 0), -pitch)
-    const qRoll = new THREE.Quaternion().setFromAxisAngle(tmpV3.set(0, 0, s), roll)
-    const deltaWorldQ = qYaw.multiply(qPitch).multiply(qRoll)
+    tmpQ4.setFromAxisAngle(tmpV1.set(0, 1, 0), yaw)
+    tmpQ5.setFromAxisAngle(tmpV2.set(s, 0, 0), -pitch)
+    tmpQ6.setFromAxisAngle(tmpV3.set(0, 0, s), roll)
+    tmpQ4.multiply(tmpQ5).multiply(tmpQ6)
 
     const curWorldQ = bone.getWorldQuaternion(tmpQ1)
-    const targetWorldQ = deltaWorldQ.multiply(curWorldQ)
+    const targetWorldQ = tmpQ4.multiply(curWorldQ)
     const parentInv = bone.parent.getWorldQuaternion(tmpQ2).invert()
     bone.quaternion.copy(parentInv.multiply(targetWorldQ))
     bone.updateWorldMatrix(false, true)
@@ -1194,7 +1223,7 @@ export class HeroController {
 
   private alignStandingFeetAndGround(extraJumpY = 0) {
     if (!this.profile || !this.model) return
-    const rootWorldQ = this.root.getWorldQuaternion(new THREE.Quaternion())
+    const rootWorldQ = this.root.getWorldQuaternion(tmpQ4)
 
     for (const [side, footName] of [
       ['L', this.profile.bones.footL],
@@ -1204,9 +1233,9 @@ export class HeroController {
       const relQ = this.footRestRelQuats.get(side)
       if (!footBone || !relQ || !footBone.parent) continue
       footBone.parent.updateWorldMatrix(true, false)
-      const desiredWorldQ = rootWorldQ.clone().multiply(relQ)
+      tmpQ5.copy(rootWorldQ).multiply(relQ)
       const parentInv = footBone.parent.getWorldQuaternion(tmpQ1).invert()
-      footBone.quaternion.copy(parentInv.multiply(desiredWorldQ))
+      footBone.quaternion.copy(parentInv.multiply(tmpQ5))
       footBone.updateWorldMatrix(false, true)
     }
 
@@ -1219,7 +1248,9 @@ export class HeroController {
     const footR = this.logical.get('footR')
     if (footL && footR) {
       this.model.position.y = this.modelBaseY
-      this.root.updateMatrixWorld(true)
+      this.model.updateMatrixWorld(false)
+      footL.updateWorldMatrix(true, false)
+      footR.updateWorldMatrix(true, false)
       const minFootY = Math.min(
         footL.getWorldPosition(tmpV1).y,
         footR.getWorldPosition(tmpV2).y,
@@ -1392,8 +1423,15 @@ export class HeroController {
     )
   }
 
-  private applyBoneSmoothing(dt: number, fastAction: boolean, gentleReturn = 0) {
-    const rate = fastAction ? 32 : THREE.MathUtils.lerp(22, 11, THREE.MathUtils.clamp(gentleReturn, 0, 1))
+  private applyBoneSmoothing(dt: number, fastAction: boolean, gentleReturn = 0, liveMode = false) {
+    // 实时动捕取消过重的第三层阻尼（拉高至 44），告别“抬手慢半拍”的黏滞延迟
+    const rate = liveMode
+      ? THREE.MathUtils.lerp(44, 24, THREE.MathUtils.clamp(gentleReturn, 0, 1))
+      : fastAction
+        ? this.actionInstant
+          ? 52
+          : 34
+        : 24
     const alpha = 1 - Math.exp(-Math.max(0.001, dt) * rate)
     for (const [bone, prevQ] of this.smoothBoneQuats) {
       prevQ.slerp(bone.quaternion, alpha)
@@ -1416,7 +1454,7 @@ export class HeroController {
       return { z: 0, y: 0 }
     }
     const progress = THREE.MathUtils.clamp(this.actionTime / this.actionDuration, 0, 1)
-    const { extend } = evalStrikeCurve(progress)
+    const { extend } = evalStrikeCurve(progress, this.actionInstant)
     const burst = Math.max(0, extend)
 
     if (
@@ -1579,7 +1617,7 @@ export class HeroController {
 
     const useMartial = this.isMartialOverrideAction()
     if (this.wasMartial && !useMartial) {
-      this.postMartialBlend = 0.26
+      this.postMartialBlend = 0.12
     }
     this.wasMartial = useMartial
     if (!useMartial && this.postMartialBlend > 0) {
@@ -1588,7 +1626,7 @@ export class HeroController {
 
     if (!useMartial && this.isLiveTracking(nowMs) && this.livePose) {
       this.applyLiveBodyPose(this.livePose, inputDt, elapsedTime)
-      this.applyBoneSmoothing(inputDt, false, this.postMartialBlend / 0.26)
+      this.applyBoneSmoothing(inputDt, false, this.postMartialBlend / 0.12, true)
       return
     }
 
@@ -1755,7 +1793,8 @@ export class HeroController {
   private applyLiveBodyPose(pose: LiveBodyPose, dt: number, elapsedTime: number) {
     if (!this.profile || !this.model) return
     const b = this.profile.bones
-    const baseRate = 22
+    // 提速动捕向量跟随基频（由 22 提至 38），消除手挥出后的拖拽滞后感
+    const baseRate = 38
     const alpha = 1 - Math.exp(-dt * baseRate)
     const s = this.sideSign
     const adaptiveAlpha = (cur: THREE.Vector3, target: Vec3Like | null, fallback: number) => {
@@ -1763,11 +1802,11 @@ export class HeroController {
       tmpV1.set(target.x * s, target.y, target.z * s).normalize()
       if (tmpV1.lengthSq() < 1e-6) return fallback
       const change = 1 - Math.min(1, Math.max(-1, cur.dot(tmpV1)))
-      const rate = baseRate + Math.min(78, Math.max(0, change - 0.0012) * 1700)
+      const rate = baseRate + Math.min(95, Math.max(0, change - 0.001) * 1900)
       return 1 - Math.exp(-dt * rate)
     }
 
-    // 英雄体态美化：抑制含胸（前倾偏置 -0.05，令背脊微挺）并限制夸张歪身
+    // 英雄体态美化：抑制含胸并限制夸张歪身
     const heroPitchTarget = THREE.MathUtils.clamp(pose.torsoPitch * 0.85 + 0.04, -0.28, 0.42)
     const heroRollTarget = THREE.MathUtils.clamp(pose.torsoRoll * 0.78, -0.34, 0.34)
     const heroYawTarget = THREE.MathUtils.clamp(pose.torsoYaw * 0.92, -0.68, 0.68)
@@ -1781,31 +1820,37 @@ export class HeroController {
     this.smJumpHeight = THREE.MathUtils.lerp(this.smJumpHeight, pose.jumpHeight, alpha)
     this.smCrouchDepth = THREE.MathUtils.lerp(this.smCrouchDepth, pose.crouchDepth, alpha)
 
-    // 手臂体态美化：当大臂自然下垂紧贴肋部时微幅外开，保持特摄宽肩英雄气场
+    // 手臂体态美化与深度安全夹紧：防单目 Z 噪声把手臂折进背后或胸甲穿模
     const beautifyUpperArm = (v: Vec3Like | null, side: 'L' | 'R'): Vec3Like | null => {
       if (!v) return null
+      const safeZ = THREE.MathUtils.clamp(v.z, -1, 0.42)
       const outX = side === 'L' ? -0.14 : 0.14
       const relaxedDown = v.y < -0.78 && Math.abs(v.x) < 0.25
-      if (!relaxedDown) return v
-      return { x: v.x + outX, y: v.y * 0.92, z: v.z - 0.18 }
+      if (relaxedDown) {
+        return { x: v.x + outX, y: v.y * 0.92, z: Math.min(safeZ, -0.18) }
+      }
+      return safeZ === v.z ? v : { x: v.x, y: v.y, z: safeZ }
+    }
+    const clampLowerArm = (v: Vec3Like | null): Vec3Like | null => {
+      if (!v) return null
+      const safeZ = THREE.MathUtils.clamp(v.z, -1, 0.38)
+      return safeZ === v.z ? v : { x: v.x, y: v.y, z: safeZ }
     }
 
     const uL = beautifyUpperArm(pose.upperArmL, 'L')
+    const lL = clampLowerArm(pose.lowerArmL)
     const uR = beautifyUpperArm(pose.upperArmR, 'R')
+    const lR = clampLowerArm(pose.lowerArmR)
 
     if (uL) lerpArenaVec(this.smUpperL, uL, adaptiveAlpha(this.smUpperL, uL, alpha), s)
-    if (pose.lowerArmL)
-      lerpArenaVec(this.smLowerL, pose.lowerArmL, adaptiveAlpha(this.smLowerL, pose.lowerArmL, alpha), s)
-    if (pose.handL)
-      lerpArenaVec(this.smHandL, pose.handL, adaptiveAlpha(this.smHandL, pose.handL, alpha), s)
-    else if (pose.lowerArmL) lerpArenaVec(this.smHandL, pose.lowerArmL, alpha, s)
+    if (lL) lerpArenaVec(this.smLowerL, lL, adaptiveAlpha(this.smLowerL, lL, alpha), s)
+    if (pose.handL) lerpArenaVec(this.smHandL, pose.handL, adaptiveAlpha(this.smHandL, pose.handL, alpha), s)
+    else if (lL) lerpArenaVec(this.smHandL, lL, alpha, s)
 
     if (uR) lerpArenaVec(this.smUpperR, uR, adaptiveAlpha(this.smUpperR, uR, alpha), s)
-    if (pose.lowerArmR)
-      lerpArenaVec(this.smLowerR, pose.lowerArmR, adaptiveAlpha(this.smLowerR, pose.lowerArmR, alpha), s)
-    if (pose.handR)
-      lerpArenaVec(this.smHandR, pose.handR, adaptiveAlpha(this.smHandR, pose.handR, alpha), s)
-    else if (pose.lowerArmR) lerpArenaVec(this.smHandR, pose.lowerArmR, alpha, s)
+    if (lR) lerpArenaVec(this.smLowerR, lR, adaptiveAlpha(this.smLowerR, lR, alpha), s)
+    if (pose.handR) lerpArenaVec(this.smHandR, pose.handR, adaptiveAlpha(this.smHandR, pose.handR, alpha), s)
+    else if (lR) lerpArenaVec(this.smHandR, lR, alpha, s)
 
     if (pose.thighL)
       lerpArenaVec(this.smThighL, pose.thighL, adaptiveAlpha(this.smThighL, pose.thighL, alpha), s)
@@ -2034,7 +2079,7 @@ export class HeroController {
     const progress =
       this.actionDuration > 0 ? THREE.MathUtils.clamp(this.actionTime / this.actionDuration, 0, 1) : 0
     const snapArc = Math.sin(progress * Math.PI)
-    const { extend: strikeExtend, snap: strikeSnap } = evalStrikeCurve(progress)
+    const { extend: strikeExtend, snap: strikeSnap } = evalStrikeCurve(progress, this.actionInstant)
     const strikePos = Math.max(0, strikeExtend)
 
     // 关键改进：脚底 rootYaw 仅用于整体转身演出（transform / 360° 旋风踢），普通出拳不再拧脚搓地！

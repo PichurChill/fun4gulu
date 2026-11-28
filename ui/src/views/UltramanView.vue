@@ -246,7 +246,10 @@ const floatTimers = new Map<number, number>()
 poseTracker.onPoses = (poses, now, width, height) => {
   const primary = poses[0] ?? null
   if (width > 0 && height > 0) {
-    camAspect.value = width / height
+    const nextAspect = width / height
+    if (Math.abs(camAspect.value - nextAspect) > 0.01) {
+      camAspect.value = nextAspect
+    }
   }
   const canvas = poseCanvasRef.value
   if (canvas) {
@@ -720,7 +723,24 @@ onMounted(() => {
 
   engine = new UltramanGameEngine(stageRef.value, {
     onHudUpdate: (next) => {
-      Object.assign(hud, next)
+      // 逐键差异更新，避免未变化字段高频触发 Vue 响应式重排
+      const target = hud as unknown as Record<string, unknown>
+      const source = next as unknown as Record<string, unknown>
+      for (const key of Object.keys(source)) {
+        const val = source[key]
+        if (Array.isArray(val)) {
+          const prev = target[key]
+          if (
+            !Array.isArray(prev) ||
+            prev.length !== val.length ||
+            val.some((v, idx) => v !== prev[idx])
+          ) {
+            target[key] = val
+          }
+        } else if (target[key] !== val) {
+          target[key] = val
+        }
+      }
     },
     onFloatingText: (evt) => {
       floatingEvents.value.push(evt)

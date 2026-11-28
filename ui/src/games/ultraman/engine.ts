@@ -60,6 +60,7 @@ interface BufferedCombatInput {
   power: number
   height: StrikeHeight
   jumping?: boolean
+  instant?: boolean
   expiresAt: number
 }
 
@@ -225,6 +226,9 @@ export class UltramanGameEngine {
 
   private paused = false
   private viewportAspect = 16 / 9
+  private useBloom = true
+  private smoothFrameMs = 16.7
+  private slowFrameTime = 0
   private readonly resizeObserver: ResizeObserver
 
   constructor(container: HTMLElement, callbacks: EngineCallbacks) {
@@ -248,23 +252,28 @@ export class UltramanGameEngine {
     const isTouchDevice =
       typeof window !== 'undefined' &&
       (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window)
-    const dpr = Math.min(window.devicePixelRatio || 1, isTouchDevice ? 1.35 : 1.5)
+    const dpr = Math.min(window.devicePixelRatio || 1, isTouchDevice ? 1.15 : 1.25)
     this.renderer.setPixelRatio(dpr)
     this.renderer.setSize(w, h)
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.02
 
     container.appendChild(this.renderer.domElement)
 
-    // 选择性 Bloom 后处理管线（阈值 0.96 仅让高能光效与复眼辉光，绝不泛白起雾）
+    // 半分辨率选择性 Bloom 后处理管线（GPU 像素填充开销直降 75%，同时保留高能光效辉光）
     this.composer = new EffectComposer(this.renderer)
     this.composer.setPixelRatio(dpr)
     this.composer.setSize(w, h)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.26, 0.96)
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(Math.max(1, Math.floor(w * 0.5)), Math.max(1, Math.floor(h * 0.5))),
+      0.24,
+      0.26,
+      0.96,
+    )
     this.composer.addPass(this.bloomPass)
     this.composer.addPass(new OutputPass())
 
@@ -281,7 +290,8 @@ export class UltramanGameEngine {
   }
 
   public getSnapshotCanvas(): HTMLCanvasElement {
-    this.composer.render()
+    if (this.useBloom) this.composer.render()
+    else this.renderer.render(this.scene, this.camera)
     return this.renderer.domElement
   }
 
@@ -294,7 +304,7 @@ export class UltramanGameEngine {
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(w, h)
     this.composer.setSize(w, h)
-    this.bloomPass.setSize(w, h)
+    this.bloomPass.setSize(Math.max(1, Math.floor(w * 0.5)), Math.max(1, Math.floor(h * 0.5)))
   }
 
   public async setSceneTheme(theme: SceneTheme, previewWaveIndex?: number) {
@@ -912,6 +922,7 @@ export class UltramanGameEngine {
         power: 0.95,
         height: 'high',
         jumping: true,
+        instant: true,
         expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
       })
     } else if (snap.typeTrigger) {
@@ -923,6 +934,7 @@ export class UltramanGameEngine {
         style: 'palm',
         power: 1,
         height: 'mid',
+        instant: true,
         expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
       })
     } else if (snap.discTrigger) {
@@ -932,6 +944,7 @@ export class UltramanGameEngine {
         style: 'chop',
         power: 0.9,
         height: 'mid',
+        instant: true,
         expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
       })
     } else if (physicalKick) {
@@ -942,6 +955,7 @@ export class UltramanGameEngine {
         power: 0.92,
         height: 'mid',
         jumping: false,
+        instant: true,
         expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
       })
     } else if (snap.punch) {
@@ -951,6 +965,7 @@ export class UltramanGameEngine {
         style: snap.punchStyle,
         power: snap.punchPower,
         height: snap.punchHeight,
+        instant: true,
         expiresAt: this.elapsedTime + INPUT_BUFFER_WINDOW,
       })
     }
@@ -1133,12 +1148,12 @@ export class UltramanGameEngine {
     if (this.effects.isHeroBeamActive()) return false
     if (input.kind === 'punch') {
       if (this.punchCooldown > 0) return false
-      this.executePunch(input.side, input.style, input.power, input.height)
+      this.executePunch(input.side, input.style, input.power, input.height, !!input.instant)
       return true
     }
     if (input.kind === 'kick') {
       if (this.kickCooldown > 0) return false
-      this.executeKick(input.side, !!input.jumping)
+      this.executeKick(input.side, !!input.jumping, !!input.instant)
       return true
     }
     if (input.kind === 'disc') {
@@ -1250,6 +1265,7 @@ export class UltramanGameEngine {
     style: PunchStyle = 'jab',
     power = 0.78,
     height: StrikeHeight = 'mid',
+    instant = false,
   ) {
     if (this.effects.isHeroBeamActive() || this.punchCooldown > 0) return
 
@@ -1257,7 +1273,7 @@ export class UltramanGameEngine {
     const distZ = this.hero.root.position.z - this.kaiju.getFrontSurfaceZ()
     if (this.battleStage === 'ranged' || (style === 'palm' && distZ > 9.0)) {
       this.punchCooldown = RANGED_PALM_COOLDOWN
-      this.hero.triggerAction(side === 'left' ? 'palm-left' : 'palm-right', 0.32)
+      this.hero.triggerAction(side === 'left' ? 'palm-left' : 'palm-right', instant ? 0.24 : 0.32, instant)
       if (this.deflectNearbyFireballs(6.8)) {
         this.emitHud()
         return
@@ -1272,8 +1288,8 @@ export class UltramanGameEngine {
       return
     }
 
-    // 近身真实 1:1 格斗出拳：不发隔空甜甜圈，交由真实接触帧窗口引爆！
-    this.punchCooldown = MELEE_PUNCH_COOLDOWN
+    // 近身真实 1:1 格斗出拳：体感出拳跳过反拉并压缩时长，打完瞬间交还实时动捕
+    this.punchCooldown = instant ? 0.19 : MELEE_PUNCH_COOLDOWN
     this.punchChain = this.chainTimeLeft > 0 && this.lastPunchSide !== side ? this.punchChain + 1 : 1
     const isFinisher = this.punchChain >= 3 || style === 'uppercut'
     if (this.punchChain >= 3) this.punchChain = 3
@@ -1281,7 +1297,7 @@ export class UltramanGameEngine {
     this.chainTimeLeft = isFinisher ? 0 : 1.85
 
     const mapped = this.mapPunchToHeroAction(side, style, isFinisher)
-    this.hero.triggerAction(mapped.action, mapped.dur)
+    this.hero.triggerAction(mapped.action, instant ? mapped.dur * 0.76 : mapped.dur, instant)
     if (isFinisher) this.fovKick = -2.8
 
     const slashCenter = new THREE.Vector3(
@@ -1327,11 +1343,12 @@ export class UltramanGameEngine {
     this.emitHud()
   }
 
-  private executeKick(side: 'left' | 'right', jumping = false) {
+  private executeKick(side: 'left' | 'right', jumping = false, instant = false) {
     if (this.effects.isHeroBeamActive() || this.kickCooldown > 0) return
     this.kickCooldown = KICK_MIN_COOLDOWN
     const action = jumping ? 'jump-kick' : side === 'left' ? 'kick-left' : 'kick-right'
-    this.hero.triggerAction(action, jumping ? 0.56 : 0.46)
+    const dur = jumping ? (instant ? 0.44 : 0.56) : instant ? 0.36 : 0.46
+    this.hero.triggerAction(action, dur, instant)
     this.fovKick = jumping ? -3.6 : -2.6
     this.deflectNearbyFireballs(6.6)
 
@@ -2100,10 +2117,25 @@ export class UltramanGameEngine {
     if (this.disposed) return
     this.rafId = requestAnimationFrame(this.loop)
 
-    const rawDt = Math.min(0.05, Math.max(0.001, (now - this.lastTimestamp) / 1000))
+    const deltaMs = now - this.lastTimestamp
+    const rawDt = Math.min(0.05, Math.max(0.001, deltaMs / 1000))
     this.lastTimestamp = now
     if (this.paused) return
     this.elapsedTime += rawDt
+
+    // 自适应帧率护航：若连续 1.5s 帧率跌破 ~32fps，自动降级为直出渲染并收敛 DPR 至 1.0，杜绝卡顿
+    if (deltaMs > 1 && deltaMs < 180) {
+      this.smoothFrameMs = this.smoothFrameMs * 0.9 + deltaMs * 0.1
+      if (this.useBloom && this.smoothFrameMs > 31) {
+        this.slowFrameTime += rawDt
+        if (this.slowFrameTime > 1.5) {
+          this.useBloom = false
+          this.renderer.setPixelRatio(1)
+        }
+      } else {
+        this.slowFrameTime = Math.max(0, this.slowFrameTime - rawDt * 0.5)
+      }
+    }
 
     // 分层顿帧与完美闪避子弹时间流速调度
     let dt = rawDt
@@ -2118,7 +2150,11 @@ export class UltramanGameEngine {
     }
 
     this.stepSimulation(dt, rawDt, now)
-    this.composer.render()
+    if (this.useBloom) {
+      this.composer.render()
+    } else {
+      this.renderer.render(this.scene, this.camera)
+    }
   }
 
   private stepSimulation(dt: number, rawDt: number, nowMs: number) {
@@ -2244,10 +2280,10 @@ export class UltramanGameEngine {
       rawDt,
     )
 
-    // 站位校准阶段（追踪稳定且站距合适 1.3s 自动完成，或 3.8s 保底放行，亦可随时跳过）
+    // 极速站位校准（捕捉到人影 0.7s 自动完成，不再让玩家在开场干等，亦可随时一键跳过）
     if (this.phase === 'calibrating') {
       const good = this.gestureTracking && this.gestureDistanceHint === 'ok'
-      const rate = good ? 0.82 : this.gestureTracking ? 0.38 : 0.12
+      const rate = good ? 1.45 : this.gestureTracking ? 0.95 : 0.35
       this.calibrationProgress = Math.min(1, this.calibrationProgress + rawDt * rate)
       if (this.calibrationProgress >= 1) {
         if (this.gameMode === 'practice') {
@@ -2410,7 +2446,7 @@ export class UltramanGameEngine {
     this.updateCamera(rawDt)
 
     this.hudSyncAccumulator += rawDt
-    if (this.hudSyncAccumulator >= 0.05) {
+    if (this.hudSyncAccumulator >= 0.08) {
       this.hudSyncAccumulator = 0
       this.emitHud()
     }

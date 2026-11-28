@@ -18,8 +18,6 @@ const TASKS_VISION_URL =
 const TASKS_WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.3/wasm'
 const POSE_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
-const HAND_MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 
 interface TasksVisionModule {
   FilesetResolver: { forVisionTasks(path: string): Promise<unknown> }
@@ -127,12 +125,12 @@ class PoseLandmarkFilterBank {
 
   constructor() {
     for (let i = 0; i < 33; i++) {
-      // 四肢末端使用更高动态响应系数 beta，确保 30fps 摄像头短促直拳与快摆拳不被削峰
+      // 提高四肢末端截止频率，减少 24~30fps 摄像头下的跟手延迟与出拳削峰
       const isLimb = (i >= 13 && i <= 22) || (i >= 25 && i <= 32)
-      const minCutoff2D = isLimb ? 3.2 : 1.7
-      const beta2D = isLimb ? 34.0 : 10.5
-      const minCutoff3D = isLimb ? 2.8 : 1.5
-      const beta3D = isLimb ? 24.0 : 8.5
+      const minCutoff2D = isLimb ? 4.8 : 2.2
+      const beta2D = isLimb ? 48.0 : 14.0
+      const minCutoff3D = isLimb ? 4.2 : 1.9
+      const beta3D = isLimb ? 36.0 : 11.0
       this.filters2D.push([
         new OneEuroScalar(minCutoff2D, beta2D),
         new OneEuroScalar(minCutoff2D, beta2D),
@@ -280,9 +278,10 @@ class HandLandmarkFilterBank {
 }
 
 /**
- * 现代全身 + 精细双手姿态追踪器：
- * - MediaPipe PoseLandmarker (33 点全身 3D) + HandLandmarker (双手 42 点精细手指 3D) 协同运行
- * - 按推理耗时与战斗强度动态调整手部推理预算，保障 WebGL 主线程高帧率
+ * 低延迟全身姿态追踪器：
+ * - 专注单模型 MediaPipe PoseLandmarker (lite) 避免双神经网络争夺 WebGL GPU 导致主线程卡顿
+ * - 摄像头采用 480x360@30fps 匹配神经网络输入尺寸，大幅降低视频解码与纹理上传开销
+ * - 自适应推理帧预算调度：按单次推理耗时动态节流，把 70%+ 主线程时间留给 3D 渲染
  */
 export class UltraPoseTracker {
   private landmarker: PoseLandmarkerLike | null = null
@@ -292,6 +291,8 @@ export class UltraPoseTracker {
   private rafId = 0
   private lastVideoTime = -1
   private lastDetectTimestamp = 0
+  private lastInferAt = -Infinity
+  private smoothInferMs = 8
   private filterBanks: [PoseLandmarkFilterBank, PoseLandmarkFilterBank] = [
     new PoseLandmarkFilterBank(),
     new PoseLandmarkFilterBank(),
@@ -302,15 +303,13 @@ export class UltraPoseTracker {
   private lastValidTime = -Infinity
   private lastLeftHand: { lm: PoseLandmark[]; world: PoseLandmark[]; time: number } | null = null
   private lastRightHand: { lm: PoseLandmark[]; world: PoseLandmark[]; time: number } | null = null
-  private lastHandInferAt = -Infinity
-  private handMinIntervalMs = 24
   private highIntensityCombat = false
 
   public onPoses: ((poses: TrackedPose[], now: number, width: number, height: number) => void) | null =
     null
   public onError: ((error: unknown) => void) | null = null
 
-  /** 激烈肉搏期间适度放宽 HandLandmarker 节流间隔，保障 60fps 渲染不卡顿 */
+  /** 激烈肉搏期间优先保证 3D 渲染流畅度 */
   public setHighIntensityCombat(active: boolean) {
     this.highIntensityCombat = active
   }
@@ -326,22 +325,23 @@ export class UltraPoseTracker {
     this.lastValidTime = -Infinity
     this.lastLeftHand = null
     this.lastRightHand = null
-    this.lastHandInferAt = -Infinity
-    this.handMinIntervalMs = 24
+    this.lastInferAt = -Infinity
+    this.smoothInferMs = 8
 
     const isPortraitViewport =
       typeof window !== 'undefined' && window.innerHeight > window.innerWidth
-    const idealW = isPortraitViewport ? 480 : 640
-    const idealH = isPortraitViewport ? 640 : 480
+    // 480x360 @ 30fps 足以喂饱 pose_landmarker_lite(256x256)，大幅减轻视频上传与 GPU 争抢
+    const idealW = isPortraitViewport ? 360 : 480
+    const idealH = isPortraitViewport ? 480 : 360
 
     const openCameraStream = async (): Promise<MediaStream> => {
       try {
         return await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'user' },
-            width: { ideal: idealW },
-            height: { ideal: idealH },
-            frameRate: { ideal: 60, min: 24 },
+            width: { ideal: idealW, max: 640 },
+            height: { ideal: idealH, max: 480 },
+            frameRate: { ideal: 30, max: 30 },
           },
           audio: false,
         })
@@ -366,13 +366,10 @@ export class UltraPoseTracker {
     const baseOpts = {
       runningMode: 'VIDEO',
       numPoses: maxPoses,
-      minPoseDetectionConfidence: 0.36,
-      minPosePresenceConfidence: 0.36,
-      minTrackingConfidence: 0.36,
+      minPoseDetectionConfidence: 0.34,
+      minPosePresenceConfidence: 0.34,
+      minTrackingConfidence: 0.34,
     }
-
-    let landmarker: PoseLandmarkerLike
-    let handLandmarker: HandLandmarkerLike | null = null
 
     const createPose = async () => {
       try {
@@ -388,38 +385,12 @@ export class UltraPoseTracker {
       }
     }
 
-    const createHand = async (): Promise<HandLandmarkerLike | null> => {
-      if (maxPoses !== 1 || !vision.HandLandmarker) return null
-      const handOpts = {
-        runningMode: 'VIDEO',
-        numHands: 2,
-        minHandDetectionConfidence: 0.42,
-        minHandPresenceConfidence: 0.42,
-        minTrackingConfidence: 0.42,
-      }
-      try {
-        return await vision.HandLandmarker.createFromOptions(fileset, {
-          ...handOpts,
-          baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'GPU' },
-        })
-      } catch {
-        try {
-          return await vision.HandLandmarker.createFromOptions(fileset, {
-            ...handOpts,
-            baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'CPU' },
-          })
-        } catch (err) {
-          console.warn('[UltraPoseTracker] HandLandmarker 初始化失败，退回纯全身追踪:', err)
-          return null
-        }
-      }
-    }
-
-    ;[landmarker, handLandmarker] = await Promise.all([createPose(), createHand()])
+    // 停用昂贵的第二套 HandLandmarker 模型，消除双模型同步阻塞与 WebGL 管线卡顿
+    const landmarker = await createPose()
+    const handLandmarker: HandLandmarkerLike | null = null
 
     if (session !== this.session) {
       landmarker.close()
-      handLandmarker?.close()
       stream.getTracks().forEach((t) => t.stop())
       return
     }
@@ -438,7 +409,13 @@ export class UltraPoseTracker {
       this.rafId = requestAnimationFrame(loop)
       if (!this.landmarker || video.readyState < 2) return
       if (video.currentTime === this.lastVideoTime) return
+      const now = performance.now()
+      // 动态推理间隔预算：保证单帧 AI 耗时绝不压死 WebGL 渲染主循环
+      const baseFloor = this.highIntensityCombat ? 34 : 30
+      const budgetInterval = Math.min(85, Math.max(baseFloor, this.smoothInferMs * 2.25))
+      if (now - this.lastInferAt < budgetInterval) return
       this.lastVideoTime = video.currentTime
+      this.lastInferAt = now
       try {
         this.detectOnce(video)
       } catch (err) {
@@ -457,6 +434,8 @@ export class UltraPoseTracker {
     this.lastDetectTimestamp = ts
 
     const res = lm.detectForVideo(video, ts)
+    const inferMs = performance.now() - now
+    this.smoothInferMs = this.smoothInferMs * 0.78 + inferMs * 0.22
     const lmSets = res.landmarks ?? []
     const worldSets = res.worldLandmarks ?? []
     const rawPoses: TrackedPose[] = []
@@ -489,7 +468,7 @@ export class UltraPoseTracker {
     rawPoses.sort((a, b) => a.mirroredCenterX - b.mirroredCenterX)
 
     if (rawPoses.length === 0) {
-      if (this.lastValidPoses.length > 0 && now - this.lastValidTime <= 160) {
+      if (this.lastValidPoses.length > 0 && now - this.lastValidTime <= 180) {
         this.onPoses?.(this.lastValidPoses, now, video.videoWidth, video.videoHeight)
         return
       }
@@ -508,90 +487,6 @@ export class UltraPoseTracker {
         mirroredCenterX: 1 - (ls.x + rs.x) * 0.5,
       }
     })
-
-    // 单人模式下按自适应帧预算协同追踪双手 21 点精细手指
-    if (this.handLandmarker && filteredPoses.length === 1) {
-      const primary = filteredPoses[0]!
-      const effectiveInterval = this.highIntensityCombat
-        ? Math.max(46, this.handMinIntervalMs)
-        : this.handMinIntervalMs
-      if (now - this.lastHandInferAt >= effectiveInterval) {
-        this.lastHandInferAt = now
-        const t0 = performance.now()
-        try {
-          const handRes = this.handLandmarker.detectForVideo(video, ts)
-          const inferMs = performance.now() - t0
-          this.handMinIntervalMs = inferMs > 12 ? 44 : inferMs > 7 ? 26 : 16
-
-          const hLmSets = handRes.landmarks ?? []
-          const hWorldSets = handRes.worldLandmarks ?? []
-          const poseLW = primary.landmarks[15]
-          const poseRW = primary.landmarks[16]
-
-          let matchedL: { lm: PoseLandmark[]; world: PoseLandmark[]; dist: number } | null = null
-          let matchedR: { lm: PoseLandmark[]; world: PoseLandmark[]; dist: number } | null = null
-
-          for (let h = 0; h < hLmSets.length; h++) {
-            const rawH = hLmSets[h]
-            if (!rawH || rawH.length < 21) continue
-            const wrist = rawH[0]!
-            const distL =
-              poseLW && (poseLW.visibility ?? 1) > 0.15
-                ? Math.hypot(wrist.x - poseLW.x, wrist.y - poseLW.y)
-                : Infinity
-            const distR =
-              poseRW && (poseRW.visibility ?? 1) > 0.15
-                ? Math.hypot(wrist.x - poseRW.x, wrist.y - poseRW.y)
-                : Infinity
-
-            const h2d: PoseLandmark[] = rawH.map((p) => ({
-              x: p.x,
-              y: p.y,
-              z: p.z ?? 0,
-              visibility: 1,
-            }))
-            const wRaw = hWorldSets[h] ?? []
-            const h3d: PoseLandmark[] =
-              wRaw.length >= 21
-                ? wRaw.map((p) => ({ x: p.x, y: p.y, z: p.z ?? 0, visibility: 1 }))
-                : []
-
-            const assignLeft = distL <= distR
-            const bestDist = assignLeft ? distL : distR
-            if (bestDist > 0.28) continue
-            if (assignLeft) {
-              if (!matchedL || bestDist < matchedL.dist) {
-                matchedL = { lm: h2d, world: h3d, dist: bestDist }
-              }
-            } else {
-              if (!matchedR || bestDist < matchedR.dist) {
-                matchedR = { lm: h2d, world: h3d, dist: bestDist }
-              }
-            }
-          }
-
-          if (matchedL) {
-            const fl = this.handFilterL.apply(matchedL.lm, matchedL.world, now)
-            this.lastLeftHand = { lm: fl.landmarks, world: fl.worldLandmarks, time: now }
-          }
-          if (matchedR) {
-            const fr = this.handFilterR.apply(matchedR.lm, matchedR.world, now)
-            this.lastRightHand = { lm: fr.landmarks, world: fr.worldLandmarks, time: now }
-          }
-        } catch {
-          this.handMinIntervalMs = 60
-        }
-      }
-
-      if (this.lastLeftHand && now - this.lastLeftHand.time <= 240) {
-        primary.leftHandLandmarks = this.lastLeftHand.lm
-        primary.leftHandWorldLandmarks = this.lastLeftHand.world
-      }
-      if (this.lastRightHand && now - this.lastRightHand.time <= 240) {
-        primary.rightHandLandmarks = this.lastRightHand.lm
-        primary.rightHandWorldLandmarks = this.lastRightHand.world
-      }
-    }
 
     this.lastValidPoses = filteredPoses
     this.lastValidTime = now
@@ -775,16 +670,28 @@ export function drawTacticalSkeleton(
           (cue === 'punch-r' && (aIdx === 12 || aIdx === 14) && bIdx <= 16))
       const isKickSeg = isPrimary && cue === 'kick' && aIdx >= 23
 
-      ctx.strokeStyle = isPunchSeg || isKickSeg
+      const isActiveSeg = isPunchSeg || isKickSeg || (highlightArms && isArmSeg)
+      const segColor = isPunchSeg || isKickSeg
         ? '#fde047'
         : highlightArms && isArmSeg
           ? armHighlightColor
           : isPrimary && (cue === 'crouch' || cue === 'jump')
             ? '#4ade80'
             : theme.bone
-      ctx.lineWidth = isPunchSeg || isKickSeg || (highlightArms && isArmSeg) ? 3.8 : 2.3
-      ctx.shadowColor = ctx.strokeStyle
-      ctx.shadowBlur = isPunchSeg || isKickSeg || (highlightArms && isArmSeg) ? 12 : 5
+
+      // 零 shadowBlur 双层轻量描边：模拟荧光辉光同时避免 Canvas2D 软光栅高斯模糊卡顿
+      if (isActiveSeg) {
+        ctx.strokeStyle = segColor
+        ctx.globalAlpha = 0.28
+        ctx.lineWidth = 8.5
+        ctx.beginPath()
+        ctx.moveTo(a.x * width, a.y * height)
+        ctx.lineTo(b.x * width, b.y * height)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+      }
+      ctx.strokeStyle = segColor
+      ctx.lineWidth = isActiveSeg ? 3.6 : 2.2
       ctx.beginPath()
       ctx.moveTo(a.x * width, a.y * height)
       ctx.lineTo(b.x * width, b.y * height)
@@ -796,12 +703,10 @@ export function drawTacticalSkeleton(
       ctx.beginPath()
       ctx.strokeStyle = theme.joint
       ctx.lineWidth = 1.6
-      ctx.shadowBlur = 0
       ctx.arc(nose.x * width, nose.y * height, 6.2, 0, Math.PI * 2)
       ctx.stroke()
     }
 
-    ctx.shadowBlur = 0
     ctx.fillStyle = theme.joint
     for (const idx of [11, 12, 13, 14, 23, 24, 25, 26]) {
       const p = lms[idx]
@@ -811,7 +716,7 @@ export function drawTacticalSkeleton(
       ctx.fill()
     }
 
-    // 拳脚能量锚点：出招瞬间在对应手腕/脚踝爆出大号荧光冲击环
+    // 拳脚能量锚点：出招瞬间在对应手腕/脚踝爆出大号荧光冲击环（零 shadowBlur）
     for (const idx of [15, 16, 27, 28]) {
       const p = lms[idx]
       if (!p || (p.visibility ?? 1) < 0.28) continue
@@ -820,15 +725,19 @@ export function drawTacticalSkeleton(
         ((cue === 'punch-l' && idx === 15) ||
           (cue === 'punch-r' && idx === 16) ||
           (cue === 'kick' && (idx === 27 || idx === 28)))
+      if (burst) {
+        ctx.fillStyle = 'rgba(253, 224, 71, 0.32)'
+        ctx.beginPath()
+        ctx.arc(p.x * width, p.y * height, 11.5, 0, Math.PI * 2)
+        ctx.fill()
+      }
       ctx.fillStyle = burst ? '#ffffff' : theme.strike
-      ctx.shadowColor = burst ? '#fde047' : theme.strike
-      ctx.shadowBlur = burst ? 16 : 7
       ctx.beginPath()
-      ctx.arc(p.x * width, p.y * height, burst ? 6.5 : 4.0, 0, Math.PI * 2)
+      ctx.arc(p.x * width, p.y * height, burst ? 5.8 : 3.8, 0, Math.PI * 2)
       ctx.fill()
       if (burst) {
         ctx.strokeStyle = '#fde047'
-        ctx.lineWidth = 2.2
+        ctx.lineWidth = 2.0
         ctx.beginPath()
         ctx.arc(p.x * width, p.y * height, 13, 0, Math.PI * 2)
         ctx.stroke()
@@ -845,8 +754,6 @@ export function drawTacticalSkeleton(
         const progress = Math.max(0.15, Math.min(1, meta?.chargeProgress ?? 1))
         ctx.strokeStyle = armHighlightColor
         ctx.lineWidth = 2.6
-        ctx.shadowColor = armHighlightColor
-        ctx.shadowBlur = 10
         ctx.beginPath()
         ctx.arc(cx, cy, 18, -Math.PI * 0.5, -Math.PI * 0.5 + Math.PI * 2 * progress)
         ctx.stroke()
@@ -854,14 +761,12 @@ export function drawTacticalSkeleton(
     }
   })
 
-  // 绘制 21 点精细双手骨架与五指指尖荧光点
+  // 若存在手部精细关键点则轻量绘制
   if (hands && hands.length > 0) {
     for (const hand of hands) {
       if (!hand || hand.length < 21) continue
-      ctx.strokeStyle = 'rgba(250, 204, 21, 0.88)'
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.85)'
       ctx.lineWidth = 1.4
-      ctx.shadowColor = '#facc15'
-      ctx.shadowBlur = 4
       ctx.beginPath()
       for (const [aIdx, bIdx] of HAND_TACTICAL_LINKS) {
         const a = hand[aIdx]
@@ -872,7 +777,6 @@ export function drawTacticalSkeleton(
       }
       ctx.stroke()
 
-      ctx.shadowBlur = 0
       ctx.fillStyle = '#fef08a'
       for (const tipIdx of [4, 8, 12, 16, 20]) {
         const p = hand[tipIdx]

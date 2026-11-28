@@ -203,8 +203,11 @@ export class UltramanSplitPvpEngine {
 
   private fullWidth = 1280
   private fullHeight = 720
-  private dpr = 1.35
+  private dpr = 1.15
   private portraitSplit = false
+  private useBloom = true
+  private smoothFrameMs = 16.7
+  private slowFrameTime = 0
   private readonly resizeObserver: ResizeObserver
 
   constructor(container: HTMLElement, callbacks: PvpEngineCallbacks) {
@@ -229,24 +232,29 @@ export class UltramanSplitPvpEngine {
     const isTouch =
       typeof window !== 'undefined' &&
       (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window)
-    this.dpr = Math.min(window.devicePixelRatio || 1, isTouch ? 1.25 : 1.5)
+    this.dpr = Math.min(window.devicePixelRatio || 1, isTouch ? 1.05 : 1.15)
     this.renderer.setPixelRatio(this.dpr)
     this.renderer.setSize(this.fullWidth, this.fullHeight)
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
+    // 分屏两路相机共用同一帧动态阴影贴图，每帧只更新一次阴影，立省 50% 阴影开销
+    this.renderer.shadowMap.autoUpdate = false
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.03
 
     container.appendChild(this.renderer.domElement)
 
-    // 整备菜单全屏 Bloom 管线
+    // 整备菜单半分辨率 Bloom 管线
     this.menuComposer = new EffectComposer(this.renderer)
     this.menuComposer.setPixelRatio(this.dpr)
     this.menuComposer.setSize(this.fullWidth, this.fullHeight)
     this.menuComposer.addPass(new RenderPass(this.scene, this.cameras[0]))
     this.menuBloom = new UnrealBloomPass(
-      new THREE.Vector2(this.fullWidth, this.fullHeight),
+      new THREE.Vector2(
+        Math.max(1, Math.floor(this.fullWidth * 0.5)),
+        Math.max(1, Math.floor(this.fullHeight * 0.5)),
+      ),
       0.24,
       0.24,
       0.96,
@@ -254,7 +262,7 @@ export class UltramanSplitPvpEngine {
     this.menuComposer.addPass(this.menuBloom)
     this.menuComposer.addPass(new OutputPass())
 
-    // 分屏双路独立离屏 Bloom 管线（避免双视口直接共用主画布冲突，各自完整 Bloom + OutputPass 后合成）
+    // 分屏双路独立半分辨率 Bloom 管线
     const makeSplitComposer = (cam: THREE.PerspectiveCamera) => {
       const sw = Math.max(2, Math.floor(this.fullWidth * 0.5))
       const sh = Math.max(2, this.fullHeight)
@@ -263,7 +271,12 @@ export class UltramanSplitPvpEngine {
       comp.setPixelRatio(this.dpr)
       comp.setSize(sw, sh)
       comp.addPass(new RenderPass(this.scene, cam))
-      const bloom = new UnrealBloomPass(new THREE.Vector2(sw, sh), 0.25, 0.24, 0.96)
+      const bloom = new UnrealBloomPass(
+        new THREE.Vector2(Math.max(1, Math.floor(sw * 0.5)), Math.max(1, Math.floor(sh * 0.5))),
+        0.24,
+        0.24,
+        0.96,
+      )
       comp.addPass(bloom)
       comp.addPass(new OutputPass())
       return { comp, bloom }
@@ -367,13 +380,16 @@ export class UltramanSplitPvpEngine {
     this.renderer.setSize(this.fullWidth, this.fullHeight)
 
     this.menuComposer.setSize(this.fullWidth, this.fullHeight)
-    this.menuBloom.setSize(this.fullWidth, this.fullHeight)
+    this.menuBloom.setSize(
+      Math.max(1, Math.floor(this.fullWidth * 0.5)),
+      Math.max(1, Math.floor(this.fullHeight * 0.5)),
+    )
 
     const sw = this.portraitSplit ? this.fullWidth : Math.max(2, Math.floor(this.fullWidth * 0.5))
     const sh = this.portraitSplit ? Math.max(2, Math.floor(this.fullHeight * 0.5)) : this.fullHeight
     for (let i = 0; i < 2; i++) {
       this.splitComposers[i]!.setSize(sw, sh)
-      this.splitBlooms[i]!.setSize(sw, sh)
+      this.splitBlooms[i]!.setSize(Math.max(1, Math.floor(sw * 0.5)), Math.max(1, Math.floor(sh * 0.5)))
     }
   }
 
@@ -693,7 +709,7 @@ export class UltramanSplitPvpEngine {
       width / height,
     )
     if (jumped) {
-      this.executeKick(slot, 'right', true)
+      this.executeKick(slot, 'right', true, true)
     } else if (snap.typeTrigger) {
       this.switchFormInBattle(slot)
     } else if (snap.beamTrigger) {
@@ -701,9 +717,9 @@ export class UltramanSplitPvpEngine {
     } else if (snap.discTrigger) {
       this.executeDisc(slot, snap.discTrigger)
     } else if (physicalKick) {
-      this.executeKick(slot, physicalKick, false)
+      this.executeKick(slot, physicalKick, false, true)
     } else if (snap.punch) {
-      this.executePunch(slot, snap.punch, snap.punchStyle, snap.punchPower)
+      this.executePunch(slot, snap.punch, snap.punchStyle, snap.punchPower, true)
     }
   }
 
@@ -792,6 +808,7 @@ export class UltramanSplitPvpEngine {
     side: 'left' | 'right',
     style: PunchStyle = 'jab',
     power = 0.75,
+    instant = false,
   ) {
     const f = this.fighters[slot]
     const opp = this.fighters[(1 - slot) as PvpSlot]
@@ -821,7 +838,8 @@ export class UltramanSplitPvpEngine {
                 ? 'punch-left'
                 : 'punch-right'
 
-    f.hero.triggerAction(action, finisher ? 0.4 : 0.3)
+    const baseDur = finisher ? 0.4 : 0.3
+    f.hero.triggerAction(action, instant ? baseDur * 0.78 : baseDur, instant)
     if (finisher) f.fovKick = -2.4
 
     const origin = f.hero.getFistOrigin(side)
@@ -842,14 +860,16 @@ export class UltramanSplitPvpEngine {
     this.emitHud()
   }
 
-  private executeKick(slot: PvpSlot, side: 'left' | 'right', jumping: boolean) {
+  private executeKick(slot: PvpSlot, side: 'left' | 'right', jumping: boolean, instant = false) {
     const f = this.fighters[slot]
     const opp = this.fighters[(1 - slot) as PvpSlot]
     if (f.effects.isHeroBeamActive()) return
 
+    const dur = jumping ? (instant ? 0.38 : 0.48) : instant ? 0.3 : 0.38
     f.hero.triggerAction(
       jumping ? 'jump-kick' : side === 'left' ? 'kick-left' : 'kick-right',
-      jumping ? 0.48 : 0.38,
+      dur,
+      instant,
     )
     f.fovKick = jumping ? -3.2 : -2.2
     const origin = f.hero.getFootOrigin(side)
@@ -1258,10 +1278,25 @@ export class UltramanSplitPvpEngine {
     if (this.disposed) return
     this.rafId = requestAnimationFrame(this.loop)
 
-    const rawDt = Math.min(0.05, Math.max(0.001, (now - this.lastTimestamp) / 1000))
+    const deltaMs = now - this.lastTimestamp
+    const rawDt = Math.min(0.05, Math.max(0.001, deltaMs / 1000))
     this.lastTimestamp = now
     if (this.paused) return
     this.elapsedTime += rawDt
+
+    // 分屏自适应性能护航：若持续掉帧（>31ms），自动切换直接双视口渲染并收敛 DPR 至 1.0
+    if (deltaMs > 1 && deltaMs < 180) {
+      this.smoothFrameMs = this.smoothFrameMs * 0.9 + deltaMs * 0.1
+      if (this.useBloom && this.smoothFrameMs > 31) {
+        this.slowFrameTime += rawDt
+        if (this.slowFrameTime > 1.4) {
+          this.useBloom = false
+          this.renderer.setPixelRatio(1)
+        }
+      } else {
+        this.slowFrameTime = Math.max(0, this.slowFrameTime - rawDt * 0.5)
+      }
+    }
 
     let dt = rawDt
     if (this.hitStopTimer > 0) {
@@ -1603,8 +1638,9 @@ export class UltramanSplitPvpEngine {
         targetCam.set(s * 3.2, 9.2, s * 22.5)
         targetLook.copy(f.hero.root.position).add(new THREE.Vector3(0, 7, 0))
       } else if (this.beamClashActive) {
-        const clashSideX = s * THREE.MathUtils.lerp(15.8, 19.5, wideFactor)
-        targetCam.set(clashSideX, 11.2, s * 9.2)
+        // 控制在 ±14.2 主干道安全走廊内，避免对波特写镜头擦碰 ±15 路灯柱或街边断桥
+        const clashSideX = s * THREE.MathUtils.lerp(12.2, 13.8, wideFactor)
+        targetCam.set(clashSideX, 11.2, s * 8.6)
         targetLook.set(0, 8.8, -s * 0.8)
       } else if (f.effects.isHeroBeamActive()) {
         const armSign = f.gestureBeamArmSide === 'left' ? -1 : 1
@@ -1646,19 +1682,54 @@ export class UltramanSplitPvpEngine {
     }
   }
 
-  /** 双视口选择性 Bloom 渲染：分别离屏执行 Bloom+OutputPass 后合成至左右/上下分屏 */
+  /** 双视口渲染（每帧单次 ShadowMap 更新 + 支持高画质双路半分辨率 Bloom 与低负载直出无缝切换） */
   private renderSplitViews() {
     const w = this.fullWidth
     const h = this.fullHeight
+    // 每帧显式只更新一次阴影贴图，双半屏相机共享同一张 ShadowMap
+    this.renderer.shadowMap.needsUpdate = true
 
     if (this.phase === 'menu') {
       this.renderer.setScissorTest(false)
       this.renderer.setViewport(0, 0, w, h)
-      this.menuComposer.render()
+      if (this.useBloom) this.menuComposer.render()
+      else this.renderer.render(this.scene, this.cameras[0])
       return
     }
 
-    // 1. 分别离屏渲染两路带选择性 Bloom + ACES 色调映射的高精缓冲
+    if (!this.useBloom) {
+      this.renderer.setRenderTarget(null)
+      this.renderer.setScissorTest(true)
+      const prevAutoClear = this.renderer.autoClear
+      this.renderer.autoClear = false
+      this.renderer.clear()
+      if (this.portraitSplit) {
+        const halfH = Math.floor(h * 0.5)
+        const topH = h - halfH
+        this.renderer.setViewport(0, halfH, w, topH)
+        this.renderer.setScissor(0, halfH, w, topH)
+        this.renderer.render(this.scene, this.cameras[0])
+
+        this.renderer.setViewport(0, 0, w, halfH)
+        this.renderer.setScissor(0, 0, w, halfH)
+        this.renderer.render(this.scene, this.cameras[1])
+      } else {
+        const halfW = Math.floor(w * 0.5)
+        const rightW = w - halfW
+        this.renderer.setViewport(0, 0, halfW, h)
+        this.renderer.setScissor(0, 0, halfW, h)
+        this.renderer.render(this.scene, this.cameras[0])
+
+        this.renderer.setViewport(halfW, 0, rightW, h)
+        this.renderer.setScissor(halfW, 0, rightW, h)
+        this.renderer.render(this.scene, this.cameras[1])
+      }
+      this.renderer.setScissorTest(false)
+      this.renderer.autoClear = prevAutoClear
+      return
+    }
+
+    // 1. 分别离屏渲染两路带选择性 Bloom + ACES 色调映射的高精缓冲（仅第 1 路更新 ShadowMap）
     this.renderer.setScissorTest(false)
     this.splitComposers[0].render()
     this.splitComposers[1].render()

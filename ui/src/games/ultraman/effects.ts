@@ -3,7 +3,9 @@ import type { HeroProfile } from './heroes'
 
 interface PooledSpark {
   active: boolean
-  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
+  x: number
+  y: number
+  z: number
   vx: number
   vy: number
   vz: number
@@ -12,6 +14,9 @@ interface PooledSpark {
   gravity: number
   baseWidth: number
   lengthFactor: number
+  r: number
+  g: number
+  b: number
 }
 
 interface DebrisChunk {
@@ -26,6 +31,7 @@ interface DebrisChunk {
 }
 
 interface ShockwaveRing {
+  active: boolean
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>
   life: number
   maxLife: number
@@ -33,6 +39,7 @@ interface ShockwaveRing {
 }
 
 interface EnergySphereBurst {
+  active: boolean
   mesh: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>
   life: number
   maxLife: number
@@ -40,6 +47,7 @@ interface EnergySphereBurst {
 }
 
 interface MeleeSlashArc {
+  active: boolean
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>
   life: number
   maxLife: number
@@ -47,6 +55,7 @@ interface MeleeSlashArc {
 }
 
 interface HitFlare {
+  active: boolean
   mesh: THREE.Sprite
   life: number
   maxLife: number
@@ -86,8 +95,12 @@ export interface Projectile {
   lavaMat?: THREE.ShaderMaterial
 }
 
-const SPARK_POOL_SIZE = 180
-const DEBRIS_POOL_SIZE = 48
+const SPARK_POOL_SIZE = 160
+const DEBRIS_POOL_SIZE = 44
+const SHOCKWAVE_POOL_SIZE = 10
+const SPHERE_POOL_SIZE = 8
+const SLASH_POOL_SIZE = 8
+const FLARE_POOL_SIZE = 12
 const TRAIL_POINTS = 10
 
 function makeStarFlareTexture(): THREE.CanvasTexture {
@@ -301,7 +314,10 @@ function createLavaFireballMaterial(colorHex: number): THREE.ShaderMaterial {
  */
 export class BattleEffects {
   private readonly group = new THREE.Group()
+  private readonly sparkInstMesh: THREE.InstancedMesh
   private readonly sparkPool: PooledSpark[] = []
+  private readonly sparkDummy = new THREE.Object3D()
+  private readonly sparkColorTmp = new THREE.Color()
   private sparkCursor = 0
 
   private readonly debrisMesh: THREE.InstancedMesh
@@ -309,10 +325,14 @@ export class BattleEffects {
   private debrisCursor = 0
   private readonly debrisDummy = new THREE.Object3D()
 
-  private shockwaves: ShockwaveRing[] = []
-  private energySpheres: EnergySphereBurst[] = []
-  private slashes: MeleeSlashArc[] = []
-  private flares: HitFlare[] = []
+  private readonly shockwaves: ShockwaveRing[] = []
+  private shockwaveCursor = 0
+  private readonly energySpheres: EnergySphereBurst[] = []
+  private sphereCursor = 0
+  private readonly slashes: MeleeSlashArc[] = []
+  private slashCursor = 0
+  private readonly flares: HitFlare[] = []
+  private flareCursor = 0
   public projectiles: Projectile[] = []
 
   // 爆炸/重击瞬态动态点光源（真实照亮奥特曼皮套与周遭大厦）
@@ -400,23 +420,29 @@ export class BattleEffects {
 
     this.group.add(this.impactLight)
 
-    // 预分配电光火花对象池（彻底消除战斗中 GC 卡顿）
+    // 单 InstancedMesh 电光火花池：激战 160 颗火花也只占 1 个 Draw Call 且零运行期 GC
+    const sparkMat = new THREE.MeshBasicMaterial({
+      map: this.sparkTex,
+      color: 0xffffff,
+      transparent: true,
+      opacity: 1,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+    this.sparkInstMesh = new THREE.InstancedMesh(this.sparkQuadGeo, sparkMat, SPARK_POOL_SIZE)
+    this.sparkInstMesh.frustumCulled = false
+    this.sparkDummy.scale.setScalar(0)
+    this.sparkDummy.updateMatrix()
+    this.sparkColorTmp.setHex(0xffffff)
     for (let i = 0; i < SPARK_POOL_SIZE; i++) {
-      const mat = new THREE.MeshBasicMaterial({
-        map: this.sparkTex,
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-      const mesh = new THREE.Mesh(this.sparkQuadGeo, mat)
-      mesh.visible = false
-      this.group.add(mesh)
+      this.sparkInstMesh.setMatrixAt(i, this.sparkDummy.matrix)
+      this.sparkInstMesh.setColorAt(i, this.sparkColorTmp)
       this.sparkPool.push({
         active: false,
-        mesh,
+        x: 0,
+        y: 0,
+        z: 0,
         vx: 0,
         vy: 0,
         vz: 0,
@@ -425,7 +451,148 @@ export class BattleEffects {
         gravity: 28,
         baseWidth: 0.25,
         lengthFactor: 1.8,
+        r: 1,
+        g: 1,
+        b: 1,
       })
+    }
+    this.sparkInstMesh.instanceMatrix.needsUpdate = true
+    if (this.sparkInstMesh.instanceColor) this.sparkInstMesh.instanceColor.needsUpdate = true
+    this.group.add(this.sparkInstMesh)
+
+    // 预分配震波环 / 能量球 / 刀光斩击 / 星芒爆点对象池（杜绝战斗中频繁 new ShaderMaterial 与 dispose）
+    for (let i = 0; i < SHOCKWAVE_POOL_SIZE; i++) {
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uColor: { value: new THREE.Color(0x38bdf8) },
+          uProgress: { value: 0 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          uniform float uProgress;
+          varying vec2 vUv;
+          void main() {
+            float r = length((vUv - 0.5) * 2.0);
+            if (r > 1.0) discard;
+            float edge = exp(-pow(max(abs(r - 0.92) * 28.0, 0.0001), 2.0));
+            float wake = smoothstep(0.62, 0.92, r) * (1.0 - smoothstep(0.92, 0.98, r)) * 0.35;
+            float fade = pow(max(1.0 - clamp(uProgress, 0.0, 1.0), 0.0001), 1.6);
+            vec3 col = mix(uColor * 1.35, vec3(1.5), edge * 0.75);
+            gl_FragColor = vec4(col, clamp((edge + wake) * fade, 0.0, 1.0));
+          }
+        `,
+      })
+      const mesh = new THREE.Mesh(this.shockwaveGeo, mat)
+      mesh.visible = false
+      this.group.add(mesh)
+      this.shockwaves.push({ active: false, mesh, life: 0, maxLife: 0.26, maxRadius: 6.5 })
+    }
+
+    for (let i = 0; i < SPHERE_POOL_SIZE; i++) {
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uColor: { value: new THREE.Color(0x38bdf8) },
+          uProgress: { value: 0 },
+        },
+        vertexShader: `
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          void main() {
+            vec4 wp = modelMatrix * vec4(position, 1.0);
+            vNormal = normalize(mat3(modelMatrix) * normal);
+            vViewDir = normalize(cameraPosition - wp.xyz + vec3(0.0001));
+            gl_Position = projectionMatrix * viewMatrix * wp;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          uniform float uProgress;
+          varying vec3 vNormal;
+          varying vec3 vViewDir;
+          void main() {
+            float ndotv = clamp(abs(dot(normalize(vNormal), normalize(vViewDir))), 0.0, 1.0);
+            float rim = pow(max(1.0 - ndotv, 0.0001), 1.85);
+            float fade = pow(max(1.0 - clamp(uProgress, 0.0, 1.0), 0.0001), 1.5);
+            vec3 col = mix(uColor * 1.4, vec3(1.6, 1.75, 1.9), rim * 0.7);
+            gl_FragColor = vec4(col, clamp((0.18 + rim * 0.82) * fade, 0.0, 1.0));
+          }
+        `,
+      })
+      const mesh = new THREE.Mesh(this.sphereBurstGeo, mat)
+      mesh.visible = false
+      this.group.add(mesh)
+      this.energySpheres.push({ active: false, mesh, life: 0, maxLife: 0.28, maxScale: 4.6 })
+    }
+
+    for (let i = 0; i < SLASH_POOL_SIZE; i++) {
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uColor: { value: new THREE.Color(0xfacc15) },
+          uProgress: { value: 0 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          uniform float uProgress;
+          varying vec2 vUv;
+          void main() {
+            float head = clamp(uProgress * 1.65, 0.0, 1.15);
+            float sweep = smoothstep(head - 0.85, head, vUv.x) * (1.0 - smoothstep(head, head + 0.14, vUv.x));
+            float bladeEdge = smoothstep(0.0, 0.72, vUv.y);
+            float hotRidge = pow(max(vUv.y, 0.0001), 3.2);
+            float fade = pow(max(1.0 - clamp(uProgress, 0.0, 1.0), 0.0001), 1.35);
+            vec3 col = mix(uColor * 1.45, vec3(1.85, 1.75, 1.45), hotRidge * 0.85);
+            float alpha = sweep * bladeEdge * fade * 0.96;
+            if (alpha < 0.02) discard;
+            gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+          }
+        `,
+      })
+      const mesh = new THREE.Mesh(this.slashGeo, mat)
+      mesh.visible = false
+      this.group.add(mesh)
+      this.slashes.push({ active: false, mesh, life: 0, maxLife: 0.24, spinZ: 4.2 })
+    }
+
+    for (let i = 0; i < FLARE_POOL_SIZE; i++) {
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: this.flareTex,
+          color: 0xffffff,
+          transparent: true,
+          opacity: 1,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      )
+      sprite.visible = false
+      this.group.add(sprite)
+      this.flares.push({ active: false, mesh: sprite, life: 0, maxLife: 0.19, peakScale: 5.8, spinSpeed: 5.5 })
     }
 
     // 预分配特摄微缩飞溅混凝土瓦砾 InstancedMesh 池
@@ -983,86 +1150,32 @@ export class BattleEffects {
     scale = 1.15,
     spinDir = 1,
   ) {
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      uniforms: {
-        uColor: { value: new THREE.Color(colorHex) },
-        uProgress: { value: 0 },
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 uColor;
-        uniform float uProgress;
-        varying vec2 vUv;
-        void main() {
-          float head = clamp(uProgress * 1.65, 0.0, 1.15);
-          float sweep = smoothstep(head - 0.85, head, vUv.x) * (1.0 - smoothstep(head, head + 0.14, vUv.x));
-          float bladeEdge = smoothstep(0.0, 0.72, vUv.y);
-          float hotRidge = pow(max(vUv.y, 0.0001), 3.2);
-          float fade = pow(max(1.0 - clamp(uProgress, 0.0, 1.0), 0.0001), 1.35);
-          vec3 col = mix(uColor * 1.45, vec3(1.85, 1.75, 1.45), hotRidge * 0.85);
-          float alpha = sweep * bladeEdge * fade * 0.96;
-          if (alpha < 0.02) discard;
-          gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
-        }
-      `,
-    })
-    const mesh = new THREE.Mesh(this.slashGeo, mat)
-    mesh.position.copy(center)
-    mesh.rotation.set(euler[0], euler[1], euler[2])
-    mesh.scale.setScalar(scale)
-    this.group.add(mesh)
-    this.slashes.push({ mesh, life: 0, maxLife: 0.24, spinZ: spinDir * 4.2 })
+    const slot = this.slashes[this.slashCursor]!
+    this.slashCursor = (this.slashCursor + 1) % SLASH_POOL_SIZE
+    slot.active = true
+    slot.life = 0
+    slot.maxLife = 0.24
+    slot.spinZ = spinDir * 4.2
+    slot.mesh.position.copy(center)
+    slot.mesh.rotation.set(euler[0], euler[1], euler[2])
+    slot.mesh.scale.setScalar(scale)
+    slot.mesh.material.uniforms.uColor!.value.setHex(colorHex)
+    slot.mesh.material.uniforms.uProgress!.value = 0
+    slot.mesh.visible = true
   }
 
   public spawnEnergyShockSphere(pos: THREE.Vector3, colorHex = 0x38bdf8, maxScale = 4.6) {
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      uniforms: {
-        uColor: { value: new THREE.Color(colorHex) },
-        uProgress: { value: 0 },
-      },
-      vertexShader: `
-        varying vec3 vNormal;
-        varying vec3 vViewDir;
-        void main() {
-          vec4 wp = modelMatrix * vec4(position, 1.0);
-          vNormal = normalize(mat3(modelMatrix) * normal);
-          vViewDir = normalize(cameraPosition - wp.xyz + vec3(0.0001));
-          gl_Position = projectionMatrix * viewMatrix * wp;
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 uColor;
-        uniform float uProgress;
-        varying vec3 vNormal;
-        varying vec3 vViewDir;
-        void main() {
-          float ndotv = clamp(abs(dot(normalize(vNormal), normalize(vViewDir))), 0.0, 1.0);
-          float rim = pow(max(1.0 - ndotv, 0.0001), 1.85);
-          float fade = pow(max(1.0 - clamp(uProgress, 0.0, 1.0), 0.0001), 1.5);
-          vec3 col = mix(uColor * 1.4, vec3(1.6, 1.75, 1.9), rim * 0.7);
-          gl_FragColor = vec4(col, clamp((0.18 + rim * 0.82) * fade, 0.0, 1.0));
-        }
-      `,
-    })
-    const mesh = new THREE.Mesh(this.sphereBurstGeo, mat)
-    mesh.position.copy(pos)
-    mesh.scale.setScalar(0.5)
-    this.group.add(mesh)
-    this.energySpheres.push({ mesh, life: 0, maxLife: 0.28, maxScale })
+    const slot = this.energySpheres[this.sphereCursor]!
+    this.sphereCursor = (this.sphereCursor + 1) % SPHERE_POOL_SIZE
+    slot.active = true
+    slot.life = 0
+    slot.maxLife = 0.28
+    slot.maxScale = maxScale
+    slot.mesh.position.copy(pos)
+    slot.mesh.scale.setScalar(0.5)
+    slot.mesh.material.uniforms.uColor!.value.setHex(colorHex)
+    slot.mesh.material.uniforms.uProgress!.value = 0
+    slot.mesh.visible = true
   }
 
   public updateRainbowGather(
@@ -1357,7 +1470,7 @@ export class BattleEffects {
     })
   }
 
-  /** 从预分配对象池喷射电光拉伸火花（零 GC 分配） */
+  /** 从单 InstancedMesh 对象池喷射电光拉伸火花（1 Draw Call + 零 GC） */
   public spawnBurst(
     pos: THREE.Vector3,
     colorHex: number,
@@ -1369,10 +1482,13 @@ export class BattleEffects {
       const p = this.sparkPool[this.sparkCursor]!
       this.sparkCursor = (this.sparkCursor + 1) % SPARK_POOL_SIZE
       p.active = true
-      p.mesh.visible = true
-      p.mesh.position.copy(pos)
-      p.mesh.material.color.setHex(i % 3 === 0 ? 0xffffff : i % 3 === 1 ? 0xfff3b0 : colorHex)
-      p.mesh.material.opacity = 1
+      p.x = pos.x
+      p.y = pos.y
+      p.z = pos.z
+      this.sparkColorTmp.setHex(i % 3 === 0 ? 0xffffff : i % 3 === 1 ? 0xfff3b0 : colorHex)
+      p.r = this.sparkColorTmp.r
+      p.g = this.sparkColorTmp.g
+      p.b = this.sparkColorTmp.b
 
       const theta = Math.random() * Math.PI * 2
       const phi = (Math.random() - 0.32) * Math.PI * 0.85
@@ -1393,66 +1509,33 @@ export class BattleEffects {
   }
 
   public spawnImpactRing(pos: THREE.Vector3, colorHex: number, maxRadius = 6.5) {
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      uniforms: {
-        uColor: { value: new THREE.Color(colorHex) },
-        uProgress: { value: 0 },
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 uColor;
-        uniform float uProgress;
-        varying vec2 vUv;
-        void main() {
-          float r = length((vUv - 0.5) * 2.0);
-          if (r > 1.0) discard;
-          float edge = exp(-pow(max(abs(r - 0.92) * 28.0, 0.0001), 2.0));
-          float wake = smoothstep(0.62, 0.92, r) * (1.0 - smoothstep(0.92, 0.98, r)) * 0.35;
-          float fade = pow(max(1.0 - clamp(uProgress, 0.0, 1.0), 0.0001), 1.6);
-          vec3 col = mix(uColor * 1.35, vec3(1.5), edge * 0.75);
-          gl_FragColor = vec4(col, clamp((edge + wake) * fade, 0.0, 1.0));
-        }
-      `,
-    })
-    const mesh = new THREE.Mesh(this.shockwaveGeo, mat)
-    mesh.position.copy(pos)
-    mesh.scale.setScalar(0.35)
-    this.group.add(mesh)
-    this.shockwaves.push({ mesh, life: 0, maxLife: 0.26, maxRadius })
+    const slot = this.shockwaves[this.shockwaveCursor]!
+    this.shockwaveCursor = (this.shockwaveCursor + 1) % SHOCKWAVE_POOL_SIZE
+    slot.active = true
+    slot.life = 0
+    slot.maxLife = 0.26
+    slot.maxRadius = maxRadius
+    slot.mesh.position.copy(pos)
+    slot.mesh.scale.setScalar(0.35)
+    slot.mesh.material.uniforms.uColor!.value.setHex(colorHex)
+    slot.mesh.material.uniforms.uProgress!.value = 0
+    slot.mesh.visible = true
   }
 
   public spawnHitFlash(pos: THREE.Vector3, colorHex: number, scale = 1) {
-    const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: this.flareTex,
-        color: colorHex,
-        transparent: true,
-        opacity: 1,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        rotation: Math.random() * Math.PI,
-      }),
-    )
-    sprite.position.copy(pos)
-    sprite.scale.setScalar(1.2 * scale)
-    this.group.add(sprite)
-    this.flares.push({
-      mesh: sprite,
-      life: 0,
-      maxLife: 0.19,
-      peakScale: 5.8 * scale,
-      spinSpeed: (Math.random() > 0.5 ? 1 : -1) * 5.5,
-    })
+    const slot = this.flares[this.flareCursor]!
+    this.flareCursor = (this.flareCursor + 1) % FLARE_POOL_SIZE
+    slot.active = true
+    slot.life = 0
+    slot.maxLife = 0.19
+    slot.peakScale = 5.8 * scale
+    slot.spinSpeed = (Math.random() > 0.5 ? 1 : -1) * 5.5
+    slot.mesh.position.copy(pos)
+    slot.mesh.scale.setScalar(1.2 * scale)
+    slot.mesh.material.color.setHex(colorHex)
+    slot.mesh.material.opacity = 1
+    slot.mesh.material.rotation = Math.random() * Math.PI
+    slot.mesh.visible = true
   }
 
   public updateShield(
@@ -1755,33 +1838,46 @@ export class BattleEffects {
       }
     }
 
-    // 4. 更新对象池电光火花
+    // 4. 更新单 InstancedMesh 电光火花池
+    let sparksDirty = false
     for (let i = 0; i < SPARK_POOL_SIZE; i++) {
       const p = this.sparkPool[i]!
       if (!p.active) continue
+      sparksDirty = true
       p.life += dt
       if (p.life >= p.maxLife) {
         p.active = false
-        p.mesh.visible = false
+        this.sparkDummy.scale.setScalar(0)
+        this.sparkDummy.updateMatrix()
+        this.sparkInstMesh.setMatrixAt(i, this.sparkDummy.matrix)
         continue
       }
       p.vy -= p.gravity * dt
-      p.mesh.position.x += p.vx * dt
-      p.mesh.position.y = Math.max(0.08, p.mesh.position.y + p.vy * dt)
-      p.mesh.position.z += p.vz * dt
+      p.x += p.vx * dt
+      p.y = Math.max(0.08, p.y + p.vy * dt)
+      p.z += p.vz * dt
 
       const speed = Math.hypot(p.vx, p.vy, p.vz)
       const ratio = 1 - p.life / p.maxLife
+      this.sparkDummy.position.set(p.x, p.y, p.z)
       if (speed > 0.05) {
         this.tmpDir.set(p.vx / speed, p.vy / speed, p.vz / speed)
-        p.mesh.quaternion.setFromUnitVectors(this.upAxis, this.tmpDir)
+        this.sparkDummy.quaternion.setFromUnitVectors(this.upAxis, this.tmpDir)
       }
       const len = Math.max(
         p.baseWidth,
         p.baseWidth * p.lengthFactor * (0.4 + speed * 0.045) * ratio,
       )
-      p.mesh.scale.set(p.baseWidth * ratio, len, p.baseWidth * ratio)
-      p.mesh.material.opacity = Math.min(1, ratio * 1.35)
+      this.sparkDummy.scale.set(p.baseWidth * ratio, len, p.baseWidth * ratio)
+      this.sparkDummy.updateMatrix()
+      this.sparkInstMesh.setMatrixAt(i, this.sparkDummy.matrix)
+      const fade = Math.min(1, ratio * 1.35)
+      this.sparkColorTmp.setRGB(p.r * fade, p.g * fade, p.b * fade)
+      this.sparkInstMesh.setColorAt(i, this.sparkColorTmp)
+    }
+    if (sparksDirty) {
+      this.sparkInstMesh.instanceMatrix.needsUpdate = true
+      if (this.sparkInstMesh.instanceColor) this.sparkInstMesh.instanceColor.needsUpdate = true
     }
 
     // 5. 更新微缩混凝土碎石池
@@ -1820,14 +1916,14 @@ export class BattleEffects {
       this.debrisMesh.instanceMatrix.needsUpdate = true
     }
 
-    // 6. 刀锋震波环
-    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+    // 6. 刀锋震波环（零分配对象池）
+    for (let i = 0; i < SHOCKWAVE_POOL_SIZE; i++) {
       const r = this.shockwaves[i]!
+      if (!r.active) continue
       r.life += dt
       if (r.life >= r.maxLife) {
-        this.group.remove(r.mesh)
-        r.mesh.material.dispose()
-        this.shockwaves.splice(i, 1)
+        r.active = false
+        r.mesh.visible = false
         continue
       }
       const t = r.life / r.maxLife
@@ -1837,14 +1933,14 @@ export class BattleEffects {
       r.mesh.material.uniforms.uProgress!.value = t
     }
 
-    // 7. 立体能量冲击球
-    for (let i = this.energySpheres.length - 1; i >= 0; i--) {
+    // 7. 立体能量冲击球（零分配对象池）
+    for (let i = 0; i < SPHERE_POOL_SIZE; i++) {
       const s = this.energySpheres[i]!
+      if (!s.active) continue
       s.life += dt
       if (s.life >= s.maxLife) {
-        this.group.remove(s.mesh)
-        s.mesh.material.dispose()
-        this.energySpheres.splice(i, 1)
+        s.active = false
+        s.mesh.visible = false
         continue
       }
       const t = s.life / s.maxLife
@@ -1853,14 +1949,14 @@ export class BattleEffects {
       s.mesh.material.uniforms.uProgress!.value = t
     }
 
-    // 8. 弧形刀光斩击
-    for (let i = this.slashes.length - 1; i >= 0; i--) {
+    // 8. 弧形刀光斩击（零分配对象池）
+    for (let i = 0; i < SLASH_POOL_SIZE; i++) {
       const sl = this.slashes[i]!
+      if (!sl.active) continue
       sl.life += dt
       if (sl.life >= sl.maxLife) {
-        this.group.remove(sl.mesh)
-        sl.mesh.material.dispose()
-        this.slashes.splice(i, 1)
+        sl.active = false
+        sl.mesh.visible = false
         continue
       }
       const t = sl.life / sl.maxLife
@@ -1868,14 +1964,14 @@ export class BattleEffects {
       sl.mesh.material.uniforms.uProgress!.value = t
     }
 
-    // 9. 十字星芒爆点
-    for (let i = this.flares.length - 1; i >= 0; i--) {
+    // 9. 十字星芒爆点（零分配对象池）
+    for (let i = 0; i < FLARE_POOL_SIZE; i++) {
       const f = this.flares[i]!
+      if (!f.active) continue
       f.life += dt
       if (f.life >= f.maxLife) {
-        this.group.remove(f.mesh)
-        f.mesh.material.dispose()
-        this.flares.splice(i, 1)
+        f.active = false
+        f.mesh.visible = false
         continue
       }
       const t = f.life / f.maxLife
@@ -1907,10 +2003,13 @@ export class BattleEffects {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       this.removeProjectileAt(i)
     }
-    for (const p of this.sparkPool) {
-      p.active = false
-      p.mesh.visible = false
+    this.sparkDummy.scale.setScalar(0)
+    this.sparkDummy.updateMatrix()
+    for (let i = 0; i < SPARK_POOL_SIZE; i++) {
+      this.sparkPool[i]!.active = false
+      this.sparkInstMesh.setMatrixAt(i, this.sparkDummy.matrix)
     }
+    this.sparkInstMesh.instanceMatrix.needsUpdate = true
     this.debrisDummy.scale.setScalar(0)
     this.debrisDummy.updateMatrix()
     for (let i = 0; i < DEBRIS_POOL_SIZE; i++) {
@@ -1926,25 +2025,21 @@ export class BattleEffects {
     }
 
     for (const r of this.shockwaves) {
-      this.group.remove(r.mesh)
-      r.mesh.material.dispose()
+      r.active = false
+      r.mesh.visible = false
     }
-    this.shockwaves = []
     for (const s of this.energySpheres) {
-      this.group.remove(s.mesh)
-      s.mesh.material.dispose()
+      s.active = false
+      s.mesh.visible = false
     }
-    this.energySpheres = []
     for (const sl of this.slashes) {
-      this.group.remove(sl.mesh)
-      sl.mesh.material.dispose()
+      sl.active = false
+      sl.mesh.visible = false
     }
-    this.slashes = []
     for (const f of this.flares) {
-      this.group.remove(f.mesh)
-      f.mesh.material.dispose()
+      f.active = false
+      f.mesh.visible = false
     }
-    this.flares = []
     this.impactLightLife = 0
     this.impactLight.intensity = 0
     this.heroBeamActive = false
@@ -1964,9 +2059,24 @@ export class BattleEffects {
 
   public dispose() {
     this.clearAllDynamic()
-    for (const p of this.sparkPool) {
-      this.group.remove(p.mesh)
-      p.mesh.material.dispose()
+    this.group.remove(this.sparkInstMesh)
+    this.sparkInstMesh.dispose()
+    ;(this.sparkInstMesh.material as THREE.Material).dispose()
+    for (const r of this.shockwaves) {
+      this.group.remove(r.mesh)
+      r.mesh.material.dispose()
+    }
+    for (const s of this.energySpheres) {
+      this.group.remove(s.mesh)
+      s.mesh.material.dispose()
+    }
+    for (const sl of this.slashes) {
+      this.group.remove(sl.mesh)
+      sl.mesh.material.dispose()
+    }
+    for (const f of this.flares) {
+      this.group.remove(f.mesh)
+      f.mesh.material.dispose()
     }
     this.debrisMesh.geometry.dispose()
     ;(this.debrisMesh.material as THREE.Material).dispose()

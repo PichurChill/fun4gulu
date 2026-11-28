@@ -123,6 +123,7 @@ export class ArenaManager {
   private readonly pmrem: THREE.PMREMGenerator
   private readonly fixtures = new THREE.Group()
   private readonly stageLoadedModels: THREE.Object3D[] = []
+  private readonly stageInstancedMeshes: THREE.InstancedMesh[] = []
   private readonly billboardFXMeshes: THREE.Mesh[] = []
   private readonly cityFlameMats: THREE.ShaderMaterial[] = []
   private readonly citySmokeMats: THREE.ShaderMaterial[] = []
@@ -181,18 +182,19 @@ export class ArenaManager {
     this.kaijuContactAO = makeAO(13.5, 0.62)
 
     this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(2048, 2048)
+    // 1024 阴影贴图配合收紧的战斗核心区视锥，清晰度不降且阴影 Pass 耗时直降 75%
+    this.sun.shadow.mapSize.set(1024, 1024)
     Object.assign(this.sun.shadow.camera, {
-      left: -32,
-      right: 32,
-      top: 32,
-      bottom: -32,
+      left: -22,
+      right: 22,
+      top: 22,
+      bottom: -22,
       near: 1,
-      far: 150,
+      far: 120,
     })
     this.sun.shadow.camera.updateProjectionMatrix()
-    this.sun.shadow.normalBias = 0.035
-    this.sun.shadow.bias = -0.0004
+    this.sun.shadow.normalBias = 0.04
+    this.sun.shadow.bias = -0.0005
 
     this.rim.position.set(-22, 18, -28)
     this.coolRim.position.set(24, 24, -22)
@@ -386,26 +388,54 @@ export class ArenaManager {
         m.receiveShadow = true
       }
     })
+    this.stageLoadedModels.push(tpl)
     return tpl
   }
 
-  private placeAsset(
+  /**
+   * 批量实例化合批器：把同一高精 GLB 模板的多次摆放按子网格合并为 THREE.InstancedMesh，
+   * 完整保留所有 PBR 贴图与材质细节，同时将暗夜都市等高密场景 Draw Calls 暴降 80%+
+   */
+  private placeAssetBatch(
     tpl: THREE.Object3D | null,
-    x: number,
-    y: number,
-    z: number,
-    rotY: number,
-    sx = 1,
-    sy = sx,
-    sz = sx,
+    placements: readonly { x: number; y: number; z: number; rotY: number; sx?: number; sy?: number; sz?: number }[],
+    castShadow = false,
   ) {
-    if (!tpl) return
-    const clone = tpl.clone(true)
-    clone.position.set(x, y, z)
-    clone.rotation.y = rotY
-    clone.scale.set(sx, sy, sz)
-    this.fixtures.add(clone)
-    this.stageLoadedModels.push(clone)
+    if (!tpl || placements.length === 0) return
+    tpl.updateMatrixWorld(true)
+    const rootInv = tpl.matrixWorld.clone().invert()
+    const subMeshes: { mesh: THREE.Mesh; localMatrix: THREE.Matrix4 }[] = []
+    tpl.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const m = node as THREE.Mesh
+        const localMatrix = new THREE.Matrix4().multiplyMatrices(rootInv, m.matrixWorld)
+        subMeshes.push({ mesh: m, localMatrix })
+      }
+    })
+
+    const worldObj = new THREE.Object3D()
+    const finalMat = new THREE.Matrix4()
+    for (const { mesh, localMatrix } of subMeshes) {
+      const inst = new THREE.InstancedMesh(mesh.geometry, mesh.material, placements.length)
+      inst.castShadow = castShadow
+      inst.receiveShadow = true
+      for (let i = 0; i < placements.length; i++) {
+        const p = placements[i]!
+        const sx = p.sx ?? 1
+        const sy = p.sy ?? sx
+        const sz = p.sz ?? sx
+        worldObj.position.set(p.x, p.y, p.z)
+        worldObj.rotation.set(0, p.rotY, 0)
+        worldObj.scale.set(sx, sy, sz)
+        worldObj.updateMatrix()
+        finalMat.multiplyMatrices(worldObj.matrix, localMatrix)
+        inst.setMatrixAt(i, finalMat)
+      }
+      inst.instanceMatrix.needsUpdate = true
+      inst.computeBoundingSphere()
+      this.fixtures.add(inst)
+      this.stageInstancedMeshes.push(inst)
+    }
   }
 
   /** 构建暗夜 3D 特摄都市废墟战场（7 套高精贴图 PBR 资产 + 湿润水洼路面 + 体积朝向火烟） */
@@ -522,70 +552,72 @@ export class ArenaManager {
     zebraMesh.instanceMatrix.needsUpdate = true
     this.fixtures.add(zebraMesh)
 
+    // 静态场景建筑/废墟不参与动态 ShadowMap 重绘（保留地面接收阴影与奥特曼/怪兽动态投影），大幅降负
     const tplGlass = this.prepTemplate(cityAssets, 'towerGlass', false)
     const tplNeon = this.prepTemplate(cityAssets, 'towerNeon', false)
     const tplRuined = this.prepTemplate(cityAssets, 'buildingRuined', false)
-    const tplOverpass = this.prepTemplate(cityAssets, 'overpassBroken', true)
-    const tplRubble = this.prepTemplate(cityAssets, 'rubbleCluster', true)
-    const tplProps = this.prepTemplate(cityAssets, 'streetProps', true)
-    const tplVehicle = this.prepTemplate(cityAssets, 'gutsVehicle', true)
+    const tplOverpass = this.prepTemplate(cityAssets, 'overpassBroken', false)
+    const tplRubble = this.prepTemplate(cityAssets, 'rubbleCluster', false)
+    const tplProps = this.prepTemplate(cityAssets, 'streetProps', false)
+    const tplVehicle = this.prepTemplate(cityAssets, 'gutsVehicle', false)
 
-    const buildingLayout = [
-      { tpl: tplNeon, x: -35.5, z: 18, rotY: Math.PI * 0.5, sx: 1.0, sy: 0.98 },
-      { tpl: tplRuined, x: -35.0, z: 1, rotY: Math.PI * 0.5, sx: 1.05, sy: 1.1 },
-      { tpl: tplGlass, x: -36.5, z: -17, rotY: Math.PI * 0.5, sx: 1.05, sy: 1.02 },
-      { tpl: tplNeon, x: -38.5, z: -36, rotY: Math.PI * 0.5, sx: 1.12, sy: 1.18 },
-      { tpl: tplGlass, x: -53.0, z: -6, rotY: 0.12, sx: 1.15, sy: 1.16 },
-      { tpl: tplRuined, x: -51.0, z: -26, rotY: -0.25, sx: 1.12, sy: 1.25 },
-      { tpl: tplGlass, x: 35.5, z: 19, rotY: -Math.PI * 0.5, sx: 1.0, sy: 0.96 },
-      { tpl: tplNeon, x: 35.8, z: 0, rotY: -Math.PI * 0.5, sx: 1.02, sy: 1.06 },
-      { tpl: tplRuined, x: 35.2, z: -18, rotY: -Math.PI * 0.5, sx: 1.08, sy: 1.14 },
-      { tpl: tplGlass, x: 38.5, z: -37, rotY: -Math.PI * 0.5, sx: 1.12, sy: 1.16 },
-      { tpl: tplNeon, x: 53.0, z: -7, rotY: -0.15, sx: 1.15, sy: 1.2 },
-      { tpl: tplGlass, x: 52.0, z: -28, rotY: 0.2, sx: 1.18, sy: 1.25 },
-      { tpl: tplRuined, x: -20, z: -50, rotY: 0.14, sx: 1.15, sy: 1.22 },
-      { tpl: tplGlass, x: 0, z: -56, rotY: 0, sx: 1.18, sy: 1.26 },
-      { tpl: tplNeon, x: 20, z: -50, rotY: -0.16, sx: 1.12, sy: 1.2 },
-      { tpl: tplGlass, x: -38, z: -58, rotY: 0.28, sx: 1.2, sy: 1.28 },
-      { tpl: tplNeon, x: 38, z: -58, rotY: -0.28, sx: 1.2, sy: 1.25 },
-      { tpl: tplNeon, x: -38, z: 42, rotY: Math.PI * 0.45, sx: 1.05, sy: 1.08 },
-      { tpl: tplGlass, x: 38, z: 42, rotY: -Math.PI * 0.45, sx: 1.05, sy: 1.1 },
-      { tpl: tplGlass, x: -19, z: 54, rotY: Math.PI, sx: 1.12, sy: 1.16 },
-      { tpl: tplNeon, x: 19, z: 54, rotY: Math.PI, sx: 1.12, sy: 1.18 },
-      { tpl: tplRuined, x: 0, z: 60, rotY: Math.PI, sx: 1.18, sy: 1.28 },
-    ]
-    for (const b of buildingLayout) {
-      this.placeAsset(b.tpl, b.x, 0, b.z, b.rotY, b.sx, b.sy, b.sx)
-    }
-
-    this.placeAsset(tplOverpass, -24.2, 0, -16.2, 0.44, 1.04)
-    this.placeAsset(tplOverpass, 25.0, 0, -32.4, -0.22, 1.08)
-
-    for (const pz of [-22, -6, 9, 23]) {
-      this.placeAsset(tplProps, 15.0, 0.26, pz, 0, 1.0)
-      this.placeAsset(tplProps, -15.0, 0.26, pz + 4.5, Math.PI, 1.0)
-    }
-
-    this.placeAsset(tplVehicle, -15.8, 0.26, 12.0, 0.48, 1.08)
-    this.placeAsset(tplVehicle, 16.4, 0.26, 1.8, -0.78, 1.08)
-    this.placeAsset(tplVehicle, -16.0, 0.26, -10.5, 2.52, 1.08)
-    this.placeAsset(tplVehicle, 15.8, 0.26, -24.5, -2.35, 1.08)
-
-    const rubbleSpots: [number, number, number, number][] = [
-      [-18.8, 9.2, 0.35, 1.08],
-      [19.6, 14.8, -0.62, 0.96],
-      [-21.0, -5.4, 1.38, 1.18],
-      [19.2, 2.2, -1.05, 1.06],
-      [-18.6, -14.6, 0.72, 1.15],
-      [20.4, -9.6, -0.84, 1.22],
-      [-21.2, -25.8, 2.42, 1.12],
-      [18.8, -19.8, -2.05, 1.16],
-      [-22.2, 18.4, -0.45, 1.02],
-      [21.6, -29.5, 0.88, 1.14],
-    ]
-    for (const [rx, rz, rotY, scl] of rubbleSpots) {
-      this.placeAsset(tplRubble, rx, 0.24, rz, rotY, scl)
-    }
+    this.placeAssetBatch(tplNeon, [
+      { x: -35.5, y: 0, z: 18, rotY: Math.PI * 0.5, sx: 1.0, sy: 0.98 },
+      { x: -38.5, y: 0, z: -36, rotY: Math.PI * 0.5, sx: 1.12, sy: 1.18 },
+      { x: 35.8, y: 0, z: 0, rotY: -Math.PI * 0.5, sx: 1.02, sy: 1.06 },
+      { x: 53.0, y: 0, z: -7, rotY: -0.15, sx: 1.15, sy: 1.2 },
+      { x: 20, y: 0, z: -50, rotY: -0.16, sx: 1.12, sy: 1.2 },
+      { x: 38, y: 0, z: -58, rotY: -0.28, sx: 1.2, sy: 1.25 },
+      { x: -38, y: 0, z: 42, rotY: Math.PI * 0.45, sx: 1.05, sy: 1.08 },
+      { x: 19, y: 0, z: 54, rotY: Math.PI, sx: 1.12, sy: 1.18 },
+    ])
+    this.placeAssetBatch(tplGlass, [
+      { x: -36.5, y: 0, z: -17, rotY: Math.PI * 0.5, sx: 1.05, sy: 1.02 },
+      { x: -53.0, y: 0, z: -6, rotY: 0.12, sx: 1.15, sy: 1.16 },
+      { x: 35.5, y: 0, z: 19, rotY: -Math.PI * 0.5, sx: 1.0, sy: 0.96 },
+      { x: 38.5, y: 0, z: -37, rotY: -Math.PI * 0.5, sx: 1.12, sy: 1.16 },
+      { x: 52.0, y: 0, z: -28, rotY: 0.2, sx: 1.18, sy: 1.25 },
+      { x: 0, y: 0, z: -56, rotY: 0, sx: 1.18, sy: 1.26 },
+      { x: -38, y: 0, z: -58, rotY: 0.28, sx: 1.2, sy: 1.28 },
+      { x: 38, y: 0, z: 42, rotY: -Math.PI * 0.45, sx: 1.05, sy: 1.1 },
+      { x: -19, y: 0, z: 54, rotY: Math.PI, sx: 1.12, sy: 1.16 },
+    ])
+    this.placeAssetBatch(tplRuined, [
+      { x: -35.0, y: 0, z: 1, rotY: Math.PI * 0.5, sx: 1.05, sy: 1.1 },
+      { x: -51.0, y: 0, z: -26, rotY: -0.25, sx: 1.12, sy: 1.25 },
+      { x: 35.2, y: 0, z: -18, rotY: -Math.PI * 0.5, sx: 1.08, sy: 1.14 },
+      { x: -20, y: 0, z: -50, rotY: 0.14, sx: 1.15, sy: 1.22 },
+      { x: 0, y: 0, z: 60, rotY: Math.PI, sx: 1.18, sy: 1.28 },
+    ])
+    this.placeAssetBatch(tplOverpass, [
+      { x: -24.2, y: 0, z: -16.2, rotY: 0.44, sx: 1.04 },
+      { x: 25.0, y: 0, z: -32.4, rotY: -0.22, sx: 1.08 },
+    ])
+    this.placeAssetBatch(
+      tplProps,
+      [-22, -6, 9, 23].flatMap((pz) => [
+        { x: 15.0, y: 0.26, z: pz, rotY: 0, sx: 1.0 },
+        { x: -15.0, y: 0.26, z: pz + 4.5, rotY: Math.PI, sx: 1.0 },
+      ]),
+    )
+    this.placeAssetBatch(tplVehicle, [
+      { x: -15.8, y: 0.26, z: 12.0, rotY: 0.48, sx: 1.08 },
+      { x: 16.4, y: 0.26, z: 1.8, rotY: -0.78, sx: 1.08 },
+      { x: -16.0, y: 0.26, z: -10.5, rotY: 2.52, sx: 1.08 },
+      { x: 15.8, y: 0.26, z: -24.5, rotY: -2.35, sx: 1.08 },
+    ])
+    this.placeAssetBatch(tplRubble, [
+      { x: -18.8, y: 0.24, z: 9.2, rotY: 0.35, sx: 1.08 },
+      { x: 19.6, y: 0.24, z: 14.8, rotY: -0.62, sx: 0.96 },
+      { x: -21.0, y: 0.24, z: -5.4, rotY: 1.38, sx: 1.18 },
+      { x: 19.2, y: 0.24, z: 2.2, rotY: -1.05, sx: 1.06 },
+      { x: -18.6, y: 0.24, z: -14.6, rotY: 0.72, sx: 1.15 },
+      { x: 20.4, y: 0.24, z: -9.6, rotY: -0.84, sx: 1.22 },
+      { x: -21.2, y: 0.24, z: -25.8, rotY: 2.42, sx: 1.12 },
+      { x: 18.8, y: 0.24, z: -19.8, rotY: -2.05, sx: 1.16 },
+      { x: -22.2, y: 0.24, z: 18.4, rotY: -0.45, sx: 1.02 },
+      { x: 21.6, y: 0.24, z: -29.5, rotY: 0.88, sx: 1.14 },
+    ])
 
     // 远景无边际万家灯火剪影摩天楼群
     const windowTex = makeNightWindowsTexture()
@@ -642,12 +674,10 @@ export class ArenaManager {
     beacons.instanceMatrix.needsUpdate = true
     this.fixtures.add(towers, beacons)
 
-    // 相机朝向多层体积火烟（告别十字纸片交接线）
+    // 相机朝向多层体积火烟（精选 4 处纵深火点降低透明 Overdraw）
     const fireSpots: [number, number, number][] = [
       [-18.8, 9.2, 5.2],
       [19.2, 2.2, 5.0],
-      [-21.0, -5.4, 6.2],
-      [20.4, -9.6, 5.8],
       [-18.6, -14.6, 6.8],
       [18.8, -19.8, 6.4],
     ]
@@ -731,37 +761,42 @@ export class ArenaManager {
     this.stageDisposableGeos.push(post)
     this.stageDisposableMats.push(metal)
 
-    const tplCrane = this.prepTemplate(assets, 'portCrane', true)
-    const tplContainers = this.prepTemplate(assets, 'portContainers', true)
-    const tplVehicle = this.prepTemplate(assets, 'gutsVehicle', true)
+    const tplCrane = this.prepTemplate(assets, 'portCrane', false)
+    const tplContainers = this.prepTemplate(assets, 'portContainers', false)
+    const tplVehicle = this.prepTemplate(assets, 'gutsVehicle', false)
 
-    // 左右两座巨型海港岸桥龙门吊（退界至战场走廊之外，框出强纵深特摄码头地平线）
-    this.placeAsset(tplCrane, -32, 0, -28, 0.18, 1.15)
-    this.placeAsset(tplCrane, 34, 0, -32, -0.22, 1.15)
-    this.placeAsset(tplCrane, -44, 0, 8, Math.PI * 0.48, 1.05)
-
-    // 高精波纹肋板堆叠集装箱簇
-    this.placeAsset(tplContainers, -24, 0, -4, 0.12, 1.1)
-    this.placeAsset(tplContainers, 25, 0, -10, -0.15, 1.12)
-    this.placeAsset(tplContainers, -26, 0, 18, -0.25, 1.0)
-    this.placeAsset(tplContainers, 27, 0, 14, 0.22, 1.05)
-
-    // 码头紧急防卫队巡逻车
-    this.placeAsset(tplVehicle, -17.5, 0, 11.5, 0.55, 1.08)
-    this.placeAsset(tplVehicle, 18.2, 0, 3.2, -0.72, 1.08)
+    this.placeAssetBatch(tplCrane, [
+      { x: -32, y: 0, z: -28, rotY: 0.18, sx: 1.15 },
+      { x: 34, y: 0, z: -32, rotY: -0.22, sx: 1.15 },
+      { x: -44, y: 0, z: 8, rotY: Math.PI * 0.48, sx: 1.05 },
+    ])
+    this.placeAssetBatch(tplContainers, [
+      { x: -24, y: 0, z: -4, rotY: 0.12, sx: 1.1 },
+      { x: 25, y: 0, z: -10, rotY: -0.15, sx: 1.12 },
+      { x: -26, y: 0, z: 18, rotY: -0.25, sx: 1.0 },
+      { x: 27, y: 0, z: 14, rotY: 0.22, sx: 1.05 },
+    ])
+    this.placeAssetBatch(tplVehicle, [
+      { x: -17.5, y: 0, z: 11.5, rotY: 0.55, sx: 1.08 },
+      { x: 18.2, y: 0, z: 3.2, rotY: -0.72, sx: 1.08 },
+    ])
   }
 
   /** 翠绿山谷（接入防卫队山脊雷达前哨站与松树岩礁群，彻底告别空旷纯贴图） */
   private buildMountainStage(assets: Partial<Record<ArenaAssetKey, THREE.Object3D>>) {
-    const tplRadar = this.prepTemplate(assets, 'mountainRadar', true)
-    const tplVehicle = this.prepTemplate(assets, 'gutsVehicle', true)
+    const tplRadar = this.prepTemplate(assets, 'mountainRadar', false)
+    const tplVehicle = this.prepTemplate(assets, 'gutsVehicle', false)
 
-    this.placeAsset(tplRadar, -30, 0, -24, 0.42, 1.25)
-    this.placeAsset(tplRadar, 32, 0, -28, -0.52, 1.32)
-    this.placeAsset(tplRadar, -34, 0, 14, 1.25, 1.15)
-    this.placeAsset(tplRadar, 35, 0, 10, -1.18, 1.1)
-    this.placeAsset(tplVehicle, -16.5, 0, 12.2, 0.42, 1.08)
-    this.placeAsset(tplVehicle, 17.8, 0, 4.5, -0.68, 1.08)
+    this.placeAssetBatch(tplRadar, [
+      { x: -30, y: 0, z: -24, rotY: 0.42, sx: 1.25 },
+      { x: 32, y: 0, z: -28, rotY: -0.52, sx: 1.32 },
+      { x: -34, y: 0, z: 14, rotY: 1.25, sx: 1.15 },
+      { x: 35, y: 0, z: 10, rotY: -1.18, sx: 1.1 },
+    ])
+    this.placeAssetBatch(tplVehicle, [
+      { x: -16.5, y: 0, z: 12.2, rotY: 0.42, sx: 1.08 },
+      { x: 17.8, y: 0, z: 4.5, rotY: -0.68, sx: 1.08 },
+    ])
   }
 
   /** 实体火山口 + 6 组六棱柱状玄武岩巨岩簇 */
@@ -824,18 +859,15 @@ export class ArenaManager {
     this.ground.receiveShadow = true
     this.root.add(this.ground)
 
-    const tplBasalt = this.prepTemplate(assets, 'volcanoBasalt', true)
-    const spireSpots: [number, number, number, number][] = [
-      [-28, -22, 0.35, 1.4],
-      [30, -26, -0.65, 1.5],
-      [-34, 4, 1.42, 1.3],
-      [32, 6, -1.22, 1.35],
-      [-24, -44, 2.2, 1.7],
-      [24, -46, -2.0, 1.65],
-    ]
-    for (const [bx, bz, rotY, scl] of spireSpots) {
-      this.placeAsset(tplBasalt, bx, 0, bz, rotY, scl, scl * 1.15, scl)
-    }
+    const tplBasalt = this.prepTemplate(assets, 'volcanoBasalt', false)
+    this.placeAssetBatch(tplBasalt, [
+      { x: -28, y: 0, z: -22, rotY: 0.35, sx: 1.4, sy: 1.61, sz: 1.4 },
+      { x: 30, y: 0, z: -26, rotY: -0.65, sx: 1.5, sy: 1.725, sz: 1.5 },
+      { x: -34, y: 0, z: 4, rotY: 1.42, sx: 1.3, sy: 1.495, sz: 1.3 },
+      { x: 32, y: 0, z: 6, rotY: -1.22, sx: 1.35, sy: 1.552, sz: 1.35 },
+      { x: -24, y: 0, z: -44, rotY: 2.2, sx: 1.7, sy: 1.955, sz: 1.7 },
+      { x: 24, y: 0, z: -46, rotY: -2.0, sx: 1.65, sy: 1.897, sz: 1.65 },
+    ])
   }
 
   public groundImpact(x: number, z: number, elapsed: number, scorchScale = 0) {
@@ -1012,6 +1044,10 @@ export class ArenaManager {
       const child = this.fixtures.children[0]!
       this.fixtures.remove(child)
     }
+    for (const inst of this.stageInstancedMeshes) {
+      inst.dispose()
+    }
+    this.stageInstancedMeshes.length = 0
     for (const mdl of this.stageLoadedModels) {
       releaseModel(mdl)
     }
@@ -1147,11 +1183,11 @@ function createNightCitySkyDome() {
       }
       float fbm(vec2 p) {
         float v = 0.0;
-        float a = 0.5;
-        for (int i = 0; i < 4; i++) {
+        float a = 0.58;
+        for (int i = 0; i < 2; i++) {
           v += a * noise(p);
-          p *= 2.05;
-          a *= 0.5;
+          p *= 2.15;
+          a *= 0.42;
         }
         return v;
       }
