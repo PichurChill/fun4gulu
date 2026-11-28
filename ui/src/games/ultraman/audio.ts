@@ -104,6 +104,7 @@ export class UltraAudio {
   private monsterId = 'gomora-mecha'
   private punchCounter = 0
   private lastVoiceAt = -Infinity
+  private lastResonanceAt = -Infinity
   private alarmSource: AudioBufferSourceNode | null = null
   private alarmGain: GainNode | null = null
   private alarmDesired = false
@@ -225,12 +226,22 @@ export class UltraAudio {
       const gain = this.ctx.createGain()
       gain.gain.value = opts.volume ?? 0.8
 
+      let panner: StereoPannerNode | null = null
       if (opts.pan !== undefined && typeof this.ctx.createStereoPanner === 'function') {
-        const panner = this.ctx.createStereoPanner()
+        panner = this.ctx.createStereoPanner()
         panner.pan.value = Math.max(-1, Math.min(1, opts.pan))
         src.connect(gain).connect(panner).connect(this.compressor)
       } else {
         src.connect(gain).connect(this.compressor)
+      }
+      src.onended = () => {
+        try {
+          src.disconnect()
+          gain.disconnect()
+          panner?.disconnect()
+        } catch {
+          // 忽略上下文已关闭异常
+        }
       }
 
       const startAt = this.ctx.currentTime + (opts.delay ?? 0)
@@ -267,13 +278,24 @@ export class UltraAudio {
     gain.gain.linearRampToValueAtTime(Math.min(0.52, intensity * 0.42), now + 0.012)
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
     osc.connect(gain).connect(this.compressor)
+    osc.onended = () => {
+      try {
+        osc.disconnect()
+        gain.disconnect()
+      } catch {
+        // 忽略释放异常
+      }
+    }
     osc.start(now)
     osc.stop(now + duration + 0.02)
   }
 
-  /** 叠加怪兽材质专属打击共振层（金属装甲清鸣 / 甲壳爆裂 / 邪能异响） */
+  /** 叠加怪兽材质专属打击共振层（节流防极速连打叠加破音） */
   private playArmorResonance(material: MonsterSpec['armorMaterial'], heavy: boolean, pan = 0) {
     if (this.muted || this.disposed) return
+    const nowPerf = performance.now()
+    if (!heavy && nowPerf - this.lastResonanceAt < 50) return
+    this.lastResonanceAt = nowPerf
     const ctx = this.ensureContext()
     if (!ctx || !this.compressor) return
     const now = ctx.currentTime
@@ -290,6 +312,12 @@ export class UltraAudio {
         gain.gain.setValueAtTime(heavy ? 0.14 : 0.085, now)
         gain.gain.exponentialRampToValueAtTime(0.0001, now + (heavy ? 0.2 : 0.12))
         osc.connect(gain).connect(this.compressor)
+        osc.onended = () => {
+          try {
+            osc.disconnect()
+            gain.disconnect()
+          } catch {}
+        }
         osc.start(now)
         osc.stop(now + 0.22)
       }
@@ -306,6 +334,13 @@ export class UltraAudio {
       gain.gain.setValueAtTime(heavy ? 0.18 : 0.11, now)
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12)
       osc.connect(filter).connect(gain).connect(this.compressor)
+      osc.onended = () => {
+        try {
+          osc.disconnect()
+          filter.disconnect()
+          gain.disconnect()
+        } catch {}
+      }
       osc.start(now)
       osc.stop(now + 0.14)
     } else if (material === 'eldritch') {
@@ -316,12 +351,20 @@ export class UltraAudio {
       osc.frequency.exponentialRampToValueAtTime(118, now + 0.18)
       gain.gain.setValueAtTime(heavy ? 0.18 : 0.1, now)
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.19)
+      let panner: StereoPannerNode | null = null
       if (typeof ctx.createStereoPanner === 'function') {
-        const panner = ctx.createStereoPanner()
+        panner = ctx.createStereoPanner()
         panner.pan.value = Math.max(-1, Math.min(1, pan))
         osc.connect(gain).connect(panner).connect(this.compressor)
       } else {
         osc.connect(gain).connect(this.compressor)
+      }
+      osc.onended = () => {
+        try {
+          osc.disconnect()
+          gain.disconnect()
+          panner?.disconnect()
+        } catch {}
       }
       osc.start(now)
       osc.stop(now + 0.2)

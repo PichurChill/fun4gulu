@@ -98,6 +98,10 @@ const hud = reactive<BattleHudState>({
   activeSkillBannerKey: null,
   impactFlashKind: 'none',
   impactFlashSeq: 0,
+  counterBonusLeft: 0,
+  lastMoveKey: null,
+  lastMoveSeq: 0,
+  practiceMastered: [],
   tracking: false,
   bodyCoverage: 'none',
   mirroredCenterX: 0.5,
@@ -113,6 +117,22 @@ const HERO_STATS: Record<HeroId, { atk: number; spd: number; eng: number }> = {
   dyna: { atk: 90, spd: 82, eng: 84 },
   zeta: { atk: 86, spd: 90, eng: 96 },
 }
+
+const PRACTICE_MOVES = ['jab', 'hook', 'uppercut', 'kick', 'guard', 'disc', 'beam'] as const
+const recentMoveKey = ref<string | null>(null)
+let recentMoveTimer: number | null = null
+watch(
+  () => hud.lastMoveSeq,
+  () => {
+    if (!hud.lastMoveKey) return
+    recentMoveKey.value = hud.lastMoveKey
+    if (recentMoveTimer !== null) window.clearTimeout(recentMoveTimer)
+    recentMoveTimer = window.setTimeout(() => {
+      recentMoveKey.value = null
+      recentMoveTimer = null
+    }, 1150)
+  },
+)
 
 const impactFlashActive = ref<BattleHudState['impactFlashKind']>('none')
 let impactFlashTimer: number | null = null
@@ -773,6 +793,10 @@ onUnmounted(() => {
     window.clearTimeout(impactFlashTimer)
     impactFlashTimer = null
   }
+  if (recentMoveTimer !== null) {
+    window.clearTimeout(recentMoveTimer)
+    recentMoveTimer = null
+  }
   stopCameraTracking()
   engine?.dispose()
   engine = null
@@ -781,8 +805,9 @@ onUnmounted(() => {
 
 <template>
   <div class="ultra-cockpit" :style="{ '--hero-accent': activeHeroHex }">
-    <!-- 3D 实景特摄战场全屏画布 -->
+    <!-- 3D 实景特摄战场全屏画布 + 轻质特摄暗角层 -->
     <div ref="stageRef" class="stage-canvas-wrap" />
+    <div class="cinema-vignette" aria-hidden="true" />
 
     <!-- 拍照闪光幕 -->
     <div v-if="photoFlash" class="shutter-flash" />
@@ -1151,11 +1176,33 @@ onUnmounted(() => {
       <!-- 顶部三栏：左上精简分值与阶段徽章 / 正中细长锐利红色 Boss 血条 / 右上紧凑工具 -->
       <div class="hud-top">
         <div class="hud-top-left">
-          <div class="score-plate">
-            <span class="plate-label">{{ t('message.ultramanView.score') }}</span>
-            <span class="plate-value">{{ hud.score }}</span>
+          <div class="hud-top-left-row">
+            <div class="score-plate">
+              <span class="plate-label">{{ t('message.ultramanView.score') }}</span>
+              <span class="plate-value">{{ hud.score }}</span>
+            </div>
+            <span class="stage-pill">{{ stageChipText }}</span>
+            <span v-if="hud.counterBonusLeft > 0" class="counter-aura-pill">
+              {{ t('message.ultramanView.counterActive') }} {{ hud.counterBonusLeft.toFixed(1) }}s
+            </span>
           </div>
-          <span class="stage-pill">{{ stageChipText }}</span>
+          <!-- 实时招式识别遥测胶囊（挥拳/破招/闪避/弹反瞬间亮起，体感操控更笃定） -->
+          <div v-if="recentMoveKey" :key="hud.lastMoveSeq" class="live-move-telemetry">
+            <span class="telemetry-dot" />
+            <span>{{ t(`message.ultramanView.moveTags.${recentMoveKey}`) }}</span>
+          </div>
+          <!-- 试招靶场 7 招全套点亮清单 -->
+          <div v-if="hud.gameMode === 'practice'" class="practice-checklist">
+            <span
+              v-for="mk in PRACTICE_MOVES"
+              :key="mk"
+              class="practice-chip"
+              :class="{ done: hud.practiceMastered.includes(mk) }"
+            >
+              <i class="check-dot" />
+              {{ t(`message.ultramanView.moveTags.${mk}`) }}
+            </span>
+          </div>
         </div>
 
         <!-- 顶部防卫队分段 Boss 血条 + 机制破局实时提示 -->
@@ -4039,5 +4086,104 @@ onUnmounted(() => {
   background: rgba(234, 179, 8, 0.16);
   border: 1px solid rgba(250, 204, 21, 0.55);
   clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
+}
+
+/* 超轻特摄电影暗角（纯合成层零渲染开销） */
+.cinema-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background: radial-gradient(
+    ellipse at 50% 46%,
+    rgba(0, 0, 0, 0) 58%,
+    rgba(3, 8, 20, 0.42) 100%
+  );
+}
+
+/* 左上状态堆叠 + 光之反击徽章 + 实时招式识别胶囊 + 靶场 7 招清单 */
+.hud-top-left {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.hud-top-left-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.counter-aura-pill {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  color: #0b1220;
+  background: linear-gradient(90deg, #fde047, #38e8ff);
+  box-shadow: 0 0 14px rgba(250, 204, 21, 0.6);
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  animation: counterPulse 0.65s ease-in-out infinite alternate;
+}
+@keyframes counterPulse {
+  from { filter: brightness(0.95); transform: scale(1); }
+  to { filter: brightness(1.18); transform: scale(1.04); }
+}
+.live-move-telemetry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  color: #e0f7ff;
+  background: rgba(6, 18, 36, 0.78);
+  border: 1px solid rgba(56, 232, 255, 0.55);
+  border-left: 3px solid #facc15;
+  animation: movePop 0.2s ease-out;
+}
+.telemetry-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fde047;
+  box-shadow: 0 0 8px #fde047;
+}
+@keyframes movePop {
+  from { opacity: 0; transform: translateX(-8px) scale(0.92); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+.practice-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 340px;
+}
+.practice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(203, 213, 225, 0.75);
+  background: rgba(7, 16, 32, 0.68);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  transition: all 0.2s ease;
+}
+.practice-chip .check-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.45);
+}
+.practice-chip.done {
+  color: #fef08a;
+  background: rgba(234, 179, 8, 0.2);
+  border-color: rgba(250, 204, 21, 0.75);
+}
+.practice-chip.done .check-dot {
+  background: #4ade80;
+  box-shadow: 0 0 6px #4ade80;
 }
 </style>

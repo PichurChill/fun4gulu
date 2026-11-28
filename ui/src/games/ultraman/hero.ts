@@ -14,6 +14,7 @@ const tmpV7 = new THREE.Vector3()
 const tmpV8 = new THREE.Vector3()
 const tmpV9 = new THREE.Vector3()
 const tmpV10 = new THREE.Vector3()
+const tmpElbowOut = new THREE.Vector3()
 const tmpQ1 = new THREE.Quaternion()
 const tmpQ2 = new THREE.Quaternion()
 const tmpQ3 = new THREE.Quaternion()
@@ -194,10 +195,11 @@ export class HeroController {
   private eyeMaterials: THREE.MeshStandardMaterial[] = []
 
   // 皮套共享 Fresnel 轮廓光与蓄力/受击脉冲 Uniform
-  private readonly uHeroRimColor = { value: new THREE.Color(0x38e8ff) }
+  private uHeroRimColor = { value: new THREE.Color(0x38e8ff) }
   private readonly uHeroRimStrength = { value: 0.34 }
   private readonly uHeroHitFlash = { value: 0 }
   private heroHitFlash = 0
+  private counterAuraActive = false
 
   private formSilverEntries: { mat: THREE.MeshStandardMaterial; baseColor: THREE.Color }[] = []
   private formSuitEntries: {
@@ -254,6 +256,12 @@ export class HeroController {
   private smShinR = new THREE.Vector3()
   private smPalmL = new THREE.Vector3()
   private smPalmR = new THREE.Vector3()
+  private prevLiveUpperL = new THREE.Vector3()
+  private prevLiveLowerL = new THREE.Vector3()
+  private prevLiveUpperR = new THREE.Vector3()
+  private prevLiveLowerR = new THREE.Vector3()
+  private armLostTimeL = 0
+  private armLostTimeR = 0
   private smFingersL = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
   private smFingersR = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
   private wasMartial = false
@@ -286,6 +294,12 @@ export class HeroController {
     this.smShinR.set(0.12 * s, -0.98, 0.18 * s).normalize()
     this.smPalmL.set(0.65 * s, -0.65, 0.35 * s).normalize()
     this.smPalmR.set(-0.65 * s, -0.65, 0.35 * s).normalize()
+    this.prevLiveUpperL.copy(this.smUpperL)
+    this.prevLiveLowerL.copy(this.smLowerL)
+    this.prevLiveUpperR.copy(this.smUpperR)
+    this.prevLiveLowerR.copy(this.smLowerR)
+    this.armLostTimeL = 0
+    this.armLostTimeR = 0
     this.smFingersL = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
     this.smFingersR = { thumb: 0.78, index: 0.78, mid: 0.78, ring: 0.78, pinky: 0.78, splay: 0 }
     this.wasMartial = false
@@ -321,6 +335,11 @@ export class HeroController {
   /** 受击皮套闪红反馈 */
   public triggerHurtFlash(strength = 1) {
     this.heroHitFlash = Math.min(1, Math.max(this.heroHitFlash, strength))
+  }
+
+  /** 光之反击增伤窗口开关（点亮全身耀眼金蓝轮廓光） */
+  public setCounterAura(active: boolean) {
+    this.counterAuraActive = active
   }
 
   /** 查询当前招式是否处于真实物理接触窗口（Active Hit Frame）及发力肢体 */
@@ -1124,7 +1143,7 @@ export class HeroController {
     tmpV6.set(uNorm.x * s, uNorm.y, uNorm.z * s)
     this.driveCollarForArm(side === 'L' ? b.collarL : b.collarR, side, tmpV6)
 
-    const elbowBack = this.computeElbowBackNormalArena(upperArena, lowerArena, side, tmpV9)
+    const elbowBack = this.computeElbowBackNormalArena(upperArena, lowerArena, side, tmpElbowOut)
     this.aimBoneArena(side === 'L' ? b.upperArmL : b.upperArmR, upperArena, 1, elbowBack)
     this.aimBoneArena(side === 'L' ? b.lowerArmL : b.lowerArmR, lowerArena, 1, palmArena)
     this.aimBoneArena(side === 'L' ? b.handL : b.handR, lowerArena, 0.55, palmArena)
@@ -1571,16 +1590,25 @@ export class HeroController {
     this.combatLungeZ += (lunge.z - this.combatLungeZ) * (1 - Math.exp(-inputDt * 26))
     this.combatVaultY += (lunge.y - this.combatVaultY) * (1 - Math.exp(-inputDt * 24))
 
-    // 更新皮套轮廓光与受击闪红
+    // 更新皮套轮廓光与受击闪红（光之反击窗口全身泛起耀眼金蓝轮廓光）
     this.heroHitFlash = Math.max(0, this.heroHitFlash - inputDt * 4.2)
     this.uHeroHitFlash.value = this.heroHitFlash
+    const baseRimHex = this.currentForm?.accentColor ?? this.profile?.accentColor ?? 0x38e8ff
+    if (this.counterAuraActive) {
+      const pulseHex = Math.sin(elapsedTime * 18) > 0 ? 0xfacc15 : 0x38e8ff
+      this.uHeroRimColor.value.setHex(pulseHex)
+    } else {
+      this.uHeroRimColor.value.setHex(baseRimHex)
+    }
     const chargingBoost = Math.max(this.beamChargeVisual, this.discChargeVisual)
     const actionRimBoost =
       this.action === 'beam' || this.action === 'beam-spread' || this.action === 'transform'
         ? 0.95
-        : this.action === 'guard-parry' || this.isGuarding
-          ? 0.65
-          : chargingBoost * 0.65
+        : this.counterAuraActive
+          ? 0.85
+          : this.action === 'guard-parry' || this.isGuarding
+            ? 0.65
+            : chargingBoost * 0.65
     this.uHeroRimStrength.value = 0.34 + actionRimBoost + Math.sin(elapsedTime * 3.0) * 0.05
 
     const idleIntensity = this.profile?.timerIdleIntensity ?? 1.4
@@ -1624,13 +1652,18 @@ export class HeroController {
       this.postMartialBlend = Math.max(0, this.postMartialBlend - inputDt)
     }
 
-    if (!useMartial && this.isLiveTracking(nowMs) && this.livePose) {
+    const liveActive = this.isLiveTracking(nowMs) && !!this.livePose
+    if (!useMartial && liveActive && this.livePose) {
       this.applyLiveBodyPose(this.livePose, inputDt, elapsedTime)
       this.applyBoneSmoothing(inputDt, false, this.postMartialBlend / 0.12, true)
       return
     }
 
-    this.applyProceduralPose(elapsedTime)
+    // 体感挥拳期间持续预热实时双臂向量，并将非发力侧手平滑融合真实动捕，左右连拳零跳变！
+    if (liveActive && this.livePose) {
+      this.syncLiveArmTrackers(this.livePose, inputDt)
+    }
+    this.applyProceduralPose(elapsedTime, liveActive && this.actionInstant)
     this.applyBoneSmoothing(inputDt, useMartial)
   }
 
@@ -1787,40 +1820,34 @@ export class HeroController {
   }
 
   /**
-   * 实时全身动捕 + 英雄体态美化层：
-   * 自动挺胸开肩、约束肘膝极角、叠加横向迈步与头部视线微锁，让普通人动作化为光之巨人英姿
+   * 实时动捕手臂跟踪器（带微幅运动速度前瞻抵消摄像头延迟 + 短暂出镜优雅回架）
    */
-  private applyLiveBodyPose(pose: LiveBodyPose, dt: number, elapsedTime: number) {
-    if (!this.profile || !this.model) return
-    const b = this.profile.bones
-    // 提速动捕向量跟随基频（由 22 提至 38），消除手挥出后的拖拽滞后感
-    const baseRate = 38
-    const alpha = 1 - Math.exp(-dt * baseRate)
+  private syncLiveArmTrackers(pose: LiveBodyPose, dt: number) {
     const s = this.sideSign
-    const adaptiveAlpha = (cur: THREE.Vector3, target: Vec3Like | null, fallback: number) => {
-      if (!target) return fallback
-      tmpV1.set(target.x * s, target.y, target.z * s).normalize()
-      if (tmpV1.lengthSq() < 1e-6) return fallback
+    const baseRate = 40
+    const alpha = 1 - Math.exp(-dt * baseRate)
+    const leadStep = (
+      cur: THREE.Vector3,
+      prev: THREE.Vector3,
+      target: Vec3Like,
+    ) => {
+      tmpV1.set(target.x * s, target.y, target.z * s)
+      if (tmpV1.lengthSq() < 1e-6) return
+      tmpV1.normalize()
+      // 一阶速度前瞻：快速挥臂时前推约 18ms，大幅改善镜面跟手直觉（幅度夹紧防止抖动过冲）
       const change = 1 - Math.min(1, Math.max(-1, cur.dot(tmpV1)))
-      const rate = baseRate + Math.min(95, Math.max(0, change - 0.001) * 1900)
-      return 1 - Math.exp(-dt * rate)
+      if (change > 0.002 && change < 0.35) {
+        tmpV2.subVectors(tmpV1, prev).multiplyScalar(0.24)
+        if (tmpV2.lengthSq() > 0.05) tmpV2.setLength(Math.sqrt(0.05))
+        tmpV1.add(tmpV2).normalize()
+      }
+      prev.copy(cur)
+      const rate = baseRate + Math.min(105, Math.max(0, change - 0.001) * 2000)
+      const a = 1 - Math.exp(-dt * rate)
+      cur.lerp(tmpV1, a)
+      if (cur.lengthSq() > 1e-6) cur.normalize()
     }
 
-    // 英雄体态美化：抑制含胸并限制夸张歪身
-    const heroPitchTarget = THREE.MathUtils.clamp(pose.torsoPitch * 0.85 + 0.04, -0.28, 0.42)
-    const heroRollTarget = THREE.MathUtils.clamp(pose.torsoRoll * 0.78, -0.34, 0.34)
-    const heroYawTarget = THREE.MathUtils.clamp(pose.torsoYaw * 0.92, -0.68, 0.68)
-
-    this.smTorsoPitch = THREE.MathUtils.lerp(this.smTorsoPitch, heroPitchTarget, alpha)
-    this.smTorsoRoll = THREE.MathUtils.lerp(this.smTorsoRoll, heroRollTarget, alpha)
-    this.smTorsoYaw = THREE.MathUtils.lerp(this.smTorsoYaw, heroYawTarget, alpha)
-    this.smHeadYaw = THREE.MathUtils.lerp(this.smHeadYaw, pose.headYaw, alpha)
-    this.smHeadPitch = THREE.MathUtils.lerp(this.smHeadPitch, pose.headPitch, alpha)
-    this.smHeadRoll = THREE.MathUtils.lerp(this.smHeadRoll, pose.headRoll, alpha)
-    this.smJumpHeight = THREE.MathUtils.lerp(this.smJumpHeight, pose.jumpHeight, alpha)
-    this.smCrouchDepth = THREE.MathUtils.lerp(this.smCrouchDepth, pose.crouchDepth, alpha)
-
-    // 手臂体态美化与深度安全夹紧：防单目 Z 噪声把手臂折进背后或胸甲穿模
     const beautifyUpperArm = (v: Vec3Like | null, side: 'L' | 'R'): Vec3Like | null => {
       if (!v) return null
       const safeZ = THREE.MathUtils.clamp(v.z, -1, 0.42)
@@ -1842,15 +1869,77 @@ export class HeroController {
     const uR = beautifyUpperArm(pose.upperArmR, 'R')
     const lR = clampLowerArm(pose.lowerArmR)
 
-    if (uL) lerpArenaVec(this.smUpperL, uL, adaptiveAlpha(this.smUpperL, uL, alpha), s)
-    if (lL) lerpArenaVec(this.smLowerL, lL, adaptiveAlpha(this.smLowerL, lL, alpha), s)
-    if (pose.handL) lerpArenaVec(this.smHandL, pose.handL, adaptiveAlpha(this.smHandL, pose.handL, alpha), s)
-    else if (lL) lerpArenaVec(this.smHandL, lL, alpha, s)
+    if (uL) {
+      this.armLostTimeL = 0
+      leadStep(this.smUpperL, this.prevLiveUpperL, uL)
+      if (lL) leadStep(this.smLowerL, this.prevLiveLowerL, lL)
+      if (pose.handL) lerpArenaVec(this.smHandL, pose.handL, alpha, s)
+      else if (lL) lerpArenaVec(this.smHandL, lL, alpha, s)
+    } else {
+      this.armLostTimeL += dt
+      // 手臂短暂移出摄像头边缘超过 220ms 后平滑收回格斗待机架，避免死僵悬空
+      if (this.armLostTimeL > 0.22) {
+        const recA = 1 - Math.exp(-dt * 8)
+        tmpV1.set(-0.42 * s, -0.28, -0.82 * s).normalize()
+        tmpV2.set(0.22 * s, 0.46, -0.86 * s).normalize()
+        this.smUpperL.lerp(tmpV1, recA).normalize()
+        this.smLowerL.lerp(tmpV2, recA).normalize()
+        this.smHandL.copy(this.smLowerL)
+      }
+    }
 
-    if (uR) lerpArenaVec(this.smUpperR, uR, adaptiveAlpha(this.smUpperR, uR, alpha), s)
-    if (lR) lerpArenaVec(this.smLowerR, lR, adaptiveAlpha(this.smLowerR, lR, alpha), s)
-    if (pose.handR) lerpArenaVec(this.smHandR, pose.handR, adaptiveAlpha(this.smHandR, pose.handR, alpha), s)
-    else if (lR) lerpArenaVec(this.smHandR, lR, alpha, s)
+    if (uR) {
+      this.armLostTimeR = 0
+      leadStep(this.smUpperR, this.prevLiveUpperR, uR)
+      if (lR) leadStep(this.smLowerR, this.prevLiveLowerR, lR)
+      if (pose.handR) lerpArenaVec(this.smHandR, pose.handR, alpha, s)
+      else if (lR) lerpArenaVec(this.smHandR, lR, alpha, s)
+    } else {
+      this.armLostTimeR += dt
+      if (this.armLostTimeR > 0.22) {
+        const recA = 1 - Math.exp(-dt * 8)
+        tmpV1.set(0.48 * s, -0.36, -0.78 * s).normalize()
+        tmpV2.set(-0.22 * s, 0.36, -0.9 * s).normalize()
+        this.smUpperR.lerp(tmpV1, recA).normalize()
+        this.smLowerR.lerp(tmpV2, recA).normalize()
+        this.smHandR.copy(this.smLowerR)
+      }
+    }
+  }
+
+  /**
+   * 实时全身动捕 + 英雄体态美化层：
+   * 速度前瞻抵消摄像头延迟、自动挺胸开肩、约束肘膝极角、叠加横向迈步与出镜优雅回架
+   */
+  private applyLiveBodyPose(pose: LiveBodyPose, dt: number, elapsedTime: number) {
+    if (!this.profile || !this.model) return
+    const b = this.profile.bones
+    const baseRate = 40
+    const alpha = 1 - Math.exp(-dt * baseRate)
+    const s = this.sideSign
+    const adaptiveAlpha = (cur: THREE.Vector3, target: Vec3Like | null, fallback: number) => {
+      if (!target) return fallback
+      tmpV1.set(target.x * s, target.y, target.z * s).normalize()
+      if (tmpV1.lengthSq() < 1e-6) return fallback
+      const change = 1 - Math.min(1, Math.max(-1, cur.dot(tmpV1)))
+      const rate = baseRate + Math.min(95, Math.max(0, change - 0.001) * 1900)
+      return 1 - Math.exp(-dt * rate)
+    }
+
+    const heroPitchTarget = THREE.MathUtils.clamp(pose.torsoPitch * 0.85 + 0.04, -0.28, 0.42)
+    const heroRollTarget = THREE.MathUtils.clamp(pose.torsoRoll * 0.78, -0.34, 0.34)
+    const heroYawTarget = THREE.MathUtils.clamp(pose.torsoYaw * 0.92, -0.68, 0.68)
+
+    this.smTorsoPitch = THREE.MathUtils.lerp(this.smTorsoPitch, heroPitchTarget, alpha)
+    this.smTorsoRoll = THREE.MathUtils.lerp(this.smTorsoRoll, heroRollTarget, alpha)
+    this.smTorsoYaw = THREE.MathUtils.lerp(this.smTorsoYaw, heroYawTarget, alpha)
+    this.smHeadYaw = THREE.MathUtils.lerp(this.smHeadYaw, pose.headYaw, alpha)
+    this.smHeadPitch = THREE.MathUtils.lerp(this.smHeadPitch, pose.headPitch, alpha)
+    this.smHeadRoll = THREE.MathUtils.lerp(this.smHeadRoll, pose.headRoll, alpha)
+    this.smJumpHeight = THREE.MathUtils.lerp(this.smJumpHeight, pose.jumpHeight, alpha)
+    this.smCrouchDepth = THREE.MathUtils.lerp(this.smCrouchDepth, pose.crouchDepth, alpha)
+
+    this.syncLiveArmTrackers(pose, dt)
 
     if (pose.thighL)
       lerpArenaVec(this.smThighL, pose.thighL, adaptiveAlpha(this.smThighL, pose.thighL, alpha), s)
@@ -1953,20 +2042,21 @@ export class HeroController {
     if (handTrackR?.palmNormal) lerpArenaVec(this.smPalmR, handTrackR.palmNormal, palmAlpha, s)
     else this.smPalmR.lerp(defaultPalmR, palmAlpha).normalize()
 
-    if (pose.upperArmL) {
+    // 即使单臂短暂出镜，也用优雅回架后的平滑向量驱动，不留下悬空僵尸姿态
+    if (pose.upperArmL || this.armLostTimeL > 0.22) {
       this.driveCollarForArm(b.collarL, 'L', this.smUpperL)
-      const elbowBackL = computeElbowBackWorld(this.smUpperL, this.smLowerL, !!pose.lowerArmL, 'L')
+      const elbowBackL = computeElbowBackWorld(this.smUpperL, this.smLowerL, !!pose.lowerArmL || this.armLostTimeL > 0.22, 'L')
       this.aimBoneWorld(b.upperArmL, this.smUpperL, 1, elbowBackL)
-      if (pose.lowerArmL) {
+      if (pose.lowerArmL || this.armLostTimeL > 0.22) {
         this.aimBoneWorld(b.lowerArmL, this.smLowerL, 1, this.smPalmL)
         this.aimBoneWorld(b.handL, this.smHandL, handTrackL ? 0.78 : 0.48, this.smPalmL)
       }
     }
-    if (pose.upperArmR) {
+    if (pose.upperArmR || this.armLostTimeR > 0.22) {
       this.driveCollarForArm(b.collarR, 'R', this.smUpperR)
-      const elbowBackR = computeElbowBackWorld(this.smUpperR, this.smLowerR, !!pose.lowerArmR, 'R')
+      const elbowBackR = computeElbowBackWorld(this.smUpperR, this.smLowerR, !!pose.lowerArmR || this.armLostTimeR > 0.22, 'R')
       this.aimBoneWorld(b.upperArmR, this.smUpperR, 1, elbowBackR)
-      if (pose.lowerArmR) {
+      if (pose.lowerArmR || this.armLostTimeR > 0.22) {
         this.aimBoneWorld(b.lowerArmR, this.smLowerR, 1, this.smPalmR)
         this.aimBoneWorld(b.handR, this.smHandR, handTrackR ? 0.78 : 0.48, this.smPalmR)
       }
@@ -2071,7 +2161,7 @@ export class HeroController {
     }
   }
 
-  private applyProceduralPose(elapsedTime: number) {
+  private applyProceduralPose(elapsedTime: number, blendOffhandLive = false) {
     if (!this.profile || !this.model) return
     const b = this.profile.bones
     const leanRatio = THREE.MathUtils.clamp((this.currentX * this.sideSign) / Math.max(4, this.leanRange), -1, 1)
@@ -2781,6 +2871,47 @@ export class HeroController {
       )
     } else {
       this.applyHeroIdleArms(breath)
+    }
+
+    // 体感实时出拳融合：发力手执行完整特摄拳路，非发力手保持 68% 实时动捕跟随，左右疾风连拳绝不抽搐打架！
+    if (blendOffhandLive && this.livePose) {
+      const s = this.sideSign
+      const isRightStrike =
+        this.action === 'punch-right' ||
+        this.action === 'hook-right' ||
+        this.action === 'uppercut-right' ||
+        this.action === 'chop-right' ||
+        this.action === 'palm-right' ||
+        this.action === 'punch-heavy'
+      const isLeftStrike =
+        this.action === 'punch-left' ||
+        this.action === 'hook-left' ||
+        this.action === 'uppercut-left' ||
+        this.action === 'chop-left' ||
+        this.action === 'palm-left'
+      if (isRightStrike && this.livePose.upperArmL) {
+        const elbowBackL = this.computeElbowBackNormalArena(
+          tmpV6.set(this.smUpperL.x * s, this.smUpperL.y, this.smUpperL.z * s),
+          tmpV7.set(this.smLowerL.x * s, this.smLowerL.y, this.smLowerL.z * s),
+          'L',
+          tmpElbowOut,
+        )
+        this.aimBoneWorld(b.upperArmL, this.smUpperL, 0.72, tmpV6.set(elbowBackL.x * s, elbowBackL.y, elbowBackL.z * s))
+        if (this.livePose.lowerArmL) {
+          this.aimBoneWorld(b.lowerArmL, this.smLowerL, 0.72, this.smPalmL)
+        }
+      } else if (isLeftStrike && this.livePose.upperArmR) {
+        const elbowBackR = this.computeElbowBackNormalArena(
+          tmpV6.set(this.smUpperR.x * s, this.smUpperR.y, this.smUpperR.z * s),
+          tmpV7.set(this.smLowerR.x * s, this.smLowerR.y, this.smLowerR.z * s),
+          'R',
+          tmpElbowOut,
+        )
+        this.aimBoneWorld(b.upperArmR, this.smUpperR, 0.72, tmpV6.set(elbowBackR.x * s, elbowBackR.y, elbowBackR.z * s))
+        if (this.livePose.lowerArmR) {
+          this.aimBoneWorld(b.lowerArmR, this.smLowerR, 0.72, this.smPalmR)
+        }
+      }
     }
 
     this.root.updateMatrixWorld(true)

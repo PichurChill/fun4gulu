@@ -337,6 +337,13 @@ export interface BattleHudState {
   activeSkillBannerKey: string | null
   impactFlashKind: 'none' | 'heavy' | 'parry' | 'dodge' | 'hurt'
   impactFlashSeq: number
+  /** 光之反击 1.4x 增伤窗口剩余秒数 */
+  counterBonusLeft: number
+  /** 最近一次识别触发的招式标识与递增序号（供体感实时招式反馈胶囊使用） */
+  lastMoveKey: string | null
+  lastMoveSeq: number
+  /** 试招靶场已点亮掌握的招式列表 */
+  practiceMastered: string[]
   tracking: boolean
   bodyCoverage: 'none' | 'upper' | 'full'
   mirroredCenterX: number

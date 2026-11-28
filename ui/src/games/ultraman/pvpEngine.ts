@@ -164,7 +164,7 @@ export class UltramanSplitPvpEngine {
   private readonly splitBlooms: [UnrealBloomPass, UnrealBloomPass]
   private readonly blitScene = new THREE.Scene()
   private readonly blitCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-  private readonly blitMat: THREE.MeshBasicMaterial
+  private readonly blitMat: THREE.ShaderMaterial
   private readonly blitQuad: THREE.Mesh
 
   public readonly audio = new UltraAudio()
@@ -208,6 +208,13 @@ export class UltramanSplitPvpEngine {
   private useBloom = true
   private smoothFrameMs = 16.7
   private slowFrameTime = 0
+  private readonly tmpZeroVec = new THREE.Vector3()
+  private readonly tmpOppEmit = new THREE.Vector3()
+  private readonly tmpBeamMid = new THREE.Vector3()
+  private readonly tmpTypePos = new THREE.Vector3()
+  private readonly tmpLookOffset = new THREE.Vector3()
+  private readonly tmpCamTarget = new THREE.Vector3()
+  private readonly tmpLookTarget = new THREE.Vector3()
   private readonly resizeObserver: ResizeObserver
 
   constructor(container: HTMLElement, callbacks: PvpEngineCallbacks) {
@@ -255,9 +262,9 @@ export class UltramanSplitPvpEngine {
         Math.max(1, Math.floor(this.fullWidth * 0.5)),
         Math.max(1, Math.floor(this.fullHeight * 0.5)),
       ),
-      0.24,
-      0.24,
-      0.96,
+      0.2,
+      0.2,
+      0.98,
     )
     this.menuComposer.addPass(this.menuBloom)
     this.menuComposer.addPass(new OutputPass())
@@ -273,9 +280,9 @@ export class UltramanSplitPvpEngine {
       comp.addPass(new RenderPass(this.scene, cam))
       const bloom = new UnrealBloomPass(
         new THREE.Vector2(Math.max(1, Math.floor(sw * 0.5)), Math.max(1, Math.floor(sh * 0.5))),
-        0.24,
-        0.24,
-        0.96,
+        0.18,
+        0.2,
+        1.02,
       )
       comp.addPass(bloom)
       comp.addPass(new OutputPass())
@@ -286,8 +293,25 @@ export class UltramanSplitPvpEngine {
     this.splitComposers = [sc0.comp, sc1.comp]
     this.splitBlooms = [sc0.bloom, sc1.bloom]
 
-    this.blitMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+    // 离屏 splitComposers 已由 OutputPass 完成 ACES 色调映射与 sRGB 编码，此处用直通 Shader 原样拷贝，避免 MeshBasicMaterial 二次 sRGB 伽马提亮泛白
+    this.blitMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uMap: { value: null as THREE.Texture | null },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uMap;
+        varying vec2 vUv;
+        void main() {
+          gl_FragColor = texture2D(uMap, vUv);
+        }
+      `,
       depthTest: false,
       depthWrite: false,
       toneMapped: false,
@@ -979,8 +1003,15 @@ export class UltramanSplitPvpEngine {
   }
 
   private syncBeamClashVisuals() {
-    this.fighters[0].effects.setBeamClash(this.beamClashActive, this.beamClashBalance)
-    this.fighters[1].effects.setBeamClash(this.beamClashActive, 1 - this.beamClashBalance)
+    // 双人 PvP 对波时双方各自渲染自己的 heroBeam：禁用冗余的怪兽暗黑光线，且全场景仅保留一份中心奇点球
+    this.fighters[0].effects.setBeamClash(this.beamClashActive, this.beamClashBalance, {
+      showCounterBeam: false,
+      showClashPoint: true,
+    })
+    this.fighters[1].effects.setBeamClash(this.beamClashActive, 1 - this.beamClashBalance, {
+      showCounterBeam: false,
+      showClashPoint: false,
+    })
   }
 
   private pushBeamClash(slot: PvpSlot, amount: number) {
@@ -1292,6 +1323,7 @@ export class UltramanSplitPvpEngine {
         if (this.slowFrameTime > 1.4) {
           this.useBloom = false
           this.renderer.setPixelRatio(1)
+          this.renderer.toneMappingExposure = 1.08
         }
       } else {
         this.slowFrameTime = Math.max(0, this.slowFrameTime - rawDt * 0.5)
@@ -1359,9 +1391,11 @@ export class UltramanSplitPvpEngine {
         this.controlMode === 'camera' ? f.gestureDiscCharge : 0,
         f.gestureDiscSide,
       )
-      // 双雄战斗时头眼死锁对手面部
+      // 双雄战斗时头眼死锁对手面部（复用临时向量零 GC）
       if (this.phase === 'fighting') {
-        f.hero.setLookTarget(opp.hero.getTargetCenter().add(new THREE.Vector3(0, 2.2, 0)))
+        this.tmpLookOffset.copy(opp.hero.getTargetCenter())
+        this.tmpLookOffset.y += 2.2
+        f.hero.setLookTarget(this.tmpLookOffset)
       } else {
         f.hero.setLookTarget(null)
       }
@@ -1426,13 +1460,12 @@ export class UltramanSplitPvpEngine {
       this.stepPvpCombat(dt)
     }
 
-    const zeroVec = new THREE.Vector3()
     for (const slot of [0, 1] as const) {
       const f = this.fighters[slot]
       const opp = this.fighters[(1 - slot) as PvpSlot]
       const beamSeg = f.hero.getBeamOriginSegment()
       const oppSeg = opp.hero.getBeamOriginSegment()
-      const oppEmit = oppSeg[0].clone().lerp(oppSeg[1], 0.58)
+      const oppEmit = this.tmpOppEmit.copy(oppSeg[0]).lerp(oppSeg[1], 0.58)
       const oppCenter = opp.hero.getTargetCenter()
 
       f.effects.update(
@@ -1440,7 +1473,7 @@ export class UltramanSplitPvpEngine {
         this.elapsedTime,
         beamSeg,
         oppCenter,
-        this.beamClashActive ? oppEmit : zeroVec,
+        this.beamClashActive ? oppEmit : this.tmpZeroVec,
         f.hero.getTargetCenter(),
         this.cameras[slot].quaternion,
         this.cameras[slot].position,
@@ -1455,14 +1488,14 @@ export class UltramanSplitPvpEngine {
       )
       f.effects.updateChargePreview(
         this.controlMode === 'camera' ? f.gestureBeamCharge : 0,
-        beamSeg[0].clone().lerp(beamSeg[1], 0.55),
+        this.tmpBeamMid.copy(beamSeg[0]).lerp(beamSeg[1], 0.55),
         this.controlMode === 'camera' ? f.gestureDiscCharge : 0,
         f.hero.getDiscOrigin(f.gestureDiscSide ?? 'right'),
         this.elapsedTime,
       )
       f.effects.updateTypeCharge(
         this.controlMode === 'camera' && f.profile.forms ? f.gestureTypeCharge : 0,
-        new THREE.Vector3(f.hero.currentX, 15.2, f.hero.worldZ),
+        this.tmpTypePos.set(f.hero.currentX, 15.2, f.hero.worldZ),
         this.getActiveForm(slot)?.accentColor ?? 0xb388ff,
         this.elapsedTime,
       )
@@ -1613,8 +1646,8 @@ export class UltramanSplitPvpEngine {
       const sway = Math.sin(this.elapsedTime * 0.55) * 0.65
       const menuWide = THREE.MathUtils.clamp((aspect - 1.1) / 0.68, 0, 1)
       const menuDistX = THREE.MathUtils.lerp(28.5, 22.8, menuWide)
-      const targetPos = new THREE.Vector3(menuDistX, 9.8, sway * 1.1)
-      const targetLook = new THREE.Vector3(0, 7.5, 0)
+      const targetPos = this.tmpCamTarget.set(menuDistX, 9.8, sway * 1.1)
+      const targetLook = this.tmpLookTarget.set(0, 7.5, 0)
       this.fighters[0].camAnchor.lerp(targetPos, 1 - Math.exp(-dt * 5))
       this.fighters[0].lookAnchor.lerp(targetLook, 1 - Math.exp(-dt * 6))
       cam.aspect = aspect
@@ -1631,17 +1664,17 @@ export class UltramanSplitPvpEngine {
       const cam = this.cameras[slot]
       const s = f.sideSign
 
-      const targetCam = new THREE.Vector3()
-      const targetLook = new THREE.Vector3()
+      const targetCam = this.tmpCamTarget.set(0, 0, 0)
+      const targetLook = this.tmpLookTarget.set(0, 0, 0)
 
       if (this.phase === 'match-over' && this.matchWinner === slot) {
         targetCam.set(s * 3.2, 9.2, s * 22.5)
         targetLook.copy(f.hero.root.position).add(new THREE.Vector3(0, 7, 0))
       } else if (this.beamClashActive) {
-        // 控制在 ±14.2 主干道安全走廊内，避免对波特写镜头擦碰 ±15 路灯柱或街边断桥
-        const clashSideX = s * THREE.MathUtils.lerp(12.2, 13.8, wideFactor)
-        targetCam.set(clashSideX, 11.2, s * 8.6)
-        targetLook.set(0, 8.8, -s * 0.8)
+        // 控制在 ±14.0 主干道安全走廊内并拉开纵深，避免路灯遮挡同时全景呈现双色光线对撞
+        const clashSideX = s * THREE.MathUtils.lerp(13.0, 14.0, wideFactor)
+        targetCam.set(clashSideX, 10.6, s * 11.4)
+        targetLook.set(0, 8.6, 0)
       } else if (f.effects.isHeroBeamActive()) {
         const armSign = f.gestureBeamArmSide === 'left' ? -1 : 1
         const beamOffsetX = s * armSign * THREE.MathUtils.lerp(3.0, 6.8, wideFactor)
@@ -1744,24 +1777,24 @@ export class UltramanSplitPvpEngine {
     if (this.portraitSplit) {
       const halfH = Math.floor(h * 0.5)
       const topH = h - halfH
-      this.blitMat.map = this.splitComposers[0].readBuffer.texture
+      this.blitMat.uniforms.uMap!.value = this.splitComposers[0].readBuffer.texture
       this.renderer.setViewport(0, halfH, w, topH)
       this.renderer.setScissor(0, halfH, w, topH)
       this.renderer.render(this.blitScene, this.blitCamera)
 
-      this.blitMat.map = this.splitComposers[1].readBuffer.texture
+      this.blitMat.uniforms.uMap!.value = this.splitComposers[1].readBuffer.texture
       this.renderer.setViewport(0, 0, w, halfH)
       this.renderer.setScissor(0, 0, w, halfH)
       this.renderer.render(this.blitScene, this.blitCamera)
     } else {
       const halfW = Math.floor(w * 0.5)
       const rightW = w - halfW
-      this.blitMat.map = this.splitComposers[0].readBuffer.texture
+      this.blitMat.uniforms.uMap!.value = this.splitComposers[0].readBuffer.texture
       this.renderer.setViewport(0, 0, halfW, h)
       this.renderer.setScissor(0, 0, halfW, h)
       this.renderer.render(this.blitScene, this.blitCamera)
 
-      this.blitMat.map = this.splitComposers[1].readBuffer.texture
+      this.blitMat.uniforms.uMap!.value = this.splitComposers[1].readBuffer.texture
       this.renderer.setViewport(halfW, 0, rightW, h)
       this.renderer.setScissor(halfW, 0, rightW, h)
       this.renderer.render(this.blitScene, this.blitCamera)

@@ -1,4 +1,4 @@
-import type { MonsterAttackKind, MonsterSpec } from './types'
+import type { MonsterAttackKind, MonsterSpec, PunchStyle } from './types'
 
 export type MonsterState =
   | 'entering'
@@ -37,6 +37,7 @@ export interface HitResolution {
   guardBroken: boolean
   illusionBroken: boolean
   reflectedByShield: boolean
+  counterInterrupted: boolean
 }
 
 /**
@@ -96,8 +97,13 @@ export class KaijuEncounter {
     this.enter('windup')
   }
 
-  /** 解析玩家各类攻击对怪兽造成的伤害与机制互动 */
-  receiveHit(base: number, kind: Impact, spec: MonsterSpec): HitResolution {
+  /** 解析玩家各类攻击对怪兽造成的伤害与机制互动（支持上勾/重踢破招打断与手刀穿甲） */
+  receiveHit(
+    base: number,
+    kind: Impact,
+    spec: MonsterSpec,
+    punchStyle?: PunchStyle,
+  ): HitResolution {
     const state = this.state
     if (state === 'grapple' || state === 'thrown' || state === 'dying') {
       return {
@@ -106,6 +112,26 @@ export class KaijuEncounter {
         guardBroken: false,
         illusionBroken: false,
         reflectedByShield: false,
+        counterInterrupted: false,
+      }
+    }
+
+    // 破招打断（COUNTER BREAK）：在怪兽蓄力预警期间用上勾拳/重踢/光轮命中，强行打断并震晕！
+    if (
+      state === 'windup' &&
+      this.attack !== 'charge' &&
+      (punchStyle === 'uppercut' || kind === 'heavy' || kind === 'disc')
+    ) {
+      this.specialHintKey = null
+      this.lightHits = 0
+      this.enter('staggered')
+      return {
+        damage: Math.round(base * 1.42),
+        absorbed: false,
+        guardBroken: true,
+        illusionBroken: false,
+        reflectedByShield: false,
+        counterInterrupted: true,
       }
     }
 
@@ -120,6 +146,7 @@ export class KaijuEncounter {
           guardBroken: true,
           illusionBroken: true,
           reflectedByShield: false,
+          counterInterrupted: false,
         }
       }
       // 轻拳只打中幻影，减伤并提示使用八分光轮或飞踢
@@ -130,6 +157,7 @@ export class KaijuEncounter {
         guardBroken: false,
         illusionBroken: false,
         reflectedByShield: false,
+        counterInterrupted: false,
       }
     }
 
@@ -144,18 +172,20 @@ export class KaijuEncounter {
           guardBroken: false,
           illusionBroken: false,
           reflectedByShield: false,
+          counterInterrupted: false,
         }
       }
-      if (kind === 'heavy') {
+      if (kind === 'heavy' || punchStyle === 'uppercut' || punchStyle === 'chop') {
         this.absorbedCharge = 0
         this.specialHintKey = null
         this.enter('staggered')
         return {
-          damage: Math.round(base * 1.25),
+          damage: Math.round(base * 1.28),
           absorbed: false,
           guardBroken: true,
           illusionBroken: false,
           reflectedByShield: false,
+          counterInterrupted: true,
         }
       }
       return {
@@ -164,6 +194,7 @@ export class KaijuEncounter {
         guardBroken: false,
         illusionBroken: false,
         reflectedByShield: false,
+        counterInterrupted: false,
       }
     }
 
@@ -175,10 +206,11 @@ export class KaijuEncounter {
         guardBroken: false,
         illusionBroken: false,
         reflectedByShield: false,
+        counterInterrupted: false,
       }
     }
 
-    // 护盾防御态（海帕杰顿波状护盾专克光线，机械哥莫拉重甲格挡轻击）
+    // 护盾防御态（海帕杰顿波状护盾专克光线，手刀劈/重击/飞踢直接破盾）
     if (state === 'guarding') {
       if (spec.id === 'zetton' && (kind === 'beam' || kind === 'disc')) {
         this.absorbedCharge = Math.min(3, this.absorbedCharge + 1)
@@ -189,27 +221,30 @@ export class KaijuEncounter {
           guardBroken: false,
           illusionBroken: false,
           reflectedByShield: true,
+          counterInterrupted: false,
         }
       }
-      if (kind === 'light') {
+      if (kind === 'light' && punchStyle !== 'chop') {
         this.specialHintKey =
           spec.id === 'zetton' ? 'zettonShield' : 'breakGuard'
         return {
-          damage: Math.round(base * 0.32),
+          damage: Math.round(base * 0.34),
           absorbed: false,
           guardBroken: false,
           illusionBroken: false,
           reflectedByShield: false,
+          counterInterrupted: false,
         }
       }
       this.specialHintKey = null
       this.enter('staggered')
       return {
-        damage: Math.round(base * 1.26),
+        damage: Math.round(base * (punchStyle === 'chop' ? 1.34 : 1.26)),
         absorbed: false,
         guardBroken: true,
         illusionBroken: false,
         reflectedByShield: false,
+        counterInterrupted: false,
       }
     }
 
@@ -220,13 +255,21 @@ export class KaijuEncounter {
         guardBroken: false,
         illusionBroken: false,
         reflectedByShield: false,
+        counterInterrupted: false,
       }
     }
 
-    // 常规态：带甲怪兽（机械哥莫拉/海帕杰顿）连续吃 4 轻击触发护盾反制
+    // 奥特手刀对重甲怪兽自带 1.22x 穿甲；摆拳不叠加轻击格挡计数
+    const chopArmorBonus =
+      punchStyle === 'chop' && (spec.armorMaterial === 'metal' || spec.armorMaterial === 'chitin')
+        ? 1.22
+        : 1.0
+
+    // 常规态：带甲怪兽（机械哥莫拉/海帕杰顿）连续吃 4 轻直拳触发护盾反制
     if (state === 'idle' || state === 'hit') {
       const armored = spec.id === 'gomora-mecha' || spec.id === 'zetton'
-      this.lightHits = kind === 'light' ? this.lightHits + 1 : 0
+      const countsAsLight = kind === 'light' && punchStyle !== 'hook' && punchStyle !== 'chop'
+      this.lightHits = countsAsLight ? this.lightHits + 1 : 0
       if (armored && this.lightHits >= 4) {
         this.lightHits = 0
         this.specialHintKey =
@@ -238,11 +281,12 @@ export class KaijuEncounter {
     }
 
     return {
-      damage: base,
+      damage: Math.round(base * chopArmorBonus),
       absorbed: false,
       guardBroken: false,
       illusionBroken: false,
       reflectedByShield: false,
+      counterInterrupted: false,
     }
   }
 

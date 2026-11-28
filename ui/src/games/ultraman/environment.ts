@@ -122,7 +122,7 @@ export class ArenaManager {
   private envRenderTarget: THREE.WebGLRenderTarget | null = null
   private readonly pmrem: THREE.PMREMGenerator
   private readonly fixtures = new THREE.Group()
-  private readonly stageLoadedModels: THREE.Object3D[] = []
+  private readonly glbTemplateCache = new Map<ArenaAssetKey, THREE.Object3D>()
   private readonly stageInstancedMeshes: THREE.InstancedMesh[] = []
   private readonly billboardFXMeshes: THREE.Mesh[] = []
   private readonly cityFlameMats: THREE.ShaderMaterial[] = []
@@ -283,10 +283,12 @@ export class ArenaManager {
     )
     const assetKeys = THEME_ASSET_KEYS[theme]
     const glbPromise = Promise.allSettled(
-      assetKeys.map(async (key) => ({
-        key,
-        scene: (await this.gltfLoader.loadAsync(ARENA_HQ_URLS[key])).scene,
-      })),
+      assetKeys.map(async (key) => {
+        const cached = this.glbTemplateCache.get(key)
+        if (cached) return { key, scene: cached, fromCache: true }
+        const scene = (await this.gltfLoader.loadAsync(ARENA_HQ_URLS[key])).scene
+        return { key, scene, fromCache: false }
+      }),
     )
 
     const [results, glbResults] = await Promise.all([texPromise, glbPromise])
@@ -296,7 +298,9 @@ export class ArenaManager {
     if (this.disposed || revision !== this.revision || failure) {
       maps.forEach((texture) => texture.dispose())
       glbResults.forEach((r) => {
-        if (r.status === 'fulfilled') releaseModel(r.value.scene)
+        if (r.status === 'fulfilled' && !r.value.fromCache) {
+          releaseModel(r.value.scene)
+        }
       })
       if (failure && !this.disposed && revision === this.revision) throw failure.reason
       return
@@ -313,7 +317,10 @@ export class ArenaManager {
     const loadedAssets: Partial<Record<ArenaAssetKey, THREE.Object3D>> = {}
     for (const r of glbResults) {
       if (r.status === 'fulfilled') {
-        loadedAssets[r.value.key] = r.value.scene
+        if (!this.glbTemplateCache.has(r.value.key)) {
+          this.glbTemplateCache.set(r.value.key, r.value.scene)
+        }
+        loadedAssets[r.value.key] = this.glbTemplateCache.get(r.value.key)!
       } else {
         console.error('[ArenaManager] 高精场景资产加载失败:', r.reason)
       }
@@ -388,7 +395,6 @@ export class ArenaManager {
         m.receiveShadow = true
       }
     })
-    this.stageLoadedModels.push(tpl)
     return tpl
   }
 
@@ -1048,10 +1054,6 @@ export class ArenaManager {
       inst.dispose()
     }
     this.stageInstancedMeshes.length = 0
-    for (const mdl of this.stageLoadedModels) {
-      releaseModel(mdl)
-    }
-    this.stageLoadedModels.length = 0
     this.billboardFXMeshes.length = 0
     for (const tex of this.stageDisposableTextures) tex.dispose()
     this.stageDisposableTextures.length = 0
@@ -1085,6 +1087,10 @@ export class ArenaManager {
   public dispose() {
     this.disposed = true
     this.releaseStage()
+    for (const mdl of this.glbTemplateCache.values()) {
+      releaseModel(mdl)
+    }
+    this.glbTemplateCache.clear()
     this.scorchGeo.dispose()
     this.cosmicGroup.traverse((n) => {
       if ((n as THREE.Mesh).isMesh) {

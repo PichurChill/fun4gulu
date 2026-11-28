@@ -113,8 +113,9 @@ function makeStarFlareTexture(): THREE.CanvasTexture {
 
   const rad = ctx.createRadialGradient(half, half, 0, half, half, half)
   rad.addColorStop(0, 'rgba(255,255,255,1)')
-  rad.addColorStop(0.18, 'rgba(255,255,255,0.88)')
-  rad.addColorStop(0.45, 'rgba(255,255,255,0.22)')
+  rad.addColorStop(0.12, 'rgba(255,255,255,0.78)')
+  rad.addColorStop(0.32, 'rgba(255,255,255,0.14)')
+  rad.addColorStop(0.68, 'rgba(255,255,255,0)')
   rad.addColorStop(1, 'rgba(255,255,255,0)')
   ctx.fillStyle = rad
   ctx.fillRect(0, 0, size, size)
@@ -256,9 +257,10 @@ function createPlasmaBeamMaterial(initialColor: number): THREE.ShaderMaterial {
         float flow = 0.82 + 0.18 * sin(vUv.y * 34.0 - uTime * 48.0)
                           + 0.12 * cos(vUv.y * 19.0 - uTime * 30.0 + vUv.x * 6.28318);
         float tipSoft = smoothstep(0.0, 0.06, vUv.y) * (1.0 - smoothstep(0.92, 1.0, vUv.y));
-        vec3 col = mix(uColor * 1.2, vec3(1.25, 1.38, 1.5), hotCore * 0.88);
-        float alpha = (outerGlow * 0.72 + hotCore * 0.56) * flow * tipSoft * uFade;
-        gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+        // 压实外焰饱和度并抑制叠加过曝：核心亮白锐利、外层电光色层次分明不发糊
+        vec3 col = mix(uColor * 1.05, vec3(1.12, 1.2, 1.28), hotCore * 0.82);
+        float alpha = (outerGlow * 0.56 + hotCore * 0.48) * flow * tipSoft * uFade;
+        gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.92));
       }
     `,
   })
@@ -379,6 +381,8 @@ export class BattleEffects {
   private readonly clashCore: THREE.Mesh
   private readonly clashFlare: THREE.Sprite
   private clashActive = false
+  private clashShowCounterBeam = true
+  private clashShowCore = true
   private clashProgress = 0.5
 
   // 包裹全身的立体球形蓝色奥特能量穹顶护盾
@@ -405,6 +409,14 @@ export class BattleEffects {
   private readonly tmpDir = new THREE.Vector3()
   private readonly tmpSide = new THREE.Vector3()
   private readonly tmpCam = new THREE.Vector3(0, 12, 34)
+  private readonly tmpHeroOrigin = new THREE.Vector3()
+  private readonly tmpClashPt = new THREE.Vector3()
+  private readonly tmpBeamEnd = new THREE.Vector3()
+  private readonly tmpAlignDir = new THREE.Vector3()
+  private readonly tmpStartPt = new THREE.Vector3()
+  private readonly tmpFarPt = new THREE.Vector3()
+  private readonly tmpPerpA = new THREE.Vector3()
+  private readonly tmpPerpB = new THREE.Vector3()
 
   private themeBeamColor = 0x38d9ff
   private themeBeamSuperColor = 0xfacc15
@@ -726,8 +738,9 @@ export class BattleEffects {
     this.heroMuzzleSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.flareTex,
-        color: 0xe0f7ff,
+        color: 0xb8f0ff,
         transparent: true,
+        opacity: 0.56,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }),
@@ -737,6 +750,7 @@ export class BattleEffects {
         map: this.flareTex,
         color: 0x7dd3fc,
         transparent: true,
+        opacity: 0.62,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }),
@@ -770,9 +784,9 @@ export class BattleEffects {
     this.clashCore = new THREE.Mesh(
       new THREE.SphereGeometry(1, 18, 16),
       new THREE.MeshBasicMaterial({
-        color: 0xffffff,
+        color: 0xfff8dc,
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.86,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }),
@@ -782,6 +796,7 @@ export class BattleEffects {
         map: this.flareTex,
         color: 0xfef08a,
         transparent: true,
+        opacity: 0.54,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }),
@@ -1239,10 +1254,19 @@ export class BattleEffects {
     this.kaijuBeamGroup.visible = false
   }
 
-  public setBeamClash(active: boolean, progress: number) {
+  public setBeamClash(
+    active: boolean,
+    progress: number,
+    options?: { showCounterBeam?: boolean; showClashPoint?: boolean },
+  ) {
     this.clashActive = active
+    this.clashShowCounterBeam = options?.showCounterBeam ?? true
+    this.clashShowCore = options?.showClashPoint ?? true
     this.clashProgress = THREE.MathUtils.clamp(progress, 0.08, 0.95)
-    this.clashGroup.visible = active
+    this.clashGroup.visible = active && this.clashShowCore
+    if ((!active || !this.clashShowCounterBeam) && this.kaijuBeamTime <= 0) {
+      this.kaijuBeamGroup.visible = false
+    }
   }
 
   public updateKaijuChargeOrb(
@@ -1619,27 +1643,30 @@ export class BattleEffects {
   }
 
   private alignCylinder(mesh: THREE.Mesh, from: THREE.Vector3, to: THREE.Vector3, radius: number) {
-    const dir = to.clone().sub(from)
-    const len = Math.max(0.01, dir.length())
-    mesh.position.copy(from).addScaledVector(dir, 0.5)
-    mesh.quaternion.setFromUnitVectors(this.upAxis, dir.normalize())
+    this.tmpAlignDir.subVectors(to, from)
+    const len = Math.max(0.01, this.tmpAlignDir.length())
+    mesh.position.copy(from).addScaledVector(this.tmpAlignDir, 0.5)
+    mesh.quaternion.setFromUnitVectors(this.upAxis, this.tmpAlignDir.divideScalar(len))
     mesh.scale.set(radius, len, radius)
   }
 
-  /** 动态生成 3D 粗电弧条带（相机朝向宽带，替代细弱的 1px 线条） */
+  /** 动态生成 3D 粗电弧条带（零 GC 复用临时向量） */
   private updateBeamLightningRibbons(
     from: THREE.Vector3,
     to: THREE.Vector3,
     radius: number,
     fade: number,
   ) {
-    const dir = to.clone().sub(from)
-    const len = Math.max(0.5, dir.length())
-    dir.normalize()
-    const perpA = new THREE.Vector3().crossVectors(dir, this.upAxis)
-    if (perpA.lengthSq() < 0.01) perpA.set(1, 0, 0)
-    perpA.normalize()
-    const perpB = new THREE.Vector3().crossVectors(dir, perpA).normalize()
+    this.tmpAlignDir.subVectors(to, from)
+    const len = Math.max(0.5, this.tmpAlignDir.length())
+    this.tmpAlignDir.divideScalar(len)
+    this.tmpPerpA.crossVectors(this.tmpAlignDir, this.upAxis)
+    if (this.tmpPerpA.lengthSq() < 0.01) this.tmpPerpA.set(1, 0, 0)
+    this.tmpPerpA.normalize()
+    this.tmpPerpB.crossVectors(this.tmpAlignDir, this.tmpPerpA).normalize()
+    const dir = this.tmpAlignDir
+    const perpA = this.tmpPerpA
+    const perpB = this.tmpPerpB
 
     for (const arc of this.beamLightningRibbons) {
       for (let j = 0; j < arc.segments; j++) {
@@ -1655,22 +1682,26 @@ export class BattleEffects {
       this.writeRibbonGeometry(
         arc.mesh.geometry,
         arc.pts,
-        arc.baseWidth * (this.heroBeamSuper ? 1.55 : 1.0),
+        arc.baseWidth * (this.heroBeamSuper ? 1.25 : 0.95) * (this.clashActive ? 0.78 : 1.0),
         this.tmpCam,
       )
-      arc.mesh.material.opacity = 0.88 * fade
+      arc.mesh.material.opacity = (this.clashActive ? 0.56 : 0.74) * fade
     }
 
+    const showImpactArcs = !this.clashActive || this.clashShowCore
     for (const arc of this.impactArcRibbons) {
+      arc.mesh.visible = showImpactArcs
+      if (!showImpactArcs) continue
       const theta = Math.random() * Math.PI * 2
       const phi = (Math.random() - 0.5) * Math.PI * 0.85
       const ax = Math.cos(theta) * Math.cos(phi)
       const ay = Math.sin(phi)
       const az = Math.sin(theta) * Math.cos(phi)
-      const reach = (this.heroBeamSuper ? 8.8 : 5.4) * (0.65 + Math.random() * 0.55)
+      const reach =
+        (this.clashActive ? 4.4 : this.heroBeamSuper ? 6.4 : 4.6) * (0.65 + Math.random() * 0.5)
       for (let j = 0; j < arc.segments; j++) {
         const t = j / (arc.segments - 1)
-        const jag = t > 0 ? 1.3 * (Math.random() - 0.5) : 0
+        const jag = t > 0 ? 1.05 * (Math.random() - 0.5) : 0
         arc.pts[j]!.set(
           to.x + ax * reach * t + jag,
           to.y + ay * reach * t + jag,
@@ -1680,10 +1711,10 @@ export class BattleEffects {
       this.writeRibbonGeometry(
         arc.mesh.geometry,
         arc.pts,
-        arc.baseWidth * (this.heroBeamSuper ? 1.4 : 1.0),
+        arc.baseWidth * (this.clashActive ? 0.82 : this.heroBeamSuper ? 1.18 : 0.95),
         this.tmpCam,
       )
-      arc.mesh.material.opacity = 0.92 * fade
+      arc.mesh.material.opacity = (this.clashActive ? 0.6 : 0.78) * fade
     }
   }
 
@@ -1708,8 +1739,8 @@ export class BattleEffects {
       this.impactLight.intensity = 0
     }
 
-    const heroOrigin = heroBeamSegment[0].clone().lerp(heroBeamSegment[1], 0.58)
-    const clashPoint = heroOrigin.clone().lerp(kaijuEmit, this.clashProgress)
+    const heroOrigin = this.tmpHeroOrigin.copy(heroBeamSegment[0]).lerp(heroBeamSegment[1], 0.58)
+    const clashPoint = this.tmpClashPt.copy(heroOrigin).lerp(kaijuEmit, this.clashProgress)
 
     // 1. 英雄等离子必杀光线
     if (this.heroBeamActive) {
@@ -1723,56 +1754,60 @@ export class BattleEffects {
         const fade =
           this.clashActive || progress <= 0.8 ? 1 : Math.max(0, (1 - progress) / 0.2)
         const targetEnd = this.clashActive ? clashPoint : kaijuTarget
-        const end = heroOrigin.clone().lerp(targetEnd, reveal)
-        const baseR = this.heroBeamSuper ? 1.48 : 0.92
-        const pulse = 1 + Math.sin(elapsed * 46) * 0.12
+        const end = this.tmpBeamEnd.copy(heroOrigin).lerp(targetEnd, reveal)
+        const baseR = (this.heroBeamSuper ? 1.24 : 0.84) * (this.clashActive ? 0.72 : 1.0)
+        const pulse = 1 + Math.sin(elapsed * 46) * 0.08
 
         this.heroBeamInner.material.uniforms.uTime!.value = elapsed
         this.heroBeamInner.material.uniforms.uFade!.value = fade
         this.heroBeamOuter.material.uniforms.uTime!.value = elapsed
         this.heroBeamOuter.material.uniforms.uFade!.value = fade
 
-        this.alignCylinder(this.heroBeamInner, heroOrigin, end, baseR * 0.45 * pulse)
-        this.alignCylinder(this.heroBeamOuter, heroOrigin, end, baseR * 1.18 * pulse)
+        this.alignCylinder(this.heroBeamInner, heroOrigin, end, baseR * 0.4 * pulse)
+        this.alignCylinder(this.heroBeamOuter, heroOrigin, end, baseR * 1.02 * pulse)
 
-        this.heroBeamFilaments.forEach((f, idx) => {
+        for (let idx = 0; idx < this.heroBeamFilaments.length; idx++) {
+          const f = this.heroBeamFilaments[idx]!
           const t = (idx + 0.5) / this.heroBeamFilaments.length
-          const startPt = heroBeamSegment[0].clone().lerp(heroBeamSegment[1], t)
+          this.tmpStartPt.copy(heroBeamSegment[0]).lerp(heroBeamSegment[1], t)
           const ang = elapsed * 20 + idx * 1.57
-          const offset = new THREE.Vector3(Math.cos(ang), Math.sin(ang), 0).multiplyScalar(
-            baseR * 0.55 * fade,
-          )
-          const farPt = end.clone().add(offset)
-          this.alignCylinder(f, startPt, farPt, baseR * 0.1 * fade)
-          f.material.opacity = 0.6 * fade
-        })
+          const rad = baseR * 0.48 * fade
+          this.tmpFarPt.set(end.x + Math.cos(ang) * rad, end.y + Math.sin(ang) * rad, end.z)
+          this.alignCylinder(f, this.tmpStartPt, this.tmpFarPt, baseR * 0.085 * fade)
+          f.material.opacity = 0.44 * fade
+        }
 
         this.updateBeamLightningRibbons(heroOrigin, end, baseR, fade)
 
         this.heroMuzzleSprite.position.copy(heroOrigin)
         this.heroMuzzleSprite.material.rotation = elapsed * 8
-        const mScale = (baseR * 3.8 + Math.sin(elapsed * 32) * 0.45) * fade
+        const mScale = (baseR * 2.2 + Math.sin(elapsed * 32) * 0.24) * fade
         this.heroMuzzleSprite.scale.set(mScale, mScale, 1)
 
-        this.heroImpactSprite.position.copy(end)
-        this.heroImpactSprite.material.rotation = -elapsed * 10
-        const iScale = (baseR * 6.4 + Math.cos(elapsed * 36) * 0.8) * fade
-        this.heroImpactSprite.scale.set(iScale, iScale, 1)
+        // 对波时由唯一 clashGroup 渲染撞击奇点，避免在同一点重叠渲染多个巨大星芒导致泛白
+        this.heroImpactSprite.visible = !this.clashActive
+        if (!this.clashActive) {
+          this.heroImpactSprite.position.copy(end)
+          this.heroImpactSprite.material.rotation = -elapsed * 10
+          const iScale = (baseR * 3.8 + Math.cos(elapsed * 36) * 0.42) * fade
+          this.heroImpactSprite.scale.set(iScale, iScale, 1)
+        }
 
-        if (reveal > 0.8 && Math.random() < 0.78) {
+        if (reveal > 0.8 && Math.random() < (this.clashActive ? 0.36 : 0.65)) {
           this.spawnBurst(
             end,
             Math.random() < 0.35 ? 0xff2e63 : this.heroBeamColorHex,
-            3,
-            28,
-            this.heroBeamSuper ? 1.25 : 0.9,
+            this.clashActive ? 2 : 3,
+            24,
+            this.heroBeamSuper ? 1.05 : 0.82,
           )
         }
       }
     }
 
-    // 2. 怪兽暗黑破坏光线 & 对波奇点
-    if (this.kaijuBeamTime > 0 || this.clashActive) {
+    // 2. 怪兽暗黑破坏光线 & 对波奇点（PvP 双人对波时双方各自渲染 heroBeam，禁用额外的怪兽暗黑光线）
+    const renderCounterBeam = this.kaijuBeamTime > 0 || (this.clashActive && this.clashShowCounterBeam)
+    if (renderCounterBeam) {
       if (!this.clashActive) this.kaijuBeamTime += dt
       const p = this.clashActive ? 0.3 : this.kaijuBeamTime / this.kaijuBeamDuration
       if (p >= 1 && !this.clashActive) {
@@ -1786,24 +1821,26 @@ export class BattleEffects {
         this.kaijuBeamInner.material.uniforms.uFade!.value = fade
         this.kaijuBeamOuter.material.uniforms.uTime!.value = elapsed
         this.kaijuBeamOuter.material.uniforms.uFade!.value = fade
-        this.alignCylinder(this.kaijuBeamInner, kaijuEmit, beamEnd, 0.44)
-        this.alignCylinder(this.kaijuBeamOuter, kaijuEmit, beamEnd, 1.12)
+        this.alignCylinder(this.kaijuBeamInner, kaijuEmit, beamEnd, 0.38)
+        this.alignCylinder(this.kaijuBeamOuter, kaijuEmit, beamEnd, 0.96)
       }
+    } else if (this.kaijuBeamGroup.visible) {
+      this.kaijuBeamGroup.visible = false
     }
 
-    if (this.clashActive) {
+    if (this.clashActive && this.clashShowCore) {
       this.clashGroup.position.copy(clashPoint)
-      const jitter = 1.4 + Math.sin(elapsed * 48) * 0.28
+      const jitter = 0.72 + Math.sin(elapsed * 48) * 0.14
       this.clashCore.scale.setScalar(jitter)
       this.clashFlare.material.rotation = elapsed * 14
-      this.clashFlare.scale.setScalar(jitter * 5.6)
-      if (Math.random() < 0.85) {
+      this.clashFlare.scale.setScalar(jitter * 3.1)
+      if (Math.random() < 0.6) {
         this.spawnBurst(
           clashPoint,
-          Math.random() > 0.5 ? this.heroBeamColorHex : 0xd946ef,
+          Math.random() > 0.5 ? this.heroBeamColorHex : 0xf59e0b,
           2,
-          28,
-          1.05,
+          24,
+          0.9,
         )
       }
     }

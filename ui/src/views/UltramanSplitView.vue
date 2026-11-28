@@ -345,7 +345,26 @@ onMounted(() => {
   if (!stageRef.value) return
   engine = new UltramanSplitPvpEngine(stageRef.value, {
     onHudUpdate: (next) => {
-      Object.assign(hud, next)
+      // 顶层与双人子对象逐键差异同步，消除每秒 16 次整棵双屏 DOM 响应式重排
+      const target = hud as unknown as Record<string, unknown>
+      const source = next as unknown as Record<string, unknown>
+      for (const key of Object.keys(source)) {
+        if (key === 'fighters') continue
+        const val = source[key]
+        if (key === 'wins' && Array.isArray(val)) {
+          if (hud.wins[0] !== val[0]) hud.wins[0] = val[0] as number
+          if (hud.wins[1] !== val[1]) hud.wins[1] = val[1] as number
+        } else if (target[key] !== val) {
+          target[key] = val
+        }
+      }
+      for (const s of [0, 1] as const) {
+        const ft = hud.fighters[s] as unknown as Record<string, unknown>
+        const fs = next.fighters[s] as unknown as Record<string, unknown>
+        for (const k of Object.keys(fs)) {
+          if (ft[k] !== fs[k]) ft[k] = fs[k]
+        }
+      }
     },
     onFloatingText: (slot, evt) => {
       floatingHits[slot].value.push(evt)

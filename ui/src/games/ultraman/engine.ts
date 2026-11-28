@@ -44,6 +44,7 @@ export interface EngineCallbacks {
 interface PendingMeleeStrike {
   damage: number
   impact: Impact
+  style: PunchStyle
   side: 'left' | 'right'
   height: StrikeHeight
   color: string
@@ -148,9 +149,13 @@ export class UltramanGameEngine {
   private pendingMeleeStrike: PendingMeleeStrike | null = null
   private bufferedInput: BufferedCombatInput | null = null
 
-  // 子弹时间与反击增伤窗口
+  // 子弹时间、反击增伤窗口与起跳闪避宽容期
   private bulletTimeLeft = 0
   private counterBonusTimer = 0
+  private jumpDodgeGrace = 0
+  private lastMoveKey: string | null = null
+  private lastMoveSeq = 0
+  private practiceMasteredSet = new Set<string>()
 
   // 变身、角力、主动终结光线状态
   private transformProgress = 0
@@ -223,6 +228,14 @@ export class UltramanGameEngine {
 
   private readonly cameraAnchor = new THREE.Vector3(6.6, 9.8, 31.2)
   private readonly lookAnchor = new THREE.Vector3(-0.3, 7.2, 3.8)
+  // 渲染热循环零 GC 复用临时向量
+  private readonly tmpTargetCam = new THREE.Vector3()
+  private readonly tmpTargetLook = new THREE.Vector3()
+  private readonly tmpHeroCenter = new THREE.Vector3()
+  private readonly tmpBeamMid = new THREE.Vector3()
+  private readonly tmpTypePos = new THREE.Vector3()
+  private readonly tmpBackAura = new THREE.Vector3()
+  private readonly tmpZeroVec = new THREE.Vector3()
 
   private paused = false
   private viewportAspect = 16 / 9
@@ -270,9 +283,9 @@ export class UltramanGameEngine {
     this.composer.addPass(new RenderPass(this.scene, this.camera))
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(Math.max(1, Math.floor(w * 0.5)), Math.max(1, Math.floor(h * 0.5))),
-      0.24,
-      0.26,
-      0.96,
+      0.21,
+      0.22,
+      0.98,
     )
     this.composer.addPass(this.bloomPass)
     this.composer.addPass(new OutputPass())
@@ -439,6 +452,19 @@ export class UltramanGameEngine {
     this.impactFlashSeq++
   }
 
+  /** 记录玩家本帧施展的有效招式（驱动体感实时招式识别徽标与试招靶场动作点亮清单） */
+  private recordPlayerMove(moveKey: string) {
+    this.lastMoveKey = moveKey
+    this.lastMoveSeq++
+    if (this.gameMode === 'practice') {
+      const checklistKey =
+        moveKey === 'parry' ? 'guard' : moveKey === 'palm' || moveKey === 'chop' ? 'jab' : moveKey
+      if (['jab', 'hook', 'uppercut', 'kick', 'guard', 'disc', 'beam'].includes(checklistKey)) {
+        this.practiceMasteredSet.add(checklistKey)
+      }
+    }
+  }
+
   private applyHeroForm() {
     const form = this.activeForm
     this.hero.setForm(form)
@@ -530,6 +556,7 @@ export class UltramanGameEngine {
         this.pendingMeleeStrike = {
           damage: Math.round(58 * this.totalDamageMul),
           impact: 'heavy',
+          style: 'uppercut',
           side: 'right',
           height: 'high',
           color: '#fb923c',
@@ -581,6 +608,9 @@ export class UltramanGameEngine {
     this.defeatedCount = 0
     this.bulletTimeLeft = 0
     this.counterBonusTimer = 0
+    this.jumpDodgeGrace = 0
+    this.lastMoveKey = null
+    this.practiceMasteredSet.clear()
     this.pendingMeleeStrike = null
     this.bufferedInput = null
     this.manualLean = 0
@@ -830,6 +860,7 @@ export class UltramanGameEngine {
     }
     this.gestureCrouching = snap.crouching
     this.gestureJumping = snap.jumping
+    if (snap.jumping) this.jumpDodgeGrace = 0.24
     this.gestureBeamCharge = snap.beamCharge
     this.gestureBeamHolding = snap.beamHolding
     this.gestureBeamArmSide = snap.beamArmSide
@@ -1298,6 +1329,7 @@ export class UltramanGameEngine {
 
     const mapped = this.mapPunchToHeroAction(side, style, isFinisher)
     this.hero.triggerAction(mapped.action, instant ? mapped.dur * 0.76 : mapped.dur, instant)
+    this.recordPlayerMove(style)
     if (isFinisher) this.fovKick = -2.8
 
     const slashCenter = new THREE.Vector3(
@@ -1314,7 +1346,7 @@ export class UltramanGameEngine {
     )
     this.audio.playSwing(side, false)
 
-    if (this.deflectNearbyFireballs(6.5) && !isFinisher) {
+    if (this.deflectNearbyFireballs(style === 'palm' ? 7.8 : 6.5) && !isFinisher) {
       this.emitHud()
       return
     }
@@ -1331,6 +1363,7 @@ export class UltramanGameEngine {
     this.pendingMeleeStrike = {
       damage: finalDmg,
       impact: mapped.impact,
+      style,
       side,
       height: style === 'uppercut' ? 'high' : height,
       color: isFinisher ? '#fef08a' : style === 'chop' ? '#67e8f9' : '#fde047',
@@ -1349,6 +1382,8 @@ export class UltramanGameEngine {
     const action = jumping ? 'jump-kick' : side === 'left' ? 'kick-left' : 'kick-right'
     const dur = jumping ? (instant ? 0.44 : 0.56) : instant ? 0.36 : 0.46
     this.hero.triggerAction(action, dur, instant)
+    this.recordPlayerMove('kick')
+    if (jumping) this.jumpDodgeGrace = 0.28
     this.fovKick = jumping ? -3.6 : -2.6
     this.deflectNearbyFireballs(6.6)
 
@@ -1374,6 +1409,7 @@ export class UltramanGameEngine {
       this.pendingMeleeStrike = {
         damage: Math.round((jumping ? 66 : 52) * this.totalDamageMul),
         impact: 'heavy',
+        style: 'uppercut',
         side,
         height: jumping ? 'high' : 'mid',
         color: '#fb923c',
@@ -1391,6 +1427,7 @@ export class UltramanGameEngine {
     this.discCooldown = DISC_MAX_COOLDOWN * cdMul
     this.hero.setDiscCharge(0, side)
     this.hero.triggerAction('disc', 0.46)
+    this.recordPlayerMove('disc')
     this.deflectNearbyFireballs(6.8)
 
     const origin = this.hero.getDiscOrigin(side)
@@ -1430,6 +1467,7 @@ export class UltramanGameEngine {
 
     const dur = isSuper ? 1.8 : 1.25
     this.hero.triggerAction('beam', dur)
+    this.recordPlayerMove('beam')
     this.effects.startHeroBeam(isSuper, dur)
     this.effects.flashDynamicLight(
       this.hero.root.position.clone().add(new THREE.Vector3(0, 9.5, -2)),
@@ -1695,6 +1733,7 @@ export class UltramanGameEngine {
 
   private triggerPerfectDodge(label = 'PERFECT DODGE!') {
     this.perfectDodges++
+    this.recordPlayerMove('dodge')
     this.bulletTimeLeft = 0.38
     this.counterBonusTimer = 2.6
     this.gainEnergy(22)
@@ -1726,11 +1765,12 @@ export class UltramanGameEngine {
     punchSide?: 'left' | 'right',
     hitHeight: StrikeHeight = 'mid',
     contactWorldPos?: THREE.Vector3,
+    punchStyle?: PunchStyle,
   ) {
     if (this.phase !== 'fighting' || this.monsterHp <= 0) return
 
     const spec = MONSTER_WAVES[this.waveIndex]!
-    const res = this.kaiju.encounter.receiveHit(amount, impact, spec)
+    const res = this.kaiju.encounter.receiveHit(amount, impact, spec, punchStyle)
 
     // 杰顿波状护盾吸收光线/光弹后立即反吐火球！
     if (res.reflectedByShield) {
@@ -1797,7 +1837,15 @@ export class UltramanGameEngine {
       isCritical ? 1.32 : 0.98,
     )
 
-    if (res.illusionBroken) {
+    if (res.counterInterrupted) {
+      this.gainEnergy(22)
+      this.counterBonusTimer = Math.max(this.counterBonusTimer, 2.2)
+      this.audio.playParry()
+      this.showBanner('bannerInterrupt', 1.25)
+      this.effects.spawnImpactRing(hitPos, 0xfacc15, 10.5)
+      this.effects.flashDynamicLight(hitPos, 0xfacc15, 40, 0.36)
+      this.triggerImpactFlash('parry')
+    } else if (res.illusionBroken) {
       this.showBanner('bannerIllusionBreak', 1.2)
       this.effects.spawnImpactRing(hitPos, 0x38bdf8, 11)
       this.effects.flashDynamicLight(hitPos, 0x38bdf8, 38, 0.38)
@@ -1833,10 +1881,10 @@ export class UltramanGameEngine {
 
     this.spawnFloatingAtWorld(
       hitPos.clone().add(new THREE.Vector3(0, 1.8, 0)),
-      `${res.guardBroken ? 'BREAK ' : ''}-${res.damage}${isCritical ? '!' : ''}`,
-      res.guardBroken ? '#fb923c' : color,
-      isCritical || res.guardBroken ? 1.38 : 1.06,
-      isCritical || res.guardBroken ? 'crit' : 'normal',
+      `${res.counterInterrupted ? 'COUNTER ' : res.guardBroken ? 'BREAK ' : ''}-${res.damage}${isCritical || res.counterInterrupted ? '!' : ''}`,
+      res.counterInterrupted ? '#fde047' : res.guardBroken ? '#fb923c' : color,
+      isCritical || res.guardBroken || res.counterInterrupted ? 1.4 : 1.06,
+      isCritical || res.guardBroken || res.counterInterrupted ? 'crit' : 'normal',
     )
 
     if (this.monsterHp <= 0) {
@@ -1918,7 +1966,10 @@ export class UltramanGameEngine {
 
     const isCrouching = this.manualCrouch || this.gestureCrouching
     const isJumping =
-      this.manualJumpTimer > 0 || this.gestureJumping || this.hero.getAction() === 'jump-kick'
+      this.manualJumpTimer > 0 ||
+      this.gestureJumping ||
+      this.jumpDodgeGrace > 0 ||
+      this.hero.getAction() === 'jump-kick'
 
     // 1. 真实空间立体闪避判定：高位横扫靠深蹲潜闪、低位横扫靠起跳跃过、火球靠跨步侧移！
     if (attack === 'melee-high' && isCrouching) {
@@ -1950,6 +2001,7 @@ export class UltramanGameEngine {
     // 3. 能量护盾防御 & 精准弹反（Parry）
     if (isGuarding && this.guardBrokenCooldown <= 0) {
       const isJustGuard = this.elapsedTime - this.guardStartedAt <= 0.52
+      this.recordPlayerMove(isJustGuard ? 'parry' : 'guard')
       this.effects.triggerShieldBlockFlash()
       const shieldPos = new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ - 2.6)
 
@@ -2131,6 +2183,8 @@ export class UltramanGameEngine {
         if (this.slowFrameTime > 1.5) {
           this.useBloom = false
           this.renderer.setPixelRatio(1)
+          // 关闭 Bloom 直出时微提曝光补偿画面通透感
+          this.renderer.toneMappingExposure = 1.08
         }
       } else {
         this.slowFrameTime = Math.max(0, this.slowFrameTime - rawDt * 0.5)
@@ -2166,6 +2220,10 @@ export class UltramanGameEngine {
     if (this.counterBonusTimer > 0) {
       this.counterBonusTimer = Math.max(0, this.counterBonusTimer - rawDt)
     }
+    if (this.jumpDodgeGrace > 0) {
+      this.jumpDodgeGrace = Math.max(0, this.jumpDodgeGrace - rawDt)
+    }
+    this.hero.setCounterAura(this.counterBonusTimer > 0)
     if (this.guardBrokenCooldown > 0) {
       this.guardBrokenCooldown = Math.max(0, this.guardBrokenCooldown - rawDt)
     }
@@ -2212,6 +2270,7 @@ export class UltramanGameEngine {
     const guarding = canMoveLateral && this.isHeroGuarding()
     if (guarding && !this.wasGuarding) {
       this.guardStartedAt = this.elapsedTime
+      this.recordPlayerMove('guard')
     }
     this.wasGuarding = guarding
 
@@ -2306,7 +2365,7 @@ export class UltramanGameEngine {
           this.elapsedTime,
         )
       } else {
-        this.effects.updateRainbowGather(false, new THREE.Vector3(), 0, this.elapsedTime)
+        this.effects.updateRainbowGather(false, this.tmpZeroVec, 0, this.elapsedTime)
         this.transformHoldAfterTrigger -= rawDt
         if (this.transformHoldAfterTrigger <= 0) {
           void this.loadWave(this.waveIndex, true)
@@ -2366,7 +2425,7 @@ export class UltramanGameEngine {
     const beamSeg = this.hero.getBeamOriginSegment()
     const kaijuTarget = this.kaiju.getTargetCenter()
     const kaijuEmit = this.kaiju.getAttackEmitOrigin()
-    const heroCenter = new THREE.Vector3(this.hero.currentX, 9.2, this.hero.baseZ)
+    const heroCenter = this.tmpHeroCenter.set(this.hero.currentX, 9.2, this.hero.baseZ)
     const spec = MONSTER_WAVES[this.waveIndex] ?? MONSTER_WAVES[0]!
     const fight = this.kaiju.encounter
 
@@ -2389,7 +2448,7 @@ export class UltramanGameEngine {
     )
     this.effects.updateChargePreview(
       this.controlMode === 'camera' && canMoveLateral ? this.gestureBeamCharge : 0,
-      beamSeg[0].clone().lerp(beamSeg[1], 0.55),
+      this.tmpBeamMid.copy(beamSeg[0]).lerp(beamSeg[1], 0.55),
       this.controlMode === 'camera' && canMoveLateral ? this.gestureDiscCharge : 0,
       this.hero.getDiscOrigin(this.gestureDiscSide ?? 'right'),
       this.elapsedTime,
@@ -2398,17 +2457,19 @@ export class UltramanGameEngine {
       this.controlMode === 'camera' && canMoveLateral && this.heroProfile.forms
         ? this.gestureTypeCharge
         : 0,
-      new THREE.Vector3(this.hero.currentX, 15.2, this.hero.root.position.z + 0.4),
+      this.tmpTypePos.set(this.hero.currentX, 15.2, this.hero.root.position.z + 0.4),
       this.activeForm?.accentColor ?? 0xb388ff,
       this.elapsedTime,
     )
 
     if (this.phase !== 'transform') {
       const showRainbow = this.phase === 'fighting' && this.battleStage === 'finisher-spread'
-      const backAuraCenter = this.hero.root.position.clone().add(new THREE.Vector3(0, 9.4, 1.8))
+      this.tmpBackAura.copy(this.hero.root.position)
+      this.tmpBackAura.y += 9.4
+      this.tmpBackAura.z += 1.8
       this.effects.updateRainbowGather(
         showRainbow,
-        backAuraCenter,
+        this.tmpBackAura,
         this.finisherSpreadProgress,
         this.elapsedTime,
       )
@@ -2485,6 +2546,7 @@ export class UltramanGameEngine {
           st.side,
           st.height,
           contactPos,
+          st.style,
         )
         if (this.phase !== 'fighting') return
       } else if (info.progress > 0.55 || info.limb === null) {
@@ -2736,8 +2798,8 @@ export class UltramanGameEngine {
   private updateCamera(dt: number) {
     const wideFactor = THREE.MathUtils.clamp((this.viewportAspect - 0.68) / 0.72, 0, 1)
     const portraitFactor = THREE.MathUtils.clamp((0.92 - this.viewportAspect) / 0.46, 0, 1)
-    const targetCam = new THREE.Vector3()
-    const targetLook = new THREE.Vector3()
+    const targetCam = this.tmpTargetCam.set(0, 0, 0)
+    const targetLook = this.tmpTargetLook.set(0, 0, 0)
     let desiredBaseFov = 46
 
     if (this.phase === 'menu') {
@@ -3018,6 +3080,10 @@ export class UltramanGameEngine {
       activeSkillBannerKey: this.skillBannerKey,
       impactFlashKind: this.impactFlashKind,
       impactFlashSeq: this.impactFlashSeq,
+      counterBonusLeft: Number(this.counterBonusTimer.toFixed(1)),
+      lastMoveKey: this.lastMoveKey,
+      lastMoveSeq: this.lastMoveSeq,
+      practiceMastered: Array.from(this.practiceMasteredSet),
       tracking: this.gestureTracking,
       bodyCoverage: this.gestureCoverage,
       mirroredCenterX: this.gestureMirroredX,

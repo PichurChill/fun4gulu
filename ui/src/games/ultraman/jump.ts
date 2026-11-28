@@ -47,11 +47,12 @@ export class JumpKickRecognizer {
     }
 
     const rise = Math.min(this.standing[0] - left.y, this.standing[1] - right.y) / scale
-    // 只接受从站姿快速起跳的波峰，回落时出招，避免把慢慢站直当成跳跃。
+    // 快速起跳达到波峰即刻触发飞踢（不再等到落地才晚半拍出招），同时过滤慢速站直
     const elapsed = now - this.lastGroundTime
-    if (elapsed <= 360) this.peakRise = Math.max(this.peakRise, rise)
-    const jumped =
-      !this.fired && elapsed <= 600 && this.peakRise >= 0.17 && this.peakRise - rise >= 0.035
+    if (elapsed <= 320) this.peakRise = Math.max(this.peakRise, rise)
+    const fastApex = elapsed <= 320 && rise >= 0.21
+    const apexDrop = elapsed <= 560 && this.peakRise >= 0.16 && this.peakRise - rise >= 0.024
+    const jumped = !this.fired && (fastApex || apexDrop)
     if (jumped) this.fired = true
 
     if (rise <= 0.055) {

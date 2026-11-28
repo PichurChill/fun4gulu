@@ -277,10 +277,15 @@ class HandLandmarkFilterBank {
   }
 }
 
+type VideoFrameCallbackVideo = HTMLVideoElement & {
+  requestVideoFrameCallback?: (cb: () => void) => number
+  cancelVideoFrameCallback?: (handle: number) => void
+}
+
 /**
  * 低延迟全身姿态追踪器：
  * - 专注单模型 MediaPipe PoseLandmarker (lite) 避免双神经网络争夺 WebGL GPU 导致主线程卡顿
- * - 摄像头采用 480x360@30fps 匹配神经网络输入尺寸，大幅降低视频解码与纹理上传开销
+ * - 优先使用 requestVideoFrameCallback 随真实摄像头新帧触发，彻底告别 60Hz rAF 空轮询与同帧竞争
  * - 自适应推理帧预算调度：按单次推理耗时动态节流，把 70%+ 主线程时间留给 3D 渲染
  */
 export class UltraPoseTracker {
@@ -289,6 +294,7 @@ export class UltraPoseTracker {
   private stream: MediaStream | null = null
   private session = 0
   private rafId = 0
+  private vfcId = 0
   private lastVideoTime = -1
   private lastDetectTimestamp = 0
   private lastInferAt = -Infinity
@@ -404,15 +410,16 @@ export class UltraPoseTracker {
 
     this.detectOnce(video)
 
-    const loop = () => {
+    const vfcVideo = video as VideoFrameCallbackVideo
+    const runFrame = () => {
       if (session !== this.session) return
-      this.rafId = requestAnimationFrame(loop)
+      scheduleNext()
       if (!this.landmarker || video.readyState < 2) return
-      if (video.currentTime === this.lastVideoTime) return
+      if (!vfcVideo.requestVideoFrameCallback && video.currentTime === this.lastVideoTime) return
       const now = performance.now()
       // 动态推理间隔预算：保证单帧 AI 耗时绝不压死 WebGL 渲染主循环
-      const baseFloor = this.highIntensityCombat ? 34 : 30
-      const budgetInterval = Math.min(85, Math.max(baseFloor, this.smoothInferMs * 2.25))
+      const baseFloor = this.highIntensityCombat ? 32 : 28
+      const budgetInterval = Math.min(80, Math.max(baseFloor, this.smoothInferMs * 2.15))
       if (now - this.lastInferAt < budgetInterval) return
       this.lastVideoTime = video.currentTime
       this.lastInferAt = now
@@ -423,7 +430,14 @@ export class UltraPoseTracker {
         this.onError?.(err)
       }
     }
-    this.rafId = requestAnimationFrame(loop)
+    const scheduleNext = () => {
+      if (typeof vfcVideo.requestVideoFrameCallback === 'function') {
+        this.vfcId = vfcVideo.requestVideoFrameCallback(runFrame)
+      } else {
+        this.rafId = requestAnimationFrame(runFrame)
+      }
+    }
+    scheduleNext()
   }
 
   private detectOnce(video: HTMLVideoElement) {
@@ -498,6 +512,17 @@ export class UltraPoseTracker {
     if (this.rafId) {
       cancelAnimationFrame(this.rafId)
       this.rafId = 0
+    }
+    if (this.vfcId && video) {
+      const vfcVideo = video as VideoFrameCallbackVideo
+      if (typeof vfcVideo.cancelVideoFrameCallback === 'function') {
+        try {
+          vfcVideo.cancelVideoFrameCallback(this.vfcId)
+        } catch {
+          // 忽略已失效的回调句柄
+        }
+      }
+      this.vfcId = 0
     }
     this.lastVideoTime = -1
     this.lastValidPoses = []
